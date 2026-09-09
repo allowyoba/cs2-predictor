@@ -1,0 +1,63 @@
+---
+- name: Require a notification message
+  ansible.builtin.assert:
+    that: notify_admins_message | length > 0
+    fail_msg: NOTIFY_MESSAGE is required.
+
+- name: Confirm the environment file exists
+  ansible.builtin.stat:
+    path: "{{ app_dir }}/.env"
+  register: notify_admins_env_file
+  when: notify_admins_chat_ids | length > 0
+
+- name: Require the environment file to already be provisioned
+  ansible.builtin.assert:
+    that: notify_admins_env_file.stat.exists
+    fail_msg: "{{ app_dir }}/.env is missing; cannot read the bot token."
+  when: notify_admins_chat_ids | length > 0
+
+- name: Read the environment file
+  ansible.builtin.slurp:
+    src: "{{ app_dir }}/.env"
+  register: notify_admins_env_raw
+  when: notify_admins_chat_ids | length > 0
+  no_log: true
+
+- name: Parse the environment file as plain KEY=VALUE pairs
+  # Read as inert text, never sourced as a shell script.
+  ansible.builtin.set_fact:
+    notify_admins_env: "{{ notify_admins_env | default({}) | combine({(item.split('=', 1)[0]): item.split('=', 1)[1]}) }}"
+  loop: "{{ (notify_admins_env_raw.content | default('') | b64decode).splitlines() }}"
+  loop_control:
+    label: "{{ item.split('=')[0] if '=' in item else '(skipped)' }}"
+  when: notify_admins_chat_ids | length > 0 and item is match('^[A-Za-z_][A-Za-z0-9_]*=')
+  no_log: true
+
+- name: Require a bot token when there is someone to notify
+  ansible.builtin.assert:
+    that: notify_admins_env.TELEGRAM_BOT_TOKEN | default('') | length > 0
+    fail_msg: "{{ app_dir }}/.env must set TELEGRAM_BOT_TOKEN to send admin notifications."
+  when: notify_admins_chat_ids | length > 0
+  no_log: true
+
+- name: Send a Telegram DM to every configured administrator
+  # Best-effort per recipient (failed_when: false): one admin who never
+  # started a DM with the bot must not stop the others.
+  ansible.builtin.command:
+    argv:
+      - curl
+      - --silent
+      - --show-error
+      - -X
+      - POST
+      - "https://api.telegram.org/bot{{ notify_admins_env.TELEGRAM_BOT_TOKEN }}/sendMessage"
+      - -d
+      - "chat_id={{ item }}"
+      - --data-urlencode
+      - "text={{ notify_admins_message }}"
+  loop: "{{ notify_admins_chat_ids }}"
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false
+  changed_when: true
+  no_log: true

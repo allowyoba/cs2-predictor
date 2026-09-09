@@ -1,0 +1,49 @@
+name: Register webhook
+
+# Manual and optional — run when the webhook needs to point somewhere new
+# (first install, rotated secret, changed domain). Secrets come from the
+# server's own .env, never GitHub Actions — see ansible/README.md.
+
+on:
+  workflow_dispatch: { }
+
+permissions:
+  contents: read
+
+concurrency:
+  # Shares deploy.yml's group: both touch the same host, and there is no
+  # reason to register a webhook mid-install.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  webhook:
+    name: Re-register webhook
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install Ansible
+        run: python -m pip install -r ansible/requirements.txt
+
+      - name: Register the webhook
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          APP_PATH: ${{ vars.APP_PATH }}
+          ANSIBLE_HOST_KEY_CHECKING: 'True'
+        run: make register-webhook
+
+      - name: Remove temporary SSH credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts"

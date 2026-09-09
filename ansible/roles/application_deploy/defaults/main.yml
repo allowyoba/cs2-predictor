@@ -1,0 +1,15 @@
+---
+app_dir: "{{ lookup('env', 'APP_PATH') | default('/opt/cs2predictor', true) }}"
+app_user: "{{ lookup('env', 'APP_USER') | default('cs2predictor', true) }}"
+deploy_lock: /var/lock/cs2predictor-ansible
+compose_wait_timeout: 300
+release_dir: "{{ playbook_dir }}/../release"
+compose_argv:
+  - docker
+  - compose
+  - --project-directory
+  - "{{ app_dir }}/docker"
+  - --env-file
+  - "{{ app_dir }}/.env"
+  - -f
+  - "{{ app_dir }}/docker/compose.prod.yml"

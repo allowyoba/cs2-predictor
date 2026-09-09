@@ -1,0 +1,4 @@
+---
+# No dependency on prepare_connection: see tasks/main.yml for why it's
+# included explicitly there instead, at a specific point in the sequence.
+dependencies: []

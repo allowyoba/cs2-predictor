@@ -1,0 +1,7 @@
+---
+- name: Remove temporary controller SSH files
+  ansible.builtin.file:
+    path: "{{ prepare_connection_work_dir }}/{{ item }}"
+    state: absent
+  loop: [deploy_key, known_hosts]
+  when: prepare_connection_work_dir is match('^/.+')

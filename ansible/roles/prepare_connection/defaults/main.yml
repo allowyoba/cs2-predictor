@@ -1,0 +1,9 @@
+---
+prepare_connection_host: "{{ lookup('env', 'DEPLOY_HOST') }}"
+prepare_connection_user: "{{ lookup('env', 'DEPLOY_USER') | default('cs2deploy', true) }}"
+prepare_connection_port: "{{ lookup('env', 'DEPLOY_PORT') | default('22', true) }}"
+prepare_connection_app_user: "{{ lookup('env', 'APP_USER') | default('cs2predictor', true) }}"
+prepare_connection_app_path: "{{ lookup('env', 'APP_PATH') | default('/opt/cs2predictor', true) }}"
+prepare_connection_private_key: "{{ lookup('env', 'DEPLOY_KEY') }}"
+prepare_connection_known_hosts: "{{ lookup('env', 'KNOWN_HOSTS') }}"
+prepare_connection_work_dir: "{{ lookup('env', 'RUNNER_TEMP') }}"

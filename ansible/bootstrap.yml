@@ -1,0 +1,13 @@
+---
+# One-time migration from the original ForceCommand-restricted access
+# model to the one this repository's deploy flow expects. Run by hand,
+# connecting as the pre-existing `admin` account, against a private
+# inventory that is never committed — see ansible/README.md.
+- name: Migrate host access to the Ansible-managed model
+  hosts: production
+  become: true
+  gather_facts: false
+  serial: 1
+  roles:
+    - host_access
+    - validate_host

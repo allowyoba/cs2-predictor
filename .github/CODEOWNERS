@@ -1,0 +1,21 @@
+# Branch protection requires an approval from an owner of every path a
+# pull request touches (see scripts/configure-repository.sh). Patterns
+# are matched top to bottom and the last match wins, so the CI/CD rules
+# below override the general one for the paths they name.
+#
+# GitHub never lets the author of a pull request satisfy this with their
+# own approval. A path whose only owner is also its author has nobody
+# left who can approve it — worth remembering before narrowing one.
+
+# General code
+* @allowyoba @kcamapaaa @o000oo799
+
+# CI/CD, release and deployment
+/.github/ @allowyoba
+/ansible/ @allowyoba
+/docker/ @allowyoba
+/scripts/ @allowyoba
+/Makefile @allowyoba
+/release.config.mjs @allowyoba
+/package.json @allowyoba
+/package-lock.json @allowyoba

@@ -1,0 +1,83 @@
+# Production stack deployed by ansible/deploy.yml from the selected release.
+# The project directory is <app_dir>/docker, and --env-file explicitly loads
+# <app_dir>/.env. Ansible provides APP_IMAGE as an immutable GHCR digest.
+#
+# Only Caddy publishes ports. PostgreSQL and the bot are reachable only
+# on the Compose network, so the database is never exposed to the
+# internet and the bot is never reachable except through Caddy's path
+# allow-list.
+#
+# The project name is fixed rather than derived from the directory, so
+# Compose keeps recognizing the same containers and volumes as this
+# installation no matter where APP_PATH points.
+name: cs2predictor
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cs2predictor
+      POSTGRES_USER: cs2predictor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ CMD-SHELL, "pg_isready -U cs2predictor -d cs2predictor" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bot:
+    # Always a digest, never a tag: the deploy workflow resolves the tag
+    # to ghcr.io/owner/repo@sha256:... so a re-run installs the exact
+    # bytes that were verified, not whatever the tag points at by then.
+    image: ${APP_IMAGE:?required}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:5432/cs2predictor
+      DATABASE_USER: cs2predictor
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?required}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?required}
+      PANDASCORE_TOKEN: ${PANDASCORE_TOKEN:?required}
+    healthcheck:
+      # /healthz/ready, not /healthz/live: the deploy waits on this, and
+      # what it needs to know is that migrations ran and the database and
+      # data providers answer — not merely that the process started.
+      test: [ CMD, curl, --fail, --silent, "http://localhost:8080/healthz/ready" ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 12
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      bot:
+        condition: service_healthy
+    environment:
+      CADDY_DOMAIN: ${CADDY_DOMAIN:?required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Removing this volume means re-requesting
+      # them from Let's Encrypt, which is rate limited.
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: [ CMD, wget, --quiet, --tries=1, --spider, "http://127.0.0.1:2019/config/" ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

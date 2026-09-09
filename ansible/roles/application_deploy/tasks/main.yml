@@ -1,0 +1,267 @@
+---
+- name: Validate release inputs
+  ansible.builtin.assert:
+    that:
+      - release_tag is match('^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
+      - app_image is match('^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$')
+      - app_dir is match('^/[a-zA-Z0-9_/-]+$')
+      - lookup('env', 'REGISTRY_TOKEN') | length > 0
+      - lookup('env', 'REGISTRY_USER') | length > 0
+    fail_msg: Supply a release tag, immutable GHCR image, and registry credentials.
+
+- name: Require the application environment values
+  ansible.builtin.assert:
+    that:
+      - lookup('env', 'POSTGRES_PASSWORD') | length > 0
+      - lookup('env', 'TELEGRAM_BOT_TOKEN') | length > 0
+      - lookup('env', 'TELEGRAM_WEBHOOK_SECRET') | length > 0
+      - lookup('env', 'PANDASCORE_TOKEN') | length > 0
+      - lookup('env', 'CADDY_DOMAIN') | length > 0
+    fail_msg: >-
+      Set POSTGRES_PASSWORD, TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, PANDASCORE_TOKEN and CADDY_DOMAIN in the
+      production GitHub environment (see ansible/README.md's "Server environment file").
+  no_log: true
+
+- name: Inspect release configuration on the controller
+  ansible.builtin.stat:
+    path: "{{ release_dir }}/docker/{{ item }}"
+    get_checksum: false
+    get_mime: false
+  loop: [compose.prod.yml, Caddyfile]
+  register: release_files
+  delegate_to: localhost
+  become: false
+
+- name: Require the selected release configuration
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg | default(false)
+    fail_msg: "Selected release is missing {{ item.item }} under {{ release_dir }}/docker."
+  loop: "{{ release_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  delegate_to: localhost
+  become: false
+
+- name: Check Docker daemon availability
+  ansible.builtin.command:
+    argv: [docker, info]
+  changed_when: false
+
+- name: Check Docker Compose availability
+  ansible.builtin.command:
+    argv: [docker, compose, version]
+  changed_when: false
+
+- name: Read the previously recorded release, if any
+  # Absent on a first install; handled explicitly below, not as an error.
+  ansible.builtin.slurp:
+    src: "{{ app_dir }}/deployment.json"
+  register: application_deploy_previous_raw
+  ignore_errors: true
+
+- name: Read the previously written environment file, if any
+  # Captured before it's overwritten below, so a rollback can restore it
+  # alongside the previous image — a health-check failure caused by the
+  # new APP_ENV_FILE content shouldn't leave the rolled-back image
+  # running against it.
+  ansible.builtin.slurp:
+    src: "{{ app_dir }}/.env"
+  register: application_deploy_previous_env_raw
+  ignore_errors: true
+  no_log: true
+
+- name: Capture the previously running image as a rollback target
+  # "is defined" inside `when:` never raises for a missing key, unlike
+  # referencing .image directly in the value — an older deployment.json
+  # format is then just "no previous release", not a crash.
+  ansible.builtin.set_fact:
+    application_deploy_previous_image: "{{ (application_deploy_previous_raw.content | b64decode | from_json).image }}"
+  when:
+    - application_deploy_previous_raw is succeeded
+    - (application_deploy_previous_raw.content | b64decode | from_json).image is defined
+
+- name: Acquire host deployment lock
+  ansible.builtin.command:
+    argv: [mkdir, --mode=0700, "{{ deploy_lock }}"]
+  changed_when: true
+
+- name: Back up and deploy while holding the lock
+  block:
+    - name: Back up the current application configuration
+      ansible.builtin.include_role:
+        name: configuration_backup
+      vars:
+        # Everything here already belongs to app_user — see
+        # ansible/README.md's "Least-privilege deploy" section.
+        backup_owner: "{{ app_user }}"
+        backup_group: "{{ app_user }}"
+        backup_label: "deploy-{{ release_tag }}"
+        backup_paths:
+          - "{{ app_dir }}/.env"
+          - "{{ app_dir }}/docker"
+          - "{{ app_dir }}/deployment.json"
+          - "{{ app_dir }}/image.env"
+          - "{{ app_dir }}/compose.yml"
+          - "{{ app_dir }}/compose.yaml"
+          - "{{ app_dir }}/docker-compose.yml"
+          - "{{ app_dir }}/docker-compose.yaml"
+
+    - name: Write the application environment file from GitHub-managed secrets
+      # Runs after the backup above, so a previous manually-managed .env
+      # (or last deploy's) is still recoverable — see the "Server
+      # environment file" section of ansible/README.md.
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/.env"
+        content: |
+          POSTGRES_PASSWORD={{ lookup('env', 'POSTGRES_PASSWORD') }}
+          TELEGRAM_BOT_TOKEN={{ lookup('env', 'TELEGRAM_BOT_TOKEN') }}
+          TELEGRAM_WEBHOOK_SECRET={{ lookup('env', 'TELEGRAM_WEBHOOK_SECRET') }}
+          PANDASCORE_TOKEN={{ lookup('env', 'PANDASCORE_TOKEN') }}
+          CADDY_DOMAIN={{ lookup('env', 'CADDY_DOMAIN') }}
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Capture current container image references
+      ansible.builtin.command:
+        argv: [docker, ps, -a, --filter, label=com.docker.compose.project=cs2predictor, --format, '{{ "{{.Names}} {{.Image}}" }}']
+      register: previous_images
+      changed_when: false
+
+    - name: Save previous container image references
+      ansible.builtin.copy:
+        dest: "{{ backup_directory.path }}/containers.txt"
+        content: "{{ previous_images.stdout }}\n"
+        mode: '0600'
+
+    - name: Create isolated registry credentials directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: cs2predictor-registry-
+      register: registry_config
+
+    - name: Pull and install the release, rolling back on a failed health check
+      environment:
+        DOCKER_CONFIG: "{{ registry_config.path }}"
+        APP_IMAGE: "{{ app_image }}"
+      block:
+        - name: Authenticate to GHCR for this deployment
+          ansible.builtin.command:
+            argv: [docker, login, ghcr.io, --username, "{{ lookup('env', 'REGISTRY_USER') }}", --password-stdin]
+            stdin: "{{ lookup('env', 'REGISTRY_TOKEN') }}"
+          changed_when: false
+          no_log: true
+
+        - name: Pull the immutable application image
+          ansible.builtin.command:
+            argv: [docker, pull, "{{ app_image }}"]
+          changed_when: true
+
+        - name: Create production configuration directory
+          ansible.builtin.file:
+            path: "{{ app_dir }}/docker"
+            state: directory
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: '0750'
+
+        - name: Install configuration from the selected release
+          ansible.builtin.copy:
+            src: "{{ release_dir }}/docker/{{ item }}"
+            dest: "{{ app_dir }}/docker/{{ item }}"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: '0640'
+          loop: [compose.prod.yml, Caddyfile]
+
+        - name: Validate production configuration without printing secrets
+          ansible.builtin.command:
+            argv: "{{ compose_argv + ['config', '--quiet'] }}"
+          changed_when: false
+
+        - name: Start production services and wait for health checks
+          ansible.builtin.command:
+            argv: "{{ compose_argv + ['up', '-d', '--pull', 'never', '--remove-orphans', '--wait', '--wait-timeout', compose_wait_timeout | string] }}"
+          changed_when: true
+
+        - name: Record the successfully installed release
+          ansible.builtin.template:
+            src: deployment.json.j2
+            dest: "{{ app_dir }}/deployment.json"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: '0640'
+      rescue:
+        # Still within the same block, so DOCKER_CONFIG from the login
+        # above applies here too — the rollback pull needs no re-auth.
+        - name: Attempt to roll back to the previously running release
+          when: application_deploy_previous_image is defined
+          block:
+            - name: Re-pull the previously running image
+              ansible.builtin.command:
+                argv: [docker, pull, "{{ application_deploy_previous_image }}"]
+              changed_when: true
+
+            - name: Bring the previously running release back up
+              ansible.builtin.command:
+                argv: "{{ compose_argv + ['up', '-d', '--pull', 'never', '--remove-orphans', '--wait', '--wait-timeout', compose_wait_timeout | string] }}"
+              environment:
+                APP_IMAGE: "{{ application_deploy_previous_image }}"
+              changed_when: true
+
+            - name: Restore the previous release record
+              ansible.builtin.copy:
+                dest: "{{ app_dir }}/deployment.json"
+                content: "{{ application_deploy_previous_raw.content | b64decode }}"
+                owner: "{{ app_user }}"
+                group: "{{ app_user }}"
+                mode: '0640'
+
+            - name: Restore the previous environment file
+              ansible.builtin.copy:
+                dest: "{{ app_dir }}/.env"
+                content: "{{ application_deploy_previous_env_raw.content | b64decode }}"
+                owner: "{{ app_user }}"
+                group: "{{ app_user }}"
+                mode: '0600'
+              when: application_deploy_previous_env_raw is succeeded
+              no_log: true
+
+            - name: Note that the rollback succeeded
+              ansible.builtin.set_fact:
+                application_deploy_rolled_back: true
+          rescue:
+            - name: Note that the rollback also failed
+              ansible.builtin.set_fact:
+                application_deploy_rolled_back: false
+
+        - name: Fail, reporting whether the rollback recovered the service
+          ansible.builtin.fail:
+            msg: >-
+              Deploying {{ release_tag }} failed its health check.
+              {{
+                ('Rolled back to the previously running release (' ~ application_deploy_previous_image ~ ').')
+                if application_deploy_rolled_back | default(false)
+                else (
+                  'Rollback to the previous release ALSO failed — the service may be down. Investigate immediately.'
+                  if application_deploy_previous_image is defined
+                  else 'No previous release was recorded to roll back to (first install).'
+                )
+              }}
+      always:
+        - name: Remove temporary registry credentials
+          ansible.builtin.file:
+            path: "{{ registry_config.path }}"
+            state: absent
+  rescue:
+    - name: Report deployment failure without an automatic database rollback
+      ansible.builtin.fail:
+        msg: "Deployment failed. Configuration backup: {{ backup_directory.path | default('not completed') }}. Inspect service state before restoring; database migrations are not rolled back."
+  always:
+    - name: Release host deployment lock
+      ansible.builtin.file:
+        path: "{{ deploy_lock }}"
+        state: absent

@@ -1,0 +1,1 @@
+{{ {'created_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ'), 'host': inventory_hostname, 'paths': existing_backup_paths, 'database_included': false} | to_nice_json }}

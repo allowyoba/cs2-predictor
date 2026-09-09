@@ -1,0 +1,118 @@
+name: Release
+
+# Runs after CI finishes on the default branch, not directly on push: it
+# waits for the same "CI" run every merge already triggers (unit tests,
+# integration tests, the image build validation with its Trivy scan)
+# rather than duplicating that work or risking a release built from a
+# commit CI hasn't actually finished checking. See the `if:` below.
+#
+# semantic-release (release.config.mjs) then decides whether a release is
+# warranted and, if so, creates the tag and GitHub release via the API;
+# this job builds, pushes and signs the image for that version. Both live
+# in one job because a tag created via GITHUB_TOKEN doesn't trigger
+# another workflow run, so a separate tag-triggered workflow would never
+# fire.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Manual fallback — e.g. re-running a release that failed after the
+  # image was already pushed but before it was signed, with no new
+  # commit to wait for CI on. Still runs semantic-release itself, so it
+  # only actually publishes when there's a releasable commit since the
+  # last tag.
+  workflow_dispatch:
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Tag and publish
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      # For cosign's keyless signing — no signing key ever exists.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The exact commit CI just validated; falls back to the
+          # triggering ref (main) for a manual workflow_dispatch run.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Run semantic-release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
+
+      - name: Assemble the image reference
+        id: image
+        if: steps.release.outputs.new_release_published == 'true'
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # GHCR rejects an uppercase path, and a repository name is free
+          # to contain one.
+          echo "ref=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.release.outputs.new_release_published == 'true'
+      - uses: docker/login-action@v4
+        if: steps.release.outputs.new_release_published == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the image
+        id: build
+        if: steps.release.outputs.new_release_published == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          # Single known server, single architecture.
+          platforms: linux/amd64
+          push: true
+          # Without this, attestations turn the pushed ref into a
+          # multi-manifest index, making the deploy's resolved digest
+          # ambiguous.
+          provenance: false
+          tags: ${{ steps.image.outputs.ref }}:v${{ steps.release.outputs.new_release_version }}
+          build-args: |
+            VERSION=v${{ steps.release.outputs.new_release_version }}
+            COMMIT=${{ github.event.workflow_run.head_sha || github.sha }}
+            BUILD_TIME=${{ steps.image.outputs.built_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: sigstore/cosign-installer@v4.1.2
+        if: steps.release.outputs.new_release_published == 'true'
+
+      - name: Sign the published image (keyless)
+        # Verified by ansible/roles/prepare_deploy before any deploy
+        # pulls the image — see ansible/README.md's "Image signing".
+        if: steps.release.outputs.new_release_published == 'true'
+        run: cosign sign --yes "${{ steps.image.outputs.ref }}@${{ steps.build.outputs.digest }}"

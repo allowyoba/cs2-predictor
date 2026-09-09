@@ -1,0 +1,3 @@
+---
+validate_host_app_user: "{{ lookup('env', 'APP_USER') | default('cs2predictor', true) }}"
+validate_host_app_dir: "{{ lookup('env', 'APP_PATH') | default('/opt/cs2predictor', true) }}"

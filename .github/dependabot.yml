@@ -1,0 +1,54 @@
+version: 2
+updates:
+  # commit-message.prefix "chore" does two things: it makes Dependabot's
+  # own PR titles pass ci.yml's Conventional Commits check, and it
+  # classifies them under a type release.config.mjs's commit-analyzer
+  # gives no release rule to — a dependency bump alone never publishes a
+  # new application version.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    groups:
+      go-dependencies:
+        patterns: [ "*" ]
+
+  # The Dockerfile's build and runtime base images. The postgres and
+  # caddy tags in the Compose files are not covered by this ecosystem and
+  # are reviewed by hand.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    groups:
+      docker-images:
+        patterns: [ "*" ]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    groups:
+      github-actions:
+        patterns: [ "*" ]
+
+  # semantic-release and its plugins, used only by .github/workflows/release.yml.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    groups:
+      semantic-release:
+        patterns: [ "*" ]

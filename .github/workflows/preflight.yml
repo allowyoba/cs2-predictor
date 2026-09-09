@@ -1,0 +1,84 @@
+name: Server preflight
+
+# Checks the target server is reachable, so a merge is never blocked
+# later by a problem that was already there. Runs on pull_request_target
+# (access to the production SSH key) and therefore never checks out or
+# runs code from the pull request. Prefers PREFLIGHT_DEPLOY_KEY/
+# PREFLIGHT_KNOWN_HOSTS/PREFLIGHT_DEPLOY_USER when set, falling back to
+# the main DEPLOY_KEY/KNOWN_HOSTS/DEPLOY_USER — see ansible/README.md's
+# "Preflight credential" section.
+
+on:
+  pull_request_target:
+    types: [ opened, synchronize, reopened, ready_for_review ]
+  workflow_dispatch:
+
+permissions:
+  statuses: write
+
+concurrency:
+  group: preflight-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: SSH and server status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Mark the exact pull request commit pending
+        if: github.event_name == 'pull_request_target'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha: context.payload.pull_request.head.sha,
+              context: 'Deployment preflight', state: 'pending',
+              description: 'Checking Ansible prerequisites',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
+
+      - name: Check the server without deploying anything
+        # Inline rather than a Make target on purpose: this job never
+        # checks out the repository at all, not even the trusted base
+        # branch, and a Make target would need that checkout to exist.
+        id: probe
+        env:
+          DEPLOY_KEY: ${{ secrets.PREFLIGHT_DEPLOY_KEY || secrets.DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PREFLIGHT_KNOWN_HOSTS || secrets.KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.PREFLIGHT_DEPLOY_USER || vars.DEPLOY_USER }}
+          APP_USER: ${{ vars.APP_USER }}
+        run: |
+          set -euo pipefail
+          umask 077
+          install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+          app_user="${APP_USER:-cs2predictor}"
+          ssh -i "$RUNNER_TEMP/deploy_key" \
+              -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+              -o StrictHostKeyChecking=yes \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o ConnectTimeout=15 \
+              -p "$DEPLOY_PORT" \
+              "${DEPLOY_USER:-cs2deploy}@$DEPLOY_HOST" \
+              "sudo -n -u '$app_user' true && python3 --version && sudo -n -u '$app_user' docker compose version && sudo -n -u '$app_user' docker info >/dev/null"
+
+      - name: Report the result on the pull request head
+        if: always() && github.event_name == 'pull_request_target'
+        uses: actions/github-script@v9
+        env:
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        with:
+          script: |
+            const success = process.env.PROBE_OUTCOME === 'success';
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha: context.payload.pull_request.head.sha,
+              context: 'Deployment preflight', state: success ? 'success' : 'failure',
+              description: success ? 'Ansible prerequisites available' : 'Server preflight failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

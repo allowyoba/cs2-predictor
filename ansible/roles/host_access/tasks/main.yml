@@ -1,0 +1,161 @@
+---
+- name: Validate separate application and deployment accounts
+  ansible.builtin.assert:
+    that:
+      - automation_user is match('^[a-z_][a-z0-9_-]*$')
+      - automation_user not in ['root', 'admin', app_user]
+      - app_user is match('^[a-z_][a-z0-9_-]*$')
+      - app_user not in ['root', 'admin']
+    fail_msg: APP_USER and DEPLOY_USER must be separate non-administrator accounts.
+
+- name: Back up host access and application configuration before migration
+  ansible.builtin.include_role:
+    name: configuration_backup
+  vars:
+    backup_label: bootstrap
+    backup_paths:
+      - /etc/ssh/sshd_config
+      - /etc/ssh/sshd_config.d
+      - /etc/sudoers.d
+      - /usr/local/sbin/cs2predictor-deploy
+      - /usr/local/sbin/cs2predictor-ssh-command
+      - "{{ app_dir }}/.env"
+      - "{{ app_dir }}/docker"
+      - "{{ app_dir }}/deployment.json"
+      - "/home/{{ automation_user }}/.ssh/authorized_keys"
+
+- name: Read the existing deployment authorized keys when no public key was supplied
+  ansible.builtin.slurp:
+    src: "/home/{{ automation_user }}/.ssh/authorized_keys"
+  register: existing_authorized_keys
+  when: automation_public_key | length == 0
+  no_log: true
+
+- name: Extract the existing Ed25519 public key without its forced command
+  ansible.builtin.set_fact:
+    existing_deploy_keys: "{{ (existing_authorized_keys.content | b64decode) | regex_findall('(?m)(?:^|[ \t])(ssh-ed25519[ \t]+[A-Za-z0-9+/]+=*(?:[ \t]+[^\r\n]*)?)$') }}"
+  when: automation_public_key | length == 0
+  no_log: true
+
+- name: Require one unambiguous existing public key
+  ansible.builtin.assert:
+    that:
+      - existing_deploy_keys | length == 1
+      - (existing_authorized_keys.content | b64decode).splitlines() | reject('match', '^\s*(#|$)') | list | length == 1
+    fail_msg: Supply automation_public_key explicitly if authorized_keys has multiple or unsupported keys.
+  when: automation_public_key | length == 0
+
+- name: Select the supplied or existing deployment public key
+  ansible.builtin.set_fact:
+    selected_deploy_public_key: "{{ automation_public_key if automation_public_key | length > 0 else existing_deploy_keys[0] }}"
+
+- name: Validate the deployment public key
+  ansible.builtin.assert:
+    that:
+      - selected_deploy_public_key is match('^ssh-ed25519 [A-Za-z0-9+/]+=*( .*)?$')
+      - selected_deploy_public_key.splitlines() | length == 1
+
+- name: Install Python and sudo prerequisites
+  ansible.builtin.apt:
+    name: [python3, sudo]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure service account exists
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    system: true
+    home: "/var/lib/{{ app_user }}"
+    shell: /usr/sbin/nologin
+    create_home: true
+
+- name: Create the Ansible SSH account
+  ansible.builtin.user:
+    name: "{{ automation_user }}"
+    shell: /bin/bash
+    create_home: true
+    password_lock: true
+
+- name: Create private SSH directory
+  ansible.builtin.file:
+    path: "/home/{{ automation_user }}/.ssh"
+    state: directory
+    owner: "{{ automation_user }}"
+    group: "{{ automation_user }}"
+    mode: '0700'
+
+- name: Install automation key without a forced command
+  ansible.builtin.copy:
+    dest: "/home/{{ automation_user }}/.ssh/authorized_keys"
+    content: "restrict {{ selected_deploy_public_key }}\n"
+    owner: "{{ automation_user }}"
+    group: "{{ automation_user }}"
+    mode: '0600'
+
+- name: Allow Ansible modules to become root
+  ansible.builtin.template:
+    src: sudoers.j2
+    dest: "/etc/sudoers.d/{{ automation_user }}"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Inspect the existing provisioning SSH drop-in
+  ansible.builtin.stat:
+    path: "{{ managed_sshd_config }}"
+  register: managed_sshd
+
+- name: Configure public key authentication without a forced command for Ansible
+  ansible.builtin.template:
+    src: sshd-user.conf.j2
+    dest: "{{ automation_sshd_config }}"
+    owner: root
+    group: root
+    mode: '0644'
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload validated SSH configuration
+
+- name: Add the new account to the provisioned SSH allow-list
+  ansible.builtin.lineinfile:
+    path: "{{ managed_sshd_config }}"
+    regexp: '^(AllowUsers(?!.*\b{{ automation_user }}\b).*)$'
+    line: '\1 {{ automation_user }}'
+    backrefs: true
+    validate: /usr/sbin/sshd -t -f %s
+  when: managed_sshd.stat.exists
+  notify: Reload validated SSH configuration
+
+- name: Validate the complete SSH configuration
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -t]
+  changed_when: false
+
+- name: Inspect the effective policy for the Ansible account
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -T, -C, "user={{ automation_user }},host=localhost,addr=127.0.0.1"]
+  register: ssh_policy
+  changed_when: false
+
+- name: Require an unrestricted command channel with public key authentication
+  ansible.builtin.assert:
+    that:
+      - "'forcecommand none' in ssh_policy.stdout_lines"
+      - "'pubkeyauthentication yes' in ssh_policy.stdout_lines"
+    fail_msg: Another SSH policy blocks this account; review the effective sshd configuration.
+
+- name: Apply the validated SSH configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Create the application directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: '0750'
+
+- name: Report remaining setup
+  ansible.builtin.debug:
+    msg: "Test SSH and sudo as {{ automation_user }} with the existing DEPLOY_KEY. Prepare {{ app_dir }}/.env separately. Host backup: {{ backup_directory.path }}."

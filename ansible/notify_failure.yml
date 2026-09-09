@@ -1,0 +1,35 @@
+---
+# DMs the bot's administrators on a failed deploy. Triggered only by
+# deploy.yml's `if: failure()` step. DEPLOY_NOTIFY_CHAT_IDS is a GitHub
+# environment variable; TELEGRAM_BOT_TOKEN still comes from the server's
+# own .env. Unset DEPLOY_NOTIFY_CHAT_IDS means a quiet no-op, without
+# even requiring .env to exist — see ansible/README.md.
+- name: Prepare SSH transport for the notification job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  roles:
+    - prepare_connection
+
+- name: Notify the bot's administrators
+  hosts: production
+  become: true
+  become_user: "{{ app_user }}"
+  gather_facts: false
+  serial: 1
+  roles:
+    - notify_admins
+
+- name: Remove controller SSH credentials
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Clean up the prepared SSH transport
+      ansible.builtin.include_role:
+        name: prepare_connection
+        tasks_from: cleanup

@@ -1,0 +1,71 @@
+package httpapi
+
+import (
+	"log/slog"
+	"net/http"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"cs2predictor/internal/app"
+	"cs2predictor/internal/domain/enrichment"
+)
+
+// Package httpapi is the bot's HTTP surface: the Telegram webhook route
+// and the health, metrics and version endpoints the container, compose
+// healthcheck and reverse proxy expect. It is separate from the app
+// package — which orchestrates the background jobs — so that neither
+// concern has to be read to change the other; the dependency only runs
+// one way, from here into app.
+
+// RouterDeps are the dependencies NewRouter wires into the HTTP mux.
+type RouterDeps struct {
+	Webhook  http.Handler
+	Gateway  *app.CompetitionProviderGateway
+	Registry *prometheus.Registry
+	Pool     DBPinger // nil is allowed; readiness then skips the DB check
+
+	// EnrichmentState/EnrichmentSources report enabled enrichment providers'
+	// sync status on /healthz/ready for observability only — nil/empty
+	// skips that section entirely (used by tests and when no enrichment
+	// provider is configured).
+	EnrichmentState   enrichment.SyncStateRepository
+	EnrichmentSources []enrichment.Source
+
+	// Metrics/Log, when both set, wrap the webhook route with panic
+	// recovery and request metrics (see withObservability). Either left
+	// nil skips that wrapping — used by tests that don't wire a full
+	// Metrics/logger.
+	Metrics *app.Metrics
+	Log     *slog.Logger
+	// WebhookRateLimit bounds accepted webhook requests; its zero value
+	// disables the limiter (see withRateLimit).
+	WebhookRateLimit app.WebhookRateLimitConfig
+
+	// Version/Commit/BuildTime are reported by GET /version — set via
+	// -ldflags at build time (see Makefile and docker/Dockerfile),
+	// "dev"/"unknown" for
+	// a plain `go build`/`go run`.
+	Version   string
+	Commit    string
+	BuildTime string
+}
+
+// NewRouter builds the HTTP mux: the Telegram webhook plus health, metrics,
+// and version endpoints, matched to what the image HEALTHCHECK, the
+// Compose healthchecks and the Caddy path allow-list in docker/ expect.
+func NewRouter(deps RouterDeps) http.Handler {
+	webhook := deps.Webhook
+	if deps.Metrics != nil && deps.Log != nil {
+		webhook = withObservability("telegram_webhook", webhook, deps.Metrics, deps.Log)
+	}
+	webhook = withRateLimit(webhook, deps.WebhookRateLimit)
+
+	mux := http.NewServeMux()
+	mux.Handle("POST /telegram/webhook", webhook)
+	mux.Handle("GET /healthz/live", livenessHandler())
+	mux.Handle("GET /healthz/ready", readinessHandler(deps.Gateway, deps.Pool, deps.EnrichmentState, deps.EnrichmentSources))
+	mux.Handle("GET /metrics", promhttp.HandlerFor(deps.Registry, promhttp.HandlerOpts{}))
+	mux.Handle("GET /version", versionHandler(deps.Version, deps.Commit, deps.BuildTime))
+	return mux
+}

@@ -1,0 +1,91 @@
+---
+# prepare_connection (writes the SSH key) runs last, after every release
+# input is validated and the digest resolved — nothing here needs SSH
+# before that point, so nothing should have credentials written for it
+# yet. Included explicitly rather than via meta dependency, which would
+# run it first instead.
+
+- name: Validate release inputs
+  ansible.builtin.assert:
+    that:
+      - prepare_deploy_tag is match('^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
+      - prepare_deploy_repository is match('^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*$')
+    fail_msg: Check the release tag and repository.
+
+- name: Require registry credentials
+  ansible.builtin.assert:
+    that:
+      - prepare_deploy_registry_user | length > 0
+      - prepare_deploy_registry_token | length > 0
+    fail_msg: REGISTRY_USER and REGISTRY_TOKEN are required.
+  no_log: true
+
+- name: Create isolated controller registry credentials directory
+  ansible.builtin.tempfile:
+    path: "{{ prepare_deploy_work_dir }}"
+    state: directory
+    prefix: cs2predictor-registry-
+  register: prepare_deploy_registry_config
+
+- name: Resolve the authenticated published release image
+  environment:
+    DOCKER_CONFIG: "{{ prepare_deploy_registry_config.path }}"
+  block:
+    - name: Authenticate controller to GHCR
+      ansible.builtin.command:
+        argv: [docker, login, ghcr.io, --username, "{{ prepare_deploy_registry_user }}", --password-stdin]
+        stdin: "{{ prepare_deploy_registry_token }}"
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the published release image on the controller
+      ansible.builtin.command:
+        argv:
+          - docker
+          - buildx
+          - imagetools
+          - inspect
+          - "ghcr.io/{{ prepare_deploy_repository }}:{{ prepare_deploy_tag }}"
+          - --format
+          - '{{ "{{json .Manifest}}" }}'
+      register: prepare_deploy_manifest
+      changed_when: false
+
+    - name: Verify the image was signed by this project's own release workflow
+      # Keyless Sigstore verification against release.yml's own OIDC
+      # identity — rejects anything not signed by that exact workflow.
+      ansible.builtin.command:
+        argv:
+          - cosign
+          - verify
+          - "ghcr.io/{{ prepare_deploy_repository }}@{{ (prepare_deploy_manifest.stdout | from_json).digest }}"
+          - --certificate-identity
+          - "https://github.com/{{ prepare_deploy_repository }}/.github/workflows/release.yml@refs/heads/main"
+          - --certificate-oidc-issuer
+          - https://token.actions.githubusercontent.com
+      changed_when: false
+  always:
+    - name: Remove temporary controller registry credentials
+      ansible.builtin.file:
+        path: "{{ prepare_deploy_registry_config.path }}"
+        state: absent
+
+- name: Validate the registry manifest digest
+  ansible.builtin.assert:
+    that:
+      - (prepare_deploy_manifest.stdout | from_json).digest is match('^sha256:[a-f0-9]{64}$')
+    fail_msg: GHCR did not return a valid immutable digest.
+
+- name: Prepare the SSH transport and add the target to the in-memory inventory
+  ansible.builtin.include_role:
+    name: prepare_connection
+    # Without this, prepare_connection's own vars are scoped to its own
+    # tasks only, and the next task here would fail to resolve them.
+    public: true
+
+- name: Attach release metadata to the prepared inventory target
+  ansible.builtin.add_host:
+    name: application
+    groups: production
+    release_tag: "{{ prepare_deploy_tag }}"
+    app_image: "ghcr.io/{{ prepare_deploy_repository }}@{{ (prepare_deploy_manifest.stdout | from_json).digest }}"

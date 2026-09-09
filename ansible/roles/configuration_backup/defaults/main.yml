@@ -1,0 +1,9 @@
+---
+backup_root: /var/backups/cs2predictor
+backup_label: configuration
+backup_paths: []
+# host_access's backup covers root-only content (/etc/ssh, /etc/sudoers.d);
+# a caller backing up only its own files can override this — see
+# ansible/README.md's "Least-privilege deploy" section.
+backup_owner: root
+backup_group: root

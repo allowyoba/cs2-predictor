@@ -1,0 +1,57 @@
+---
+# Shared SSH transport setup for every controller-side playbook that
+# reaches `production`: prepare_deploy, webhook.yml, notify_failure.yml.
+
+- name: Validate controller connection inputs
+  ansible.builtin.assert:
+    that:
+      - prepare_connection_host is match('^[A-Za-z0-9][A-Za-z0-9.:-]*$')
+      - prepare_connection_user is match('^[a-z_][a-z0-9_-]*$')
+      - prepare_connection_port | string is match('^[0-9]+$')
+      - prepare_connection_port | int >= 1
+      - prepare_connection_port | int <= 65535
+      - prepare_connection_app_user is match('^[a-z_][a-z0-9_-]*$')
+      - prepare_connection_app_user != prepare_connection_user
+      - prepare_connection_app_user not in ['root', 'admin']
+      - prepare_connection_app_path is match('^/[a-zA-Z0-9_/-]+$')
+      - "'..' not in prepare_connection_app_path.split('/')"
+      - prepare_connection_app_path | regex_replace('/+$', '') | length > 0
+      - prepare_connection_work_dir is match('^/.+')
+    fail_msg: Check deployment host, user, port, APP_USER, APP_PATH and RUNNER_TEMP.
+
+- name: Require SSH credentials
+  ansible.builtin.assert:
+    that:
+      - prepare_connection_private_key | length > 0
+      - prepare_connection_known_hosts | length > 0
+    fail_msg: DEPLOY_KEY and KNOWN_HOSTS are required.
+  no_log: true
+
+- name: Write the deployment SSH key privately
+  ansible.builtin.copy:
+    dest: "{{ prepare_connection_work_dir }}/deploy_key"
+    content: "{{ prepare_connection_private_key | trim }}\n"
+    mode: '0600'
+  no_log: true
+
+- name: Write the supplied trusted host keys
+  ansible.builtin.copy:
+    dest: "{{ prepare_connection_work_dir }}/known_hosts"
+    content: "{{ prepare_connection_known_hosts | trim }}\n"
+    mode: '0600'
+  no_log: true
+
+- name: Add the deployment target to the in-memory inventory
+  ansible.builtin.add_host:
+    name: application
+    groups: production
+    ansible_host: "{{ prepare_connection_host }}"
+    ansible_user: "{{ prepare_connection_user }}"
+    ansible_port: "{{ prepare_connection_port | int }}"
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_ssh_private_key_file: "{{ prepare_connection_work_dir }}/deploy_key"
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=yes -o BatchMode=yes -o IdentitiesOnly=yes
+      -o ConnectTimeout=15 -o UserKnownHostsFile={{ (prepare_connection_work_dir + '/known_hosts') | quote }}
+    app_user: "{{ prepare_connection_app_user }}"
+    app_dir: "{{ prepare_connection_app_path | regex_replace('/+$', '') }}"
