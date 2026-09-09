@@ -1,0 +1,19 @@
+.idea/
+.env
+*.log
+out/
+
+# Go
+/bin/
+*.test
+*.prof
+coverage.out
+coverage.html
+
+# Local Ansible controller and release checkout
+.venv-ansible/
+release/
+__pycache__/
+
+# Node (release tooling only — semantic-release)
+node_modules/
