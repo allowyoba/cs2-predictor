@@ -147,14 +147,14 @@ func (h *UpdateHandler) renderEventBrowse(ctx context.Context, target replyTarge
 	if topTierOnly {
 		mode = "top"
 	}
-	var nav []InlineButton
-	if page > 0 {
-		nav = append(nav, button("‹", fmt.Sprintf("events:browse:%s:%d", mode, page-1)))
+	maxPage := 0
+	if len(found) > 0 {
+		maxPage = (len(found) - 1) / eventBrowsePageSize
 	}
-	if end < len(found) {
-		nav = append(nav, button("›", fmt.Sprintf("events:browse:%s:%d", mode, page+1)))
-	}
-	if len(nav) > 0 {
+	totalPages := maxPage + 1
+	if nav := paginationRow(page, totalPages, fmt.Sprintf("%d / %d", page+1, totalPages), func(p int) string {
+		return fmt.Sprintf("events:browse:%s:%d", mode, p)
+	}); nav != nil {
 		rows = append(rows, nav)
 	}
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "events:add")})

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -418,11 +419,11 @@ func TestRenderLeaderboard_KeepsRowsFocusedOnRankNameAndPoints(t *testing.T) {
 	periods := []scoring.StatsPeriod{scoring.AllTime(), scoring.ForYear(2026), scoring.ForMonth(2026, time.September)}
 	for _, period := range periods {
 		*calls = nil
-		if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, period); err != nil {
+		if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, period, "menu:stats", common.UserID{}); err != nil {
 			t.Fatal(err)
 		}
 		body, _ := (*calls)[0]["text"].(string)
-		if !strings.Contains(body, "Alex") || !strings.Contains(body, ">9</b>") {
+		if !strings.Contains(body, "Alex") || !strings.Contains(body, "<code>9</code>") {
 			t.Fatalf("period %+v must show rank/name/points, got %q", period, body)
 		}
 		for _, noisy := range []string{"🗳", "🎯", "голосования", "эффективность"} {
@@ -446,7 +447,7 @@ func TestRenderLeaderboard_FormatsMedalsAndAppliesPeriodName(t *testing.T) {
 	}}
 	handler.Scoring = sc
 
-	if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, scoring.AllTime()); err != nil {
+	if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, scoring.AllTime(), "menu:stats", common.UserID{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 1 {
@@ -632,5 +633,47 @@ func TestEventsSearchCallback_MentionsClickerSoSelectiveActuallyScopes(t *testin
 	markup, _ := call["reply_markup"].(map[string]any)
 	if markup["selective"] != true || markup["force_reply"] != true {
 		t.Fatalf("reply_markup = %+v, want force_reply/selective both true", markup)
+	}
+}
+
+func TestRenderLeaderboard_PaginatesAndKeepsViewerVisible(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Title: "Test Chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}
+	_, _ = chats.Save(context.Background(), settings)
+
+	standings := make([]scoring.UserStanding, 12)
+	for i := range standings {
+		standings[i] = scoring.UserStanding{
+			UserID: common.UserID{Value: int64(i + 1)}, DisplayName: fmt.Sprintf("User%d", i+1), Rank: i + 1, Points: 100 - i,
+		}
+	}
+	handler.Scoring = &dataScoring{leaderboard: standings}
+	viewer := common.UserID{Value: 12}
+
+	if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, scoring.AllTime(), "menu:stats", viewer); err != nil {
+		t.Fatal(err)
+	}
+	text := lastText(*calls)
+	if !strings.Contains(text, "12 место") {
+		t.Fatalf("viewer outside page must still be shown, got %q", text)
+	}
+	labels := buttonLabels(t, (*calls)[len(*calls)-1])
+	if !slices.Contains(labels, "1 / 2") || !slices.Contains(labels, "›") {
+		t.Fatalf("expected compact leaderboard pagination, got %v", labels)
+	}
+
+	*calls = nil
+	if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, scoring.AllTime(), "menu:stats", viewer, 1); err != nil {
+		t.Fatal(err)
+	}
+	text = lastText(*calls)
+	if !strings.Contains(text, "User12") || !strings.Contains(text, "👤") {
+		t.Fatalf("viewer row on its page must be marked, got %q", text)
+	}
+	labels = buttonLabels(t, (*calls)[len(*calls)-1])
+	if !slices.Contains(labels, "2 / 2") || !slices.Contains(labels, "‹") {
+		t.Fatalf("expected second-page pagination, got %v", labels)
 	}
 }

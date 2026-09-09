@@ -311,6 +311,82 @@ func TestPrivateCallback_NoDMSessionFallsBackToPersonalStats(t *testing.T) {
 	}
 }
 
+func TestPrivateCallback_ManagedStatsEditsDMAndNeverSendsToGroup(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	handler.Scoring = fakeScoringWithStandings{}
+	handler.Authorization = chat.NewAuthorizationService(chats, fakeMembership{role: chat.RoleAdministrator})
+	groupChatID := common.ChatID{Value: -100123}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: groupChatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true, Title: "Managed Chat"})
+	userID := common.UserID{Value: 42}
+	_ = chats.SetDMSession(context.Background(), userID, groupChatID)
+
+	data := chatScope(groupChatID).prefix() + "stats:all"
+	cb := &CallbackQuery{
+		ID:      "stats-dm",
+		From:    User{ID: userID.Value, FirstName: "Admin"},
+		Message: &Message{Chat: Chat{ID: userID.Value, Type: "private"}, MessageID: 77},
+		Data:    &data,
+	}
+	if err := handler.handlePrivateCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	var sawDMEdit bool
+	for _, call := range *calls {
+		method, _ := call["__method"].(string)
+		chatID, _ := call["chat_id"].(float64)
+		if int64(chatID) == groupChatID.Value && (method == "sendMessage" || method == "editMessageText") {
+			t.Fatalf("managed stats leaked a Telegram message into the group: %+v", call)
+		}
+		if method == "editMessageText" && int64(chatID) == userID.Value {
+			sawDMEdit = true
+			text, _ := call["text"].(string)
+			if !strings.Contains(text, "Managed Chat") || !strings.Contains(text, "TestUser") {
+				t.Fatalf("expected managed group context and leaderboard in DM panel, got %q", text)
+			}
+		}
+	}
+	if !sawDMEdit {
+		t.Fatalf("expected stats to edit the existing DM panel, calls: %+v", *calls)
+	}
+}
+
+func TestGroupCallback_StatsStillPublishesPublicLeaderboard(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	handler.Scoring = fakeScoringWithStandings{}
+	groupChatID := common.ChatID{Value: -100123}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: groupChatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true, Title: "Public Group"})
+
+	data := "stats:all"
+	cb := &CallbackQuery{
+		ID:      "stats-group",
+		From:    User{ID: 7, FirstName: "Member"},
+		Message: &Message{Chat: Chat{ID: groupChatID.Value, Type: "group"}, MessageID: 55},
+		Data:    &data,
+	}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	var sawGroupSend bool
+	for _, call := range *calls {
+		if call["__method"] != "sendMessage" {
+			continue
+		}
+		chatID, _ := call["chat_id"].(float64)
+		if int64(chatID) == groupChatID.Value {
+			sawGroupSend = true
+		}
+	}
+	if !sawGroupSend {
+		t.Fatalf("expected group stats to remain publicly viewable, calls: %+v", *calls)
+	}
+}
+
 func TestStatsDeepLink_ParsesValidPayload(t *testing.T) {
 	id := int64(-1001234567890)
 	text := "/start stats_" + int64Base36(id)

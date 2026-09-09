@@ -2,9 +2,11 @@ package telegram
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -101,5 +103,35 @@ func TestSettingsToggle_AnswersOnceViaToastNotTwice(t *testing.T) {
 	}
 	if !sawEdit {
 		t.Fatalf("expected the settings view to be re-rendered in place, got %+v", *calls)
+	}
+}
+
+func TestLeaderboardRows_AreCompactAndDoNotUseSpacePaddedColumns(t *testing.T) {
+	rows := leaderboardRows([]scoring.UserStanding{
+		{Rank: 1, DisplayName: "Очень длинное имя игрока", Points: 123},
+		{Rank: 4, DisplayName: "Alex", Points: 9},
+	}, common.UserID{})
+	if strings.Contains(rows, "                        ") {
+		t.Fatalf("leaderboard must not use fixed-width space padding: %q", rows)
+	}
+	if !strings.Contains(rows, "🥇 <b>") || !strings.Contains(rows, "4. <b>Alex</b> · <code>9</code>") {
+		t.Fatalf("unexpected compact leaderboard format: %q", rows)
+	}
+}
+
+func TestLeaderboardRows_ShowsMovementWhenAvailable(t *testing.T) {
+	prev := 6
+	rows := leaderboardRows([]scoring.UserStanding{{Rank: 4, PreviousRank: &prev, DisplayName: "Alex", Points: 9}}, common.UserID{})
+	if !strings.Contains(rows, "↑2") {
+		t.Fatalf("expected rank movement, got %q", rows)
+	}
+}
+
+func TestStatsFilterLabel_MarksActiveChoice(t *testing.T) {
+	if got := statsFilterLabel(true, "Month"); got != "✓ Month" {
+		t.Fatalf("active label = %q", got)
+	}
+	if got := statsFilterLabel(false, "Month"); got != "Month" {
+		t.Fatalf("inactive label = %q", got)
 	}
 }

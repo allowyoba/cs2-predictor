@@ -40,7 +40,7 @@ func (h *UpdateHandler) statsMenu(ctx context.Context, target replyTarget, setti
 	latest := available[0]
 	latestMonthLabel := fmt.Sprintf("%s %d", shortMonthName(latest.Month, settings.Locale), latest.Year)
 	rows := [][]InlineButton{
-		{button(latestMonthLabel, fmt.Sprintf("stats:month:%04d-%02d", latest.Year, latest.Month)), button(strconv.Itoa(latest.Year), fmt.Sprintf("stats:year:%d", latest.Year))},
+		{button(latestMonthLabel, fmt.Sprintf("stats:month:%04d-%02d:menu", latest.Year, latest.Month)), button(strconv.Itoa(latest.Year), fmt.Sprintf("stats:year:%d:menu", latest.Year))},
 		{button(h.Texts.Get("stats.all_time", settings.Locale), "stats:all"), button(h.Texts.Get("stats.event", settings.Locale), "stats:events")},
 		{button(h.Texts.Get("stats.other_period", settings.Locale), "stats:years")},
 	}
@@ -71,7 +71,7 @@ func (h *UpdateHandler) yearMenu(ctx context.Context, target replyTarget, settin
 		seen[period.Year] = true
 		y := period.Year
 		rows = append(rows, []InlineButton{
-			button(strconv.Itoa(y), fmt.Sprintf("stats:year:%d", y)),
+			button(strconv.Itoa(y), fmt.Sprintf("stats:year:%d:years", y)),
 			button(h.Texts.Get("stats.months_button", settings.Locale), fmt.Sprintf("stats:months:%d", y)),
 		})
 	}
@@ -80,7 +80,7 @@ func (h *UpdateHandler) yearMenu(ctx context.Context, target replyTarget, settin
 	if len(seen) == 0 {
 		text += "\n\n" + h.Texts.Get("stats.empty", settings.Locale)
 	}
-	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func shortMonthName(m time.Month, locale common.LocaleCode) string {
@@ -102,7 +102,7 @@ func (h *UpdateHandler) monthMenu(ctx context.Context, target replyTarget, setti
 			continue
 		}
 		label := shortMonthName(period.Month, settings.Locale)
-		row = append(row, button(label, fmt.Sprintf("stats:month:%04d-%02d", year, period.Month)))
+		row = append(row, button(label, fmt.Sprintf("stats:month:%04d-%02d:months:%d", year, period.Month, year)))
 		if len(row) == 3 {
 			rows = append(rows, row)
 			row = nil
@@ -116,7 +116,7 @@ func (h *UpdateHandler) monthMenu(ctx context.Context, target replyTarget, setti
 	if len(rows) == 1 {
 		text += "\n\n" + h.Texts.Get("stats.empty", settings.Locale)
 	}
-	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) eventStatsMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
@@ -149,7 +149,7 @@ func (h *UpdateHandler) eventStatsMenu(ctx context.Context, target replyTarget, 
 	if len(rows) > 1 {
 		body = bold(escapeHTML(h.Texts.Get("stats.event", settings.Locale)))
 	}
-	return h.respond(ctx, target, body, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, body), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) personalStats(ctx context.Context, target replyTarget, settings chat.Settings, from User, eventID common.EventID) error {
@@ -162,60 +162,176 @@ func (h *UpdateHandler) personalStats(ctx context.Context, target replyTarget, s
 			text := fmt.Sprintf("%s\n%s · %s · %s/%s",
 				bold(escapeHTML(s.DisplayName)), code(fmt.Sprintf("#%d", s.Rank)), code(strconv.Itoa(s.Points)),
 				code(strconv.Itoa(s.ExactPredictions)), code(strconv.Itoa(s.Predictions)))
-			return h.respond(ctx, target, text, h.statsExit(settings.Locale))
+			return h.respond(ctx, target, managedScreenContext(target, settings, text), h.statsExit(settings.Locale, "stats:events"))
 		}
 	}
-	return h.respond(ctx, target, h.Texts.Get("stats.empty", settings.Locale), h.statsExit(settings.Locale))
+	return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("stats.empty", settings.Locale)), h.statsExit(settings.Locale, "stats:events"))
 }
 
-// leaderboardRows renders each standing as "<medal> <rank>. <name> — <points>",
-// with the rank/name column wrapped in <code> (Telegram's monospace font)
-// and space-padded to a fixed width — the only way to get real column
-// alignment in a chat message despite variable-width display names.
-func leaderboardRows(standings []scoring.UserStanding) string {
+// leaderboardRows favors a compact, wrap-safe list over a faux table.
+// Telegram clients render proportional text, emoji and Unicode names at
+// different widths, so padding with spaces is not stable on mobile. viewer
+// marks that row with 👤 when it matches one of the standings; the zero
+// common.UserID never matches a real Telegram user, so callers with no
+// viewer to highlight can simply pass it.
+func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID) string {
 	var b strings.Builder
 	for i, s := range standings {
 		name := truncate(s.DisplayName, 24)
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(medalFor(s.Rank) + " ")
-		fmt.Fprintf(&b, "%s — %s", code(escapeHTML(fmt.Sprintf("%2d. %-24s", s.Rank, name))), bold(strconv.Itoa(s.Points)))
+		prefix := medalFor(s.Rank)
+		if s.Rank > 3 {
+			prefix = fmt.Sprintf("%d.", s.Rank)
+		}
+		movement := standingMovement(s)
+		if movement != "" {
+			movement = " " + italic(movement)
+		}
+		viewerMark := ""
+		if s.UserID == viewer {
+			viewerMark = " · 👤"
+		}
+		fmt.Fprintf(&b, "%s %s%s · %s%s", prefix, bold(escapeHTML(name)), movement, code(strconv.Itoa(s.Points)), viewerMark)
 	}
 	return b.String()
 }
 
-// statsExit gives the leaderboard screens a way onward. They are sent as
-// new messages rather than edits (see routeCallback's doc comment), so
-// without it the only route to another period was to re-open the menu
-// from scratch — and a leaderboard reached from a match-result
-// notification's button had no route anywhere at all.
-func (h *UpdateHandler) statsExit(locale common.LocaleCode) *InlineKeyboard {
-	return &InlineKeyboard{InlineKeyboard: [][]InlineButton{
-		{button(h.Texts.Get("menu.stats", locale), "menu:stats")},
-	}}
+func standingMovement(s scoring.UserStanding) string {
+	if s.PreviousRank == nil {
+		return ""
+	}
+	switch {
+	case s.Rank < *s.PreviousRank:
+		return fmt.Sprintf("↑%d", *s.PreviousRank-s.Rank)
+	case s.Rank > *s.PreviousRank:
+		return fmt.Sprintf("↓%d", s.Rank-*s.PreviousRank)
+	default:
+		return "•"
+	}
 }
 
-func (h *UpdateHandler) renderLeaderboard(ctx context.Context, target replyTarget, settings chat.Settings, period scoring.StatsPeriod) error {
+func (h *UpdateHandler) statsExit(locale common.LocaleCode, backData string) *InlineKeyboard {
+	return &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, backData)}}}
+}
+
+func statsFilterLabel(active bool, label string) string {
+	if active {
+		return "✓ " + label
+	}
+	return label
+}
+
+const leaderboardPageSize = 10
+
+func statsBackCode(backData string) string {
+	switch {
+	case backData == "stats:years":
+		return "y"
+	case strings.HasPrefix(backData, "stats:months:"):
+		return "m"
+	default:
+		return "r"
+	}
+}
+
+func leaderboardPageData(period scoring.StatsPeriod, page int, backData string) string {
+	switch period.Kind {
+	case scoring.PeriodYear:
+		return fmt.Sprintf("stats:p:y:%d:%d:%s", period.Year, page, statsBackCode(backData))
+	case scoring.PeriodMonth:
+		return fmt.Sprintf("stats:p:m:%04d%02d:%d:%s", period.Year, period.Month, page, statsBackCode(backData))
+	case scoring.PeriodEvent:
+		return fmt.Sprintf("stats:p:e:%s:%d", strings.ReplaceAll(period.EventID.Value.String(), "-", ""), page)
+	default:
+		return fmt.Sprintf("stats:p:a:%d", page)
+	}
+}
+
+func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scoring.StatsPeriod, backData string, page, totalPages int) *InlineKeyboard {
+	monthData, yearData := "stats:years", "stats:years"
+	switch period.Kind {
+	case scoring.PeriodMonth:
+		monthData = fmt.Sprintf("stats:month:%04d-%02d:menu", period.Year, period.Month)
+		yearData = fmt.Sprintf("stats:year:%d:menu", period.Year)
+	case scoring.PeriodYear:
+		yearData = fmt.Sprintf("stats:year:%d:menu", period.Year)
+	}
+	rows := [][]InlineButton{
+		{
+			button(statsFilterLabel(period.Kind == scoring.PeriodMonth, h.Texts.Get("stats.month_short", settings.Locale)), monthData),
+			button(statsFilterLabel(period.Kind == scoring.PeriodYear, h.Texts.Get("stats.year_short", settings.Locale)), yearData),
+			button(statsFilterLabel(period.Kind == scoring.PeriodAllTime, h.Texts.Get("stats.all_time_short", settings.Locale)), "stats:all"),
+		},
+		{button(statsFilterLabel(period.Kind == scoring.PeriodEvent, h.Texts.Get("stats.event", settings.Locale)), "stats:events")},
+	}
+	if nav := paginationRow(page, totalPages, h.Texts.Get("stats.page", settings.Locale, page+1, totalPages), func(p int) string {
+		return leaderboardPageData(period, p, backData)
+	}); nav != nil {
+		rows = append(rows, nav)
+	}
+	rows = append(rows, []InlineButton{h.backButton(settings.Locale, backData)})
+	return &InlineKeyboard{InlineKeyboard: rows}
+}
+
+func (h *UpdateHandler) renderLeaderboard(ctx context.Context, target replyTarget, settings chat.Settings, period scoring.StatsPeriod, backData string, viewer common.UserID, pageOpt ...int) error {
 	standings, err := h.Scoring.Leaderboard(ctx, settings.ChatID, period)
 	if err != nil {
 		return err
 	}
-	if len(standings) > 10 {
-		standings = standings[:10]
+
+	page := 0
+	if len(pageOpt) > 0 && pageOpt[0] > 0 {
+		page = pageOpt[0]
+	}
+	totalPages := 1
+	if len(standings) > 0 {
+		totalPages = (len(standings) + leaderboardPageSize - 1) / leaderboardPageSize
+	}
+	if page >= totalPages {
+		page = totalPages - 1
 	}
 
+	viewerIndex := -1
+	for i := range standings {
+		if standings[i].UserID == viewer {
+			viewerIndex = i
+			break
+		}
+	}
+
+	start := page * leaderboardPageSize
+	end := start + leaderboardPageSize
+	if end > len(standings) {
+		end = len(standings)
+	}
+	visible := standings[start:end]
 	body := h.Texts.Get("stats.empty", settings.Locale)
-	if len(standings) > 0 {
-		body = leaderboardRows(standings)
+	if len(visible) > 0 {
+		body = leaderboardRows(visible, viewer)
+	}
+	viewerVisible := viewerIndex >= start && viewerIndex < end
+	if viewerIndex >= 0 && !viewerVisible {
+		viewerStanding := standings[viewerIndex]
+		movement := standingMovement(viewerStanding)
+		if movement != "" {
+			movement = " " + italic(movement)
+		}
+		body += "\n\n────────\n" + h.Texts.Get("stats.you", settings.Locale, viewerStanding.Rank, viewerStanding.Points, movement)
 	}
 
 	periodName, err := h.periodName(ctx, settings, period)
 	if err != nil {
 		return err
 	}
-	text := h.Texts.Get("stats.title", settings.Locale, escapeHTML(periodName)) + "\n\n" + body
-	return h.respond(ctx, target, text, h.statsExit(settings.Locale))
+	var text string
+	if target.chatID != settings.ChatID {
+		text = h.Texts.Get("stats.managed_title", settings.Locale, escapeHTML(settings.Title), escapeHTML(periodName)) + "\n\n" + body
+	} else {
+		text = h.Texts.Get("stats.title", settings.Locale, escapeHTML(periodName)) + "\n\n" + body
+	}
+	return h.respond(ctx, target, text, h.leaderboardKeyboard(settings, period, backData, page, totalPages))
 }
 
 func (h *UpdateHandler) periodName(ctx context.Context, settings chat.Settings, period scoring.StatsPeriod) (string, error) {

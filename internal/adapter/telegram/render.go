@@ -30,6 +30,25 @@ func bold(s string) string   { return "<b>" + s + "</b>" }
 func italic(s string) string { return "<i>" + s + "</i>" }
 func code(s string) string   { return "<code>" + s + "</code>" }
 
+// paginationRow renders a "‹ page/total ›" navigation row for a paged list:
+// "‹"/"›" only when a neighboring page exists either side, nil when there's
+// only one page to show at all. dataFor builds the callback data for a given
+// zero-based page number; counter is the already-localized "N / M" label.
+func paginationRow(page, totalPages int, counter string, dataFor func(page int) string) []InlineButton {
+	if totalPages <= 1 {
+		return nil
+	}
+	var nav []InlineButton
+	if page > 0 {
+		nav = append(nav, button("‹", dataFor(page-1)))
+	}
+	nav = append(nav, button(counter, "noop"))
+	if page+1 < totalPages {
+		nav = append(nav, button("›", dataFor(page+1)))
+	}
+	return nav
+}
+
 // managedScreenContext keeps the selected group visible on every screen
 // rendered inside the DM management panel. Group-chat rendering is left
 // unchanged. Screens that already carry the group header are not prefixed

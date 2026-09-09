@@ -53,7 +53,7 @@ func (h *UpdateHandler) timezoneView(ctx context.Context, target replyTarget, se
 // state as well as the choices.
 func timezoneLabel(zone, current string) string {
 	if zone == current {
-		return "• " + zone
+		return "✓ " + zone
 	}
 	return zone
 }

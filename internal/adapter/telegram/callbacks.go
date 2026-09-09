@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -75,9 +76,26 @@ func (h *UpdateHandler) handleCallback(ctx context.Context, cb *CallbackQuery) e
 // MatchResultPublisher's buttons too) deliberately still send a new
 // message: editing them in place would silently overwrite a match-result
 // notification with a leaderboard, destroying that historical message.
+// statsResultTarget preserves the public group experience while making a
+// managed group's DM panel behave like a single mini-app. A stats request
+// tapped in a group posts a new public leaderboard; the same request tapped
+// in DM edits only that private panel and can never leak the result back to
+// the managed group.
+func statsResultTarget(cb *CallbackQuery, settings chat.Settings) replyTarget {
+	if cb != nil && cb.Message != nil && cb.Message.Chat.Type == "private" {
+		return editTargetFromCallback(cb, settings.ChatID)
+	}
+	if cb != nil && cb.Message != nil {
+		return sendTarget(settings.ChatID, cb.Message.MessageThreadID)
+	}
+	return sendTarget(settings.ChatID, nil)
+}
+
 func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, settings chat.Settings, data string) (answered bool, err error) {
 	target := editTargetFromCallback(cb, settings.ChatID)
 	switch {
+	case data == "noop":
+		return false, nil
 	case data == "menu:main":
 		if cb.Message.Chat.Type == "private" {
 			if accessErr := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); accessErr != nil {
@@ -135,35 +153,116 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		return false, h.upcoming(ctx, target, settings)
 	case data == "menu:rules":
 		return false, h.respond(ctx, target, h.Texts.Get("rules.text", settings.Locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}})
+	case strings.HasPrefix(data, "stats:p:"):
+		parts := strings.Split(data, ":")
+		if len(parts) < 4 {
+			return false, newValidationError("invalid leaderboard page callback")
+		}
+		viewer := common.UserID{Value: cb.From.ID}
+		switch parts[2] {
+		case "a":
+			if len(parts) != 4 {
+				return false, newValidationError("invalid all-time leaderboard page callback")
+			}
+			page, parseErr := strconv.Atoi(parts[3])
+			if parseErr != nil || page < 0 {
+				return false, newValidationError("invalid leaderboard page")
+			}
+			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.AllTime(), "menu:stats", viewer, page)
+		case "y":
+			if len(parts) != 6 {
+				return false, newValidationError("invalid yearly leaderboard page callback")
+			}
+			year, yearErr := strconv.Atoi(parts[3])
+			page, pageErr := strconv.Atoi(parts[4])
+			if yearErr != nil || pageErr != nil || page < 0 {
+				return false, newValidationError("invalid yearly leaderboard page")
+			}
+			back := "menu:stats"
+			if parts[5] == "y" {
+				back = "stats:years"
+			}
+			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForYear(year), back, viewer, page)
+		case "m":
+			if len(parts) != 6 || len(parts[3]) != 6 {
+				return false, newValidationError("invalid monthly leaderboard page callback")
+			}
+			year, yearErr := strconv.Atoi(parts[3][:4])
+			monthInt, monthErr := strconv.Atoi(parts[3][4:])
+			page, pageErr := strconv.Atoi(parts[4])
+			if yearErr != nil || monthErr != nil || monthInt < 1 || monthInt > 12 || pageErr != nil || page < 0 {
+				return false, newValidationError("invalid monthly leaderboard page")
+			}
+			back := "menu:stats"
+			if parts[5] == "m" {
+				back = fmt.Sprintf("stats:months:%d", year)
+			}
+			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForMonth(year, time.Month(monthInt)), back, viewer, page)
+		case "e":
+			if len(parts) != 5 {
+				return false, newValidationError("invalid event leaderboard page callback")
+			}
+			id, idErr := uuid.Parse(parts[3])
+			page, pageErr := strconv.Atoi(parts[4])
+			if idErr != nil || pageErr != nil || page < 0 {
+				return false, newValidationError("invalid event leaderboard page")
+			}
+			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", viewer, page)
+		default:
+			return false, newValidationError("unknown leaderboard period")
+		}
 	case data == "stats:all":
-		return false, h.renderLeaderboard(ctx, sendTarget(settings.ChatID, cb.Message.MessageThreadID), settings, scoring.AllTime())
+		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.AllTime(), "menu:stats", common.UserID{Value: cb.From.ID})
 	case data == "stats:years":
 		return false, h.yearMenu(ctx, target, settings)
 	case strings.HasPrefix(data, "stats:months:"):
 		year, _ := strconv.Atoi(strings.TrimPrefix(data, "stats:months:"))
 		return false, h.monthMenu(ctx, target, settings, year)
 	case strings.HasPrefix(data, "stats:year:"):
-		year, _ := strconv.Atoi(strings.TrimPrefix(data, "stats:year:"))
-		return false, h.renderLeaderboard(ctx, sendTarget(settings.ChatID, cb.Message.MessageThreadID), settings, scoring.ForYear(year))
+		parts := strings.Split(data, ":")
+		if len(parts) < 3 || len(parts) > 4 {
+			return false, newValidationError("invalid stats year callback")
+		}
+		year, parseErr := strconv.Atoi(parts[2])
+		if parseErr != nil {
+			return false, newValidationError("invalid stats year")
+		}
+		back := "menu:stats"
+		if len(parts) == 4 && parts[3] == "years" {
+			back = "stats:years"
+		}
+		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForYear(year), back, common.UserID{Value: cb.From.ID})
 	case strings.HasPrefix(data, "stats:month:"):
-		ym := strings.TrimPrefix(data, "stats:month:")
-		year, month, err := parseYearMonth(ym)
-		if err != nil {
+		parts := strings.Split(data, ":")
+		if len(parts) < 3 || len(parts) > 5 {
+			return false, newValidationError("invalid stats month callback")
+		}
+		ym := parts[2]
+		year, month, parseErr := parseYearMonth(ym)
+		if parseErr != nil {
 			return false, newValidationError("invalid month %q", ym)
 		}
-		return false, h.renderLeaderboard(ctx, sendTarget(settings.ChatID, cb.Message.MessageThreadID), settings, scoring.ForMonth(year, month))
+		back := "menu:stats"
+		if len(parts) == 5 && parts[3] == "months" {
+			backYear, backErr := strconv.Atoi(parts[4])
+			if backErr != nil {
+				return false, newValidationError("invalid stats month back year")
+			}
+			back = fmt.Sprintf("stats:months:%d", backYear)
+		}
+		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForMonth(year, month), back, common.UserID{Value: cb.From.ID})
 	case strings.HasPrefix(data, "stats:event:"):
 		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:event:"))
 		if err != nil {
 			return false, newValidationError("invalid event id")
 		}
-		return false, h.renderLeaderboard(ctx, sendTarget(settings.ChatID, cb.Message.MessageThreadID), settings, scoring.ForEvent(common.EventID{Value: id}))
+		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", common.UserID{Value: cb.From.ID})
 	case strings.HasPrefix(data, "stats:mine:"):
 		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:mine:"))
 		if err != nil {
 			return false, newValidationError("invalid event id")
 		}
-		return false, h.personalStats(ctx, sendTarget(settings.ChatID, cb.Message.MessageThreadID), settings, cb.From, common.EventID{Value: id})
+		return false, h.personalStats(ctx, statsResultTarget(cb, settings), settings, cb.From, common.EventID{Value: id})
 	case data == "stats:events":
 		return false, h.eventStatsMenu(ctx, target, settings)
 	case data == "settings:moderators":
@@ -302,6 +401,8 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	var err error
 	var answered bool
 	switch {
+	case data == "noop":
+		err = nil
 	case data == "pstats:menu":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
 	case data == "pstats:all":
