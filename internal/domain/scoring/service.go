@@ -1,0 +1,81 @@
+package scoring
+
+import (
+	"context"
+	"fmt"
+
+	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/domain/prediction"
+	"cs2predictor/internal/platform/common"
+)
+
+type Service struct {
+	predictions prediction.Repository
+	repo        Repository
+	clock       common.Clock
+}
+
+func NewService(predictions prediction.Repository, repo Repository, clock common.Clock) *Service {
+	return &Service{predictions: predictions, repo: repo, clock: clock}
+}
+
+// Settle computes and atomically replaces every award for poll's votes
+// against the match's final score. Votes on options that can't be resolved,
+// or whose predicted outcome was wrong, are simply skipped (no award row) —
+// re-running settlement (e.g. after a score correction) is always safe: old
+// awards for this poll are wiped even if the freshly computed set is empty.
+func (s *Service) Settle(ctx context.Context, event competition.Event, match competition.Match, poll prediction.Poll) ([]Award, error) {
+	if match.Score == nil {
+		return nil, fmt.Errorf("finished match must have a score")
+	}
+	actual := *match.Score
+
+	var startedAt = match.ActualStartedAt
+	if startedAt == nil {
+		startedAt = match.ScheduledAt
+	}
+	if startedAt == nil {
+		return nil, fmt.Errorf("match start is required")
+	}
+
+	votes, err := s.predictions.Votes(ctx, poll.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := s.clock.Now()
+	var awards []Award
+	for _, vote := range votes {
+		var predicted *competition.MatchScore
+		for _, opt := range poll.Options {
+			if opt.Index == vote.OptionIndex {
+				score := opt.Score
+				predicted = &score
+				break
+			}
+		}
+		if predicted == nil {
+			continue
+		}
+		points, kind, ok := Calculate(*predicted, actual, match.Format)
+		if !ok {
+			continue
+		}
+		awards = append(awards, Award{
+			ChatID:         poll.ChatID,
+			EventID:        event.ID,
+			MatchID:        match.ID,
+			PollID:         poll.ID,
+			UserID:         vote.UserID,
+			Points:         points,
+			Kind:           kind,
+			MatchStartedAt: *startedAt,
+			AwardedAt:      now,
+		})
+	}
+
+	if err := s.repo.ReplaceAwards(ctx, poll.ID, awards); err != nil {
+		return nil, err
+	}
+	return awards, nil
+}

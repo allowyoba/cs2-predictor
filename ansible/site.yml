@@ -1,0 +1,26 @@
+---
+- name: Prepare release and SSH inventory on the controller
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  roles:
+    - prepare_deploy
+
+- name: Install the prepared release
+  ansible.builtin.import_playbook: deploy.yml
+
+- name: Remove controller SSH credentials after deployment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Clean up the prepared SSH transport
+      ansible.builtin.include_role:
+        name: prepare_connection
+        tasks_from: cleanup

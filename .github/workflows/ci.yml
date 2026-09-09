@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+    types: [ opened, synchronize, reopened, edited, ready_for_review ]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployment:
+    name: Deployment automation checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Validate Ansible playbooks
+        run: |
+          python -m pip install -r ansible/requirements.txt
+          make deploy-check
+      - name: Exercise backup, failure handling and deployment locking
+        run: make ansible-test
+
+  test:
+    name: Quality checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Go checks
+        run: make check
+
+      - name: Dependencies match the imports
+        run: make tidy
+
+      - name: Integration tests with PostgreSQL
+        run: make test-integration
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Release tooling installs and its config loads
+        run: make node-check
+
+      - name: Validate workflows
+        run: make lint-actions
+
+      - name: Conventional pull request title
+        if: github.event_name == 'pull_request'
+        run: make check-pr-title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+
+  image:
+    name: Image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - name: Check that the production image still builds
+        # Same Dockerfile, same platform and same builder as the push in
+        # .github/workflows/release.yml — only without publishing, so a
+        # broken build is caught on the pull request rather than at
+        # release time. Loaded locally (not pushed) so Trivy below can
+        # scan the exact image a release would publish.
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: cs2predictor:ci-scan
+          provenance: false
+          build-args: |
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan the image for known vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cs2predictor:ci-scan
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true

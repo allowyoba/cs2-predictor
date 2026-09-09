@@ -1,0 +1,10 @@
+# Managed by Ansible host_access; applies only to the automation account.
+Match User {{ automation_user }}
+    PubkeyAuthentication yes
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    ForceCommand none
+    DisableForwarding yes
+    PermitTTY no
+Match all

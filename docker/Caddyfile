@@ -1,0 +1,12 @@
+# Production reverse proxy. Caddy obtains and renews the TLS certificate
+# for CADDY_DOMAIN on its own; ports 80 and 443 have to be reachable from
+# the internet for both the ACME challenge and the Telegram webhook.
+#
+# Three paths are proxied and everything else gets a 404. The bot serves
+# more than that — /metrics and /healthz/live among them — and none of it
+# belongs on a public address.
+{$CADDY_DOMAIN} {
+	@public path /telegram/webhook /healthz/ready /version
+	reverse_proxy @public bot:8080
+	respond 404
+}

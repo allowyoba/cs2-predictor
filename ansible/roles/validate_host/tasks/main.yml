@@ -1,0 +1,43 @@
+---
+# Confirms a host is ready for the deploy flow: Python, Docker and the
+# application account/directory all exist. Read-only.
+
+- name: Check Python runtime used by Ansible
+  ansible.builtin.command:
+    argv: [/usr/bin/python3, --version]
+  changed_when: false
+
+- name: Check Docker daemon
+  ansible.builtin.command:
+    argv: [docker, info]
+  changed_when: false
+
+- name: Check Docker Compose plugin
+  ansible.builtin.command:
+    argv: [docker, compose, version]
+  changed_when: false
+
+- name: Check application service account
+  ansible.builtin.command:
+    argv: [id, -u, "{{ validate_host_app_user }}"]
+  register: validate_host_app_uid
+  changed_when: false
+
+- name: Inspect application directory
+  ansible.builtin.stat:
+    path: "{{ validate_host_app_dir }}"
+    get_checksum: false
+    get_mime: false
+  register: validate_host_app_dir_stat
+
+- name: Require the expected application directory ownership
+  ansible.builtin.assert:
+    that:
+      - validate_host_app_user is match('^[a-z_][a-z0-9_-]*$')
+      - validate_host_app_user not in ['root', 'admin']
+      - validate_host_app_dir is match('^/[a-zA-Z0-9_/-]+$')
+      - "'..' not in validate_host_app_dir.split('/')"
+      - validate_host_app_dir_stat.stat.exists
+      - validate_host_app_dir_stat.stat.isdir | default(false)
+      - validate_host_app_dir_stat.stat.pw_name | default('') == validate_host_app_user
+    fail_msg: The application directory is missing or not owned by APP_USER; create it before deployment.

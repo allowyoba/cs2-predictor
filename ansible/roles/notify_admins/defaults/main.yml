@@ -1,0 +1,3 @@
+---
+notify_admins_message: "{{ lookup('env', 'NOTIFY_MESSAGE') }}"
+notify_admins_chat_ids: "{{ (lookup('env', 'DEPLOY_NOTIFY_CHAT_IDS') | default('')).split(',') | map('trim') | reject('equalto', '') | list }}"

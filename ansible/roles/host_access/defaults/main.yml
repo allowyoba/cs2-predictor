@@ -1,0 +1,7 @@
+---
+automation_user: "{{ lookup('env', 'DEPLOY_USER') | default('cs2deploy', true) }}"
+app_user: "{{ lookup('env', 'APP_USER') | default('cs2predictor', true) }}"
+app_dir: "{{ lookup('env', 'APP_PATH') | default('/opt/cs2predictor', true) }}"
+managed_sshd_config: /etc/ssh/sshd_config.d/00-00-cs2predictor-hardening.conf
+automation_sshd_config: /etc/ssh/sshd_config.d/00-00-00-cs2predictor-ansible.conf
+automation_public_key: ""

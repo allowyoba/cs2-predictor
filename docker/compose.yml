@@ -1,0 +1,57 @@
+# Local development stack: PostgreSQL and the bot, built from the working
+# tree. Production is compose.prod.yml, which runs a published image and
+# adds Caddy in front of it; locally the bot is reached directly on
+# 127.0.0.1:8080, so no public hostname or TLS certificate is involved.
+#
+# Run it through the Makefile (`make up`, `make down`, `make logs`). Those
+# targets pass --project-directory pointing at the repository root, and
+# this file depends on it: Compose resolves relative paths and looks for
+# .env against the project directory, not against its own location. Run
+# `docker compose -f docker/compose.yml` without that flag and the build
+# context comes out one directory too high.
+name: cs2predictor
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: cs2predictor
+      POSTGRES_USER: cs2predictor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs2predictor}
+    # Bound to the loopback interface so a laptop on a shared network
+    # doesn't expose its development database to it.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ CMD-SHELL, "pg_isready -U cs2predictor -d cs2predictor" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:5432/cs2predictor
+      DATABASE_USER: cs2predictor
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-cs2predictor}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set it in .env}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set it in .env}
+      PANDASCORE_TOKEN: ${PANDASCORE_TOKEN:?set it in .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: [ CMD, curl, --fail, --silent, "http://localhost:8080/healthz/live" ]
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+      retries: 5
+
+volumes:
+  postgres-data:

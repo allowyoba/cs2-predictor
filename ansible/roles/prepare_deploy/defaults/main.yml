@@ -1,0 +1,8 @@
+---
+prepare_deploy_tag: "{{ lookup('env', 'TAG') }}"
+prepare_deploy_repository: "{{ lookup('env', 'REPOSITORY') | lower }}"
+prepare_deploy_registry_user: "{{ lookup('env', 'REGISTRY_USER') }}"
+prepare_deploy_registry_token: "{{ lookup('env', 'REGISTRY_TOKEN') }}"
+# Duplicated from prepare_connection's own lookup: needed before that
+# role has run (see tasks/main.yml).
+prepare_deploy_work_dir: "{{ lookup('env', 'RUNNER_TEMP') }}"

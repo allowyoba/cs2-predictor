@@ -1,0 +1,21 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gosec       # security static analysis — relevant given secrets/tokens handling
+    - bodyclose   # catches unclosed HTTP response bodies
+    - unconvert   # unnecessary type conversions
+    - unparam     # unused function parameters
+    - misspell
+  exclusions:
+    rules:
+      # Test fixtures/fakes intentionally build requests with constants and
+      # don't need the same scrutiny as production code paths.
+      - path: _test\.go
+        linters:
+          - gosec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

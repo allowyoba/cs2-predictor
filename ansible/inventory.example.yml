@@ -1,0 +1,9 @@
+---
+production:
+  hosts:
+    application:
+      ansible_host: server.example.com
+      ansible_port: 22
+      ansible_user: cs2deploy
+      ansible_python_interpreter: /usr/bin/python3
+      # ansible_ssh_private_key_file: ~/.ssh/cs2deploy_ed25519

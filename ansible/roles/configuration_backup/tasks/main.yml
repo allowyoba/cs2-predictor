@@ -1,0 +1,59 @@
+---
+# Caller supplies backup_paths. Missing paths are normal on a first install.
+# No configuration changes may precede this role.
+- name: Create private backup root
+  ansible.builtin.file:
+    path: "{{ backup_root }}"
+    state: directory
+    owner: "{{ backup_owner }}"
+    group: "{{ backup_group }}"
+    mode: '0700'
+
+- name: Allocate a unique backup directory
+  ansible.builtin.tempfile:
+    path: "{{ backup_root }}"
+    state: directory
+    prefix: "{{ backup_label }}-"
+  register: backup_directory
+
+- name: Inspect configuration paths without reading secrets
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+    get_mime: false
+  loop: "{{ backup_paths }}"
+  register: backup_sources
+
+- name: Select existing configuration paths
+  ansible.builtin.set_fact:
+    existing_backup_paths: "{{ backup_sources.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+
+- name: Record backup scope and time
+  ansible.builtin.template:
+    src: manifest.json.j2
+    dest: "{{ backup_directory.path }}/manifest.json"
+    owner: "{{ backup_owner }}"
+    group: "{{ backup_group }}"
+    mode: '0600'
+
+- name: Archive configuration before deployment
+  ansible.builtin.command:
+    argv: "{{ ['tar', '--create', '--gzip', '--file', backup_directory.path + '/configuration.tar.gz', '--directory', '/'] + ['--'] + (existing_backup_paths | map('regex_replace', '^/', '') | list) if existing_backup_paths | length > 0 else ['tar', '--create', '--gzip', '--file', backup_directory.path + '/configuration.tar.gz', '--files-from', '/dev/null'] }}"
+  changed_when: true
+
+- name: Restrict access to the configuration archive
+  ansible.builtin.file:
+    path: "{{ backup_directory.path }}/configuration.tar.gz"
+    owner: "{{ backup_owner }}"
+    group: "{{ backup_group }}"
+    mode: '0600'
+
+- name: Verify archive can be read
+  ansible.builtin.command:
+    argv: [tar, --list, --gzip, --file, "{{ backup_directory.path }}/configuration.tar.gz"]
+  changed_when: false
+  no_log: true
+
+- name: Report the retained backup location
+  ansible.builtin.debug:
+    msg: "Configuration backup: {{ backup_directory.path }} (database volumes are not included)"

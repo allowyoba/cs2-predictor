@@ -1,0 +1,11 @@
+---
+# become_user is app_user, not root — see ansible/README.md's
+# "Least-privilege deploy" section for why that's sufficient here.
+- name: Deploy a published release
+  hosts: production
+  become: true
+  become_user: "{{ app_user }}"
+  gather_facts: false
+  serial: 1
+  roles:
+    - application_deploy

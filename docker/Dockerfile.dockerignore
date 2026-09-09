@@ -1,0 +1,14 @@
+# BuildKit looks for <dockerfile>.dockerignore before falling back to a
+# .dockerignore at the context root, which lets this file live next to
+# the Dockerfile it belongs to instead of at the top of the repository.
+#
+# It is an allow-list on purpose: a deny-list has to anticipate every
+# file that must not be sent, while this way anything new is excluded
+# until someone adds it. It keeps the context small; what actually ends
+# up in a layer is decided by the COPY lines in the Dockerfile, which
+# name their directories rather than copying everything.
+*
+!cmd/
+!internal/
+!go.mod
+!go.sum

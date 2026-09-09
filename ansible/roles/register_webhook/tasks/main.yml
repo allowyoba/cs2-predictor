@@ -1,0 +1,64 @@
+---
+- name: Confirm the environment file exists
+  ansible.builtin.stat:
+    path: "{{ app_dir }}/.env"
+  register: register_webhook_env_file
+
+- name: Require the environment file to already be provisioned
+  ansible.builtin.assert:
+    that: register_webhook_env_file.stat.exists
+    fail_msg: "{{ app_dir }}/.env is missing; provision it before registering the webhook."
+
+- name: Read the environment file
+  ansible.builtin.slurp:
+    src: "{{ app_dir }}/.env"
+  register: register_webhook_env_raw
+  no_log: true
+
+- name: Parse the environment file as plain KEY=VALUE pairs
+  # Read as inert text, never sourced as a shell script — see
+  # ansible/README.md. Values are taken literally, no quote-stripping.
+  ansible.builtin.set_fact:
+    register_webhook_env: "{{ register_webhook_env | default({}) | combine({(item.split('=', 1)[0]): item.split('=', 1)[1]}) }}"
+  loop: "{{ (register_webhook_env_raw.content | b64decode).splitlines() }}"
+  loop_control:
+    label: "{{ item.split('=')[0] if '=' in item else '(skipped)' }}"
+  when: item is match('^[A-Za-z_][A-Za-z0-9_]*=')
+  no_log: true
+
+- name: Require the values setWebhook needs
+  ansible.builtin.assert:
+    that:
+      - register_webhook_env.TELEGRAM_BOT_TOKEN | default('') | length > 0
+      - register_webhook_env.TELEGRAM_WEBHOOK_SECRET | default('') | length > 0
+      - register_webhook_env.CADDY_DOMAIN | default('') | length > 0
+    fail_msg: "{{ app_dir }}/.env must set TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET and CADDY_DOMAIN."
+  no_log: true
+
+- name: Re-register the webhook using the server's own secrets
+  # drop_pending_updates is omitted (defaults false): re-registering the
+  # same URL must not discard updates Telegram is already holding.
+  ansible.builtin.command:
+    argv:
+      - curl
+      - --fail
+      - --silent
+      - --show-error
+      - -X
+      - POST
+      - "https://api.telegram.org/bot{{ register_webhook_env.TELEGRAM_BOT_TOKEN }}/setWebhook"
+      - -d
+      - "url=https://{{ register_webhook_env.CADDY_DOMAIN }}/telegram/webhook"
+      - -d
+      - "secret_token={{ register_webhook_env.TELEGRAM_WEBHOOK_SECRET }}"
+      - -d
+      - 'allowed_updates=["message","callback_query","poll_answer","my_chat_member"]'
+  register: register_webhook_result
+  changed_when: true
+  no_log: true
+
+- name: Assert Telegram accepted the registration
+  no_log: true
+  ansible.builtin.assert:
+    that: (register_webhook_result.stdout | from_json).ok | default(false)
+    fail_msg: "Telegram did not accept setWebhook (response withheld: may echo the bot token)."
