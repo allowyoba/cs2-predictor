@@ -302,11 +302,26 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 			return false, err
 		}
 		return false, h.respond(ctx, target, h.Texts.Get("moderators.add_help", settings.Locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "settings:moderators")}}})
-	case strings.HasPrefix(data, "moderators:remove:"):
+	case strings.HasPrefix(data, "moderators:remove:ask:"):
 		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 			return false, err
 		}
-		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "moderators:remove:"), 36, 64)
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "moderators:remove:ask:"), 36, 64)
+		if parseErr != nil {
+			return false, newValidationError("invalid moderator id")
+		}
+		removed := common.UserID{Value: id}
+		name := h.moderatorName(ctx, settings.ChatID, removed)
+		kb := &InlineKeyboard{InlineKeyboard: [][]InlineButton{
+			{button(h.Texts.Get("moderators.remove_confirm", settings.Locale), cbModeratorRemoveDo(removed))},
+			{h.backButton(settings.Locale, "settings:moderators")},
+		}}
+		return false, h.respond(ctx, target, h.Texts.Get("moderators.remove_question", settings.Locale, bold(escapeHTML(name))), kb)
+	case strings.HasPrefix(data, "moderators:remove:do:"):
+		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "moderators:remove:do:"), 36, 64)
 		if parseErr != nil {
 			return false, newValidationError("invalid moderator id")
 		}

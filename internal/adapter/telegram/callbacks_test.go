@@ -677,3 +677,45 @@ func TestRenderLeaderboard_PaginatesAndKeepsViewerVisible(t *testing.T) {
 		t.Fatalf("expected second-page pagination, got %v", labels)
 	}
 }
+
+func TestModeratorRemove_RequiresConfirmationBeforeRemoving(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	handler.Authorization = chat.NewAuthorizationService(chats, fakeMembership{role: chat.RoleAdministrator})
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	modID := common.UserID{Value: 99}
+	_ = chats.AddModerator(context.Background(), chat.Moderator{ChatID: chatID, UserID: modID})
+
+	askData := cbModeratorRemove(modID)
+	cb := &CallbackQuery{ID: "ask", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{MessageID: 1, Chat: Chat{ID: -1, Type: "group"}}, Data: &askData}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	if stillMod, _ := chats.IsModerator(context.Background(), chatID, modID); !stillMod {
+		t.Fatal("tapping remove should only ask for confirmation, not remove immediately")
+	}
+	var screenCall map[string]any
+	for _, c := range *calls {
+		if c["__method"] == "editMessageText" || c["__method"] == "sendMessage" {
+			screenCall = c
+		}
+	}
+	if screenCall == nil {
+		t.Fatalf("expected a rendered confirmation screen, calls: %+v", *calls)
+	}
+	labels := buttonLabels(t, screenCall)
+	if !containsAll(labels, ru(t, "moderators.remove_confirm")) {
+		t.Fatalf("expected a confirm button, got %v", labels)
+	}
+
+	doData := cbModeratorRemoveDo(modID)
+	cb2 := &CallbackQuery{ID: "do", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{MessageID: 1, Chat: Chat{ID: -1, Type: "group"}}, Data: &doData}
+	if err := handler.handleCallback(context.Background(), cb2); err != nil {
+		t.Fatal(err)
+	}
+	if stillMod, _ := chats.IsModerator(context.Background(), chatID, modID); stillMod {
+		t.Fatal("expected the moderator to be removed after confirming")
+	}
+}
