@@ -38,9 +38,10 @@ func (h *UpdateHandler) menu(ctx context.Context, target replyTarget, settings c
 	switch {
 	case dmContext:
 		rows = [][]InlineButton{
-			{button(h.Texts.Get("menu.events", locale), "menu:events"), button(h.Texts.Get("menu.settings", locale), "menu:settings")},
 			{button(h.Texts.Get("menu.stats", locale), "menu:stats"), button(h.Texts.Get("menu.upcoming", locale), "menu:upcoming")},
+			{button(h.Texts.Get("menu.events", locale), "menu:events"), button(h.Texts.Get("menu.settings", locale), "menu:settings")},
 			{button(h.Texts.Get("menu.rules", locale), "menu:rules")},
+			{button(h.Texts.Get("dm.change_group", locale), "manage:chats")},
 		}
 	default:
 		rows = [][]InlineButton{
@@ -58,8 +59,18 @@ func (h *UpdateHandler) menu(ctx context.Context, target replyTarget, settings c
 	}
 	text := h.Texts.Get("menu.title", locale)
 	if dmContext {
-		text = bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.manage_context", locale)
+		text = "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.manage_context", locale)
 	}
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
+}
+
+func (h *UpdateHandler) readOnlyGroupMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
+	rows := [][]InlineButton{
+		{button(h.Texts.Get("menu.stats", settings.Locale), "menu:stats"), button(h.Texts.Get("menu.upcoming", settings.Locale), "menu:upcoming")},
+		{button(h.Texts.Get("menu.rules", settings.Locale), "menu:rules")},
+		{h.backButton(settings.Locale, "pstats:menu")},
+	}
+	text := "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.view_context", settings.Locale)
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 }
 
@@ -68,7 +79,7 @@ func (h *UpdateHandler) eventMenu(ctx context.Context, target replyTarget, setti
 		{button(h.Texts.Get("events.add", settings.Locale), "events:add"), button(h.Texts.Get("events.mine", settings.Locale), "events:mine")},
 		{h.backButton(settings.Locale, "menu:main")},
 	}
-	return h.respond(ctx, target, bold(escapeHTML(h.Texts.Get("menu.events", settings.Locale))), &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, bold(escapeHTML(h.Texts.Get("menu.events", settings.Locale)))), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) eventAddMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
@@ -78,7 +89,7 @@ func (h *UpdateHandler) eventAddMenu(ctx context.Context, target replyTarget, se
 		{button(h.Texts.Get("events.search", settings.Locale), "events:search")},
 		{h.backButton(settings.Locale, "menu:events")},
 	}
-	return h.respond(ctx, target, h.Texts.Get("events.add_choose", settings.Locale), &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("events.add_choose", settings.Locale)), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 const eventBrowsePageSize = 8
@@ -136,14 +147,14 @@ func (h *UpdateHandler) renderEventBrowse(ctx context.Context, target replyTarge
 	if topTierOnly {
 		mode = "top"
 	}
-	var nav []InlineButton
-	if page > 0 {
-		nav = append(nav, button("‹", fmt.Sprintf("events:browse:%s:%d", mode, page-1)))
+	maxPage := 0
+	if len(found) > 0 {
+		maxPage = (len(found) - 1) / eventBrowsePageSize
 	}
-	if end < len(found) {
-		nav = append(nav, button("›", fmt.Sprintf("events:browse:%s:%d", mode, page+1)))
-	}
-	if len(nav) > 0 {
+	totalPages := maxPage + 1
+	if nav := paginationRow(page, totalPages, fmt.Sprintf("%d / %d", page+1, totalPages), func(p int) string {
+		return fmt.Sprintf("events:browse:%s:%d", mode, p)
+	}); nav != nil {
 		rows = append(rows, nav)
 	}
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "events:add")})
@@ -158,7 +169,7 @@ func (h *UpdateHandler) renderEventBrowse(ctx context.Context, target replyTarge
 	} else {
 		body += "\n\n" + h.Texts.Get("events.choose_active", settings.Locale)
 	}
-	return h.respond(ctx, target, body, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, body), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // eventsByID batch-fetches events for the given subscriptions in a single
@@ -289,7 +300,7 @@ func (h *UpdateHandler) subscribedEvents(ctx context.Context, target replyTarget
 	if hidden > 0 {
 		body += "\n\n" + italic(h.Texts.Get("events.mine_truncated", settings.Locale, hidden))
 	}
-	return h.respond(ctx, target, body, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, body), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // eventDetails keeps the subscription list focused on choosing a tournament.
@@ -317,7 +328,7 @@ func (h *UpdateHandler) eventDetails(ctx context.Context, target replyTarget, se
 		rows = append(rows, []InlineButton{button(h.Texts.Get("events.topic", settings.Locale), cbEventTopic(eventID))})
 	}
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "events:mine")})
-	return h.respond(ctx, target, strings.Join(lines, "\n"), &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, strings.Join(lines, "\n")), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) eventStatusText(status competition.EventStatus, locale common.LocaleCode) string {
@@ -397,7 +408,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 	}
 	text := h.Texts.Get("upcoming.title", settings.Locale) + "\n\n" + body
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}}
-	return h.respond(ctx, target, text, &kb)
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
 }
 
 // upcomingMatchLimit bounds the screen. Grouping makes each match cost
@@ -447,7 +458,7 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, locale co
 // are the primary line; format and stage are secondary metadata.
 func upcomingMatchLines(item upcomingMatch) string {
 	first, second := formatTeamCompact(item.match.FirstTeam), formatTeamCompact(item.match.SecondTeam)
-	match := code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
+	match := matchStatusIcon(item.match.Status) + " " + code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
 	meta := item.match.Format.Label()
 	if item.match.Stage != nil {
 		if stage := strings.TrimSpace(*item.match.Stage); stage != "" {
@@ -455,6 +466,21 @@ func upcomingMatchLines(item upcomingMatch) string {
 		}
 	}
 	return match + "\n  " + escapeHTML(meta)
+}
+
+func matchStatusIcon(status competition.MatchStatus) string {
+	switch status {
+	case competition.MatchRunning:
+		return "🔴"
+	case competition.MatchFinished, competition.MatchForfeit:
+		return "✅"
+	case competition.MatchCancelled:
+		return "❌"
+	case competition.MatchPostponed:
+		return "⏸"
+	default:
+		return "🕒"
+	}
 }
 
 // dayKey identifies a calendar day in whatever location t carries, for

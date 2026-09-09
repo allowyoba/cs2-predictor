@@ -230,14 +230,10 @@ func (h *UpdateHandler) privateChatsMenu(ctx context.Context, target replyTarget
 		label := truncate(chatStats.ChatTitle, 40)
 		rows = append(rows, []InlineButton{button(label, fmt.Sprintf("pstats:chat:%d:%d", chatStats.ChatID.Value, page))})
 	}
-	var nav []InlineButton
-	if page > 0 {
-		nav = append(nav, button("‹", fmt.Sprintf("pstats:chats:%d", page-1)))
-	}
-	if page < maxPage {
-		nav = append(nav, button("›", fmt.Sprintf("pstats:chats:%d", page+1)))
-	}
-	if len(nav) > 0 {
+	totalPages := maxPage + 1
+	if nav := paginationRow(page, totalPages, fmt.Sprintf("%d / %d", page+1, totalPages), func(p int) string {
+		return fmt.Sprintf("pstats:chats:%d", p)
+	}); nav != nil {
 		rows = append(rows, nav)
 	}
 	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})
@@ -270,6 +266,13 @@ func (h *UpdateHandler) renderPrivateChatStats(ctx context.Context, target reply
 	text += "\n" + h.Texts.Get("private.accuracy", locale, selected.AccuracyPercent())
 	rows := [][]InlineButton{{h.backButton(locale, fmt.Sprintf("pstats:chats:%d", page))}}
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+}
+
+func (h *UpdateHandler) statsDeepLink(chatID common.ChatID) (string, bool) {
+	if h.BotUsername == "" {
+		return "", false
+	}
+	return fmt.Sprintf("https://t.me/%s?start=stats_%s", h.BotUsername, strconv.FormatInt(chatID.Value, 36)), true
 }
 
 // dmDeepLink builds a t.me/<bot>?start=admin_<chatId> deep link, or

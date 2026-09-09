@@ -90,7 +90,7 @@ func TestSettings_TimezoneIsChangeableFromWhereItIsShown(t *testing.T) {
 		t.Fatal(err)
 	}
 	labels := buttonLabels(t, (*calls)[len(*calls)-1])
-	if !slices.Contains(labels, "• UTC") {
+	if !slices.Contains(labels, "✓ UTC") {
 		t.Fatalf("the picker does not mark the current zone, got %v", labels)
 	}
 
@@ -169,7 +169,7 @@ func TestLeaderboard_OffersAWayBackToTheStatsMenu(t *testing.T) {
 	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Title: "Test Chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}
 	_, _ = chats.Save(context.Background(), settings)
 
-	if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, scoring.AllTime()); err != nil {
+	if err := handler.renderLeaderboard(context.Background(), sendTarget(settings.ChatID, nil), settings, scoring.AllTime(), "menu:stats", common.UserID{}); err != nil {
 		t.Fatal(err)
 	}
 	cds, _ := findKeyboardButtons(*calls)

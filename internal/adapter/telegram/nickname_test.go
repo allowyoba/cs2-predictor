@@ -124,7 +124,7 @@ func TestRename_PromptSetSaveAndReset_RoundTrips(t *testing.T) {
 	}}
 	*calls = nil
 	groupSettings := chat.Settings{ChatID: common.ChatID{Value: -1}, Title: "Test Chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}
-	if err := handler.renderLeaderboard(ctx, sendTarget(groupSettings.ChatID, nil), groupSettings, scoring.AllTime()); err != nil {
+	if err := handler.renderLeaderboard(ctx, sendTarget(groupSettings.ChatID, nil), groupSettings, scoring.AllTime(), "menu:stats", userID); err != nil {
 		t.Fatal(err)
 	}
 	if text := lastText(*calls); !strings.Contains(text, "Captain Clutch") {

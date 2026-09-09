@@ -153,7 +153,11 @@ func cbStatsEvent(eventID common.EventID) string  { return "stats:event:" + comp
 func cbStatsMine(eventID common.EventID) string   { return "stats:mine:" + compactUUID(eventID.Value) }
 
 func cbModeratorRemove(userID common.UserID) string {
-	return "moderators:remove:" + strconv.FormatInt(userID.Value, 36)
+	return "moderators:remove:ask:" + strconv.FormatInt(userID.Value, 36)
+}
+
+func cbModeratorRemoveDo(userID common.UserID) string {
+	return "moderators:remove:do:" + strconv.FormatInt(userID.Value, 36)
 }
 
 func cbManageOpen(chatID common.ChatID) string {

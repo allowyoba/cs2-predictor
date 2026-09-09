@@ -364,6 +364,9 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		if targetChatID, ok := parseAdminDeepLink(text); ok {
 			return h.openManagedChat(ctx, sendTarget(chatID, nil), userID, locale, targetChatID)
 		}
+		if statsChatID, ok := parseStatsDeepLink(text); ok {
+			return h.openGroupStatsInDM(ctx, sendTarget(chatID, nil), userID, locale, statsChatID)
+		}
 		if eventChatID, eventID, ok := parsePersonalStatsDeepLink(text); ok {
 			return h.openPersonalEventStats(ctx, sendTarget(chatID, nil), userID, locale, eventChatID, eventID)
 		}
@@ -423,6 +426,32 @@ func parseAdminDeepLink(text string) (common.ChatID, bool) {
 		return common.ChatID{}, false
 	}
 	return common.ChatID{Value: id}, true
+}
+
+// statsDeepLinkPrefix opens a group-scoped, read-only statistics panel in DM.
+const statsDeepLinkPrefix = "stats_"
+
+func parseStatsDeepLink(text string) (common.ChatID, bool) {
+	payload := strings.TrimSpace(strings.TrimPrefix(text, "/start "))
+	if !strings.HasPrefix(payload, statsDeepLinkPrefix) {
+		return common.ChatID{}, false
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(payload, statsDeepLinkPrefix), 36, 64)
+	if err != nil {
+		return common.ChatID{}, false
+	}
+	return common.ChatID{Value: id}, true
+}
+
+func (h *UpdateHandler) openGroupStatsInDM(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode, chatID common.ChatID) error {
+	settings, err := h.Chats.Find(ctx, chatID)
+	if err != nil {
+		return err
+	}
+	if settings == nil {
+		return h.privateStatsMenu(ctx, target, userID, locale)
+	}
+	return h.statsMenu(withCallbackScope(ctx, chatScope(chatID)), target, *settings)
 }
 
 // personalStatsDeepLinkPrefix is the "/start pstats_<base36 chat id>:<hex

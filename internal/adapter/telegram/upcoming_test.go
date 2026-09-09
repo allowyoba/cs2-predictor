@@ -45,11 +45,11 @@ func TestUpcoming_GroupsEventsAndLocalDates(t *testing.T) {
 			}
 			want := h.Texts.Get("upcoming.title", locale) + "\n\n" +
 				"<b>Cup &lt;A&gt;</b>\n\n<i>08.09 · " + h.Texts.Get("upcoming.today", locale) + "</i>\n" +
-				"<code>23:30</code> <b>A&amp;B</b> — <b>TBD</b>\n  BO3 · Group &lt;B&gt;\n\n" +
+				"🕒 <code>23:30</code> <b>A&amp;B</b> — <b>TBD</b>\n  BO3 · Group &lt;B&gt;\n\n" +
 				"<i>09.09 · " + h.Texts.Get("upcoming.tomorrow", locale) + "</i>\n" +
-				"<code>00:30</code> <b>A2</b> — <b>TBD</b>\n  BO3\n\n" +
+				"🕒 <code>00:30</code> <b>A2</b> — <b>TBD</b>\n  BO3\n\n" +
 				"<b>Cup B</b>\n\n<i>08.09 · " + h.Texts.Get("upcoming.today", locale) + "</i>\n" +
-				"<code>23:45</code> <b>B1</b> — <b>TBD</b>\n  BO3 · Group A"
+				"🕒 <code>23:45</code> <b>B1</b> — <b>TBD</b>\n  BO3 · Group A"
 			if got := lastText(*calls); got != want {
 				t.Fatalf("schedule:\n%s\nwant:\n%s", got, want)
 			}

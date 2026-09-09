@@ -63,7 +63,7 @@ func (h *UpdateHandler) cleanupMenu(ctx context.Context, target replyTarget, set
 	}
 	back := []InlineButton{h.backButton(settings.Locale, "events:mine")}
 	if len(finished) == 0 {
-		return h.respond(ctx, target, h.Texts.Get("events.cleanup_none", settings.Locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
+		return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("events.cleanup_none", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
 	}
 
 	names := make([]string, 0, len(finished))
@@ -79,7 +79,7 @@ func (h *UpdateHandler) cleanupMenu(ctx context.Context, target replyTarget, set
 		{button(h.Texts.Get("events.cleanup_apply", settings.Locale), "events:cleanup:go")},
 		back,
 	}}
-	return h.respond(ctx, target, text, &kb)
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
 }
 
 func (h *UpdateHandler) cleanupFinished(ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings) (bool, error) {
