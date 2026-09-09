@@ -81,7 +81,11 @@ jobs:
         run: |
           set -euo pipefail
           clean_log="$(sed -E 's/\x1b\[[0-9;]*m//g' /tmp/semantic-release.log)"
-          tag="$(grep -oE 'Created tag v[0-9]+\.[0-9]+\.[0-9]+' <<<"$clean_log" | tail -1 | awk '{print $NF}')"
+          # grep exits 1 when nothing matches — the expected outcome
+          # whenever there's nothing releasable — which would otherwise
+          # abort the script here under `set -e` before the `else`
+          # branch below ever runs.
+          tag="$(grep -oE 'Created tag v[0-9]+\.[0-9]+\.[0-9]+' <<<"$clean_log" | tail -1 | awk '{print $NF}' || true)"
           if [ -n "$tag" ]; then
             echo "new_release_published=true" >> "$GITHUB_OUTPUT"
             echo "new_release_version=${tag#v}" >> "$GITHUB_OUTPUT"
