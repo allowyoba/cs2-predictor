@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
@@ -133,5 +134,20 @@ func TestStatsFilterLabel_MarksActiveChoice(t *testing.T) {
 	}
 	if got := statsFilterLabel(false, "Month"); got != "Month" {
 		t.Fatalf("inactive label = %q", got)
+	}
+}
+
+func TestMatchStatusIcon_CoversImportantStates(t *testing.T) {
+	cases := map[competition.MatchStatus]string{
+		competition.MatchNotStarted: "🕒",
+		competition.MatchRunning:    "🔴",
+		competition.MatchFinished:   "✅",
+		competition.MatchCancelled:  "❌",
+		competition.MatchPostponed:  "⏸",
+	}
+	for status, want := range cases {
+		if got := matchStatusIcon(status); got != want {
+			t.Fatalf("matchStatusIcon(%q) = %q, want %q", status, got, want)
+		}
 	}
 }

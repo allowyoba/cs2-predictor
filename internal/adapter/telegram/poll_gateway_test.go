@@ -418,3 +418,18 @@ func TestComposePollQuestion_KeepsEverythingWhenItFits(t *testing.T) {
 		}
 	}
 }
+
+func TestSend_PollHeaderUsesSeparateVisualBlocks(t *testing.T) {
+	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
+	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
+	question := sendTestPoll(t, PollEnrichmentSources{}, first, second)
+
+	for _, marker := range []string{"🏆 ", "Spirit — NAVI", "🎯 ", " · BO3", "🕒 "} {
+		if !strings.Contains(question, marker) {
+			t.Fatalf("expected poll header block %q in %q", marker, question)
+		}
+	}
+	if !strings.Contains(question, "🏆 ") || strings.Count(question, "\n\n") < 2 || !strings.Contains(question, " · BO3\n🕒 ") {
+		t.Fatalf("expected poll metadata to be split into readable blocks, got %q", question)
+	}
+}

@@ -458,7 +458,7 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, locale co
 // are the primary line; format and stage are secondary metadata.
 func upcomingMatchLines(item upcomingMatch) string {
 	first, second := formatTeamCompact(item.match.FirstTeam), formatTeamCompact(item.match.SecondTeam)
-	match := code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
+	match := matchStatusIcon(item.match.Status) + " " + code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
 	meta := item.match.Format.Label()
 	if item.match.Stage != nil {
 		if stage := strings.TrimSpace(*item.match.Stage); stage != "" {
@@ -466,6 +466,21 @@ func upcomingMatchLines(item upcomingMatch) string {
 		}
 	}
 	return match + "\n  " + escapeHTML(meta)
+}
+
+func matchStatusIcon(status competition.MatchStatus) string {
+	switch status {
+	case competition.MatchRunning:
+		return "🔴"
+	case competition.MatchFinished, competition.MatchForfeit:
+		return "✅"
+	case competition.MatchCancelled:
+		return "❌"
+	case competition.MatchPostponed:
+		return "⏸"
+	default:
+		return "🕒"
+	}
 }
 
 // dayKey identifies a calendar day in whatever location t carries, for
