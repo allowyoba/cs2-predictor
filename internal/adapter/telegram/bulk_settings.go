@@ -93,7 +93,7 @@ func (h *UpdateHandler) bulkMenu(ctx context.Context, cb *CallbackQuery, target 
 	}
 	back := []InlineButton{h.backButton(settings.Locale, "menu:settings")}
 	if len(targets) == 0 {
-		return h.respond(ctx, target, h.Texts.Get("bulk.no_targets", settings.Locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
+		return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("bulk.no_targets", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
 	}
 
 	rows := make([][]InlineButton, 0, len(bulkSettings())+1)
@@ -103,7 +103,7 @@ func (h *UpdateHandler) bulkMenu(ctx context.Context, cb *CallbackQuery, target 
 	}
 	rows = append(rows, back)
 	text := h.Texts.Get("bulk.title", settings.Locale, bold(escapeHTML(settings.Title)), len(targets))
-	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // bulkConfirm names every chat that is about to change before anything
@@ -120,7 +120,7 @@ func (h *UpdateHandler) bulkConfirm(ctx context.Context, cb *CallbackQuery, targ
 	}
 	back := []InlineButton{h.backButton(settings.Locale, "bulk:menu")}
 	if len(targets) == 0 {
-		return h.respond(ctx, target, h.Texts.Get("bulk.no_targets", settings.Locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
+		return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("bulk.no_targets", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
 	}
 
 	names := make([]string, 0, len(targets))
@@ -135,7 +135,7 @@ func (h *UpdateHandler) bulkConfirm(ctx context.Context, cb *CallbackQuery, targ
 		{button(h.Texts.Get("bulk.apply", settings.Locale), "bulk:do:"+kind)},
 		back,
 	}}
-	return h.respond(ctx, target, text, &kb)
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
 }
 
 // bulkApply writes the setting into every managed chat, re-verifying
@@ -181,5 +181,5 @@ func (h *UpdateHandler) bulkApply(ctx context.Context, cb *CallbackQuery, screen
 		text += "\n" + h.Texts.Get("bulk.skipped", settings.Locale, skipped)
 	}
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:settings")}}}
-	return h.respond(ctx, screen, text, &kb)
+	return h.respond(ctx, screen, managedScreenContext(screen, settings, text), &kb)
 }

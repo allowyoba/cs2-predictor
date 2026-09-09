@@ -46,7 +46,7 @@ func (h *UpdateHandler) timezoneView(ctx context.Context, target replyTarget, se
 	text := bold(h.Texts.Get("settings.timezone", settings.Locale)) + "\n\n" +
 		h.Texts.Get("settings.timezone_current", settings.Locale, code(escapeHTML(settings.Timezone))) + "\n\n" +
 		h.Texts.Get("settings.timezone_hint", settings.Locale)
-	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // timezoneLabel marks the zone currently in force, so the picker shows the

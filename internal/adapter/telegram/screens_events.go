@@ -79,7 +79,7 @@ func (h *UpdateHandler) eventMenu(ctx context.Context, target replyTarget, setti
 		{button(h.Texts.Get("events.add", settings.Locale), "events:add"), button(h.Texts.Get("events.mine", settings.Locale), "events:mine")},
 		{h.backButton(settings.Locale, "menu:main")},
 	}
-	return h.respond(ctx, target, bold(escapeHTML(h.Texts.Get("menu.events", settings.Locale))), &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, bold(escapeHTML(h.Texts.Get("menu.events", settings.Locale)))), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) eventAddMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
@@ -89,7 +89,7 @@ func (h *UpdateHandler) eventAddMenu(ctx context.Context, target replyTarget, se
 		{button(h.Texts.Get("events.search", settings.Locale), "events:search")},
 		{h.backButton(settings.Locale, "menu:events")},
 	}
-	return h.respond(ctx, target, h.Texts.Get("events.add_choose", settings.Locale), &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("events.add_choose", settings.Locale)), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 const eventBrowsePageSize = 8
@@ -169,7 +169,7 @@ func (h *UpdateHandler) renderEventBrowse(ctx context.Context, target replyTarge
 	} else {
 		body += "\n\n" + h.Texts.Get("events.choose_active", settings.Locale)
 	}
-	return h.respond(ctx, target, body, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, body), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // eventsByID batch-fetches events for the given subscriptions in a single
@@ -300,7 +300,7 @@ func (h *UpdateHandler) subscribedEvents(ctx context.Context, target replyTarget
 	if hidden > 0 {
 		body += "\n\n" + italic(h.Texts.Get("events.mine_truncated", settings.Locale, hidden))
 	}
-	return h.respond(ctx, target, body, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, body), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // eventDetails keeps the subscription list focused on choosing a tournament.
@@ -328,7 +328,7 @@ func (h *UpdateHandler) eventDetails(ctx context.Context, target replyTarget, se
 		rows = append(rows, []InlineButton{button(h.Texts.Get("events.topic", settings.Locale), cbEventTopic(eventID))})
 	}
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "events:mine")})
-	return h.respond(ctx, target, strings.Join(lines, "\n"), &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, strings.Join(lines, "\n")), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) eventStatusText(status competition.EventStatus, locale common.LocaleCode) string {
@@ -408,7 +408,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 	}
 	text := h.Texts.Get("upcoming.title", settings.Locale) + "\n\n" + body
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}}
-	return h.respond(ctx, target, text, &kb)
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
 }
 
 // upcomingMatchLimit bounds the screen. Grouping makes each match cost

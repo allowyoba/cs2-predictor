@@ -152,7 +152,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 	case data == "menu:upcoming":
 		return false, h.upcoming(ctx, target, settings)
 	case data == "menu:rules":
-		return false, h.respond(ctx, target, h.Texts.Get("rules.text", settings.Locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}})
+		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("rules.text", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}})
 	case strings.HasPrefix(data, "stats:p:"):
 		parts := strings.Split(data, ":")
 		if len(parts) < 4 {
@@ -301,7 +301,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 			return false, err
 		}
-		return false, h.respond(ctx, target, h.Texts.Get("moderators.add_help", settings.Locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "settings:moderators")}}})
+		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("moderators.add_help", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "settings:moderators")}}})
 	case strings.HasPrefix(data, "moderators:remove:ask:"):
 		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 			return false, err
@@ -316,7 +316,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 			{button(h.Texts.Get("moderators.remove_confirm", settings.Locale), cbModeratorRemoveDo(removed))},
 			{h.backButton(settings.Locale, "settings:moderators")},
 		}}
-		return false, h.respond(ctx, target, h.Texts.Get("moderators.remove_question", settings.Locale, bold(escapeHTML(name))), kb)
+		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("moderators.remove_question", settings.Locale, bold(escapeHTML(name)))), kb)
 	case strings.HasPrefix(data, "moderators:remove:do:"):
 		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 			return false, err

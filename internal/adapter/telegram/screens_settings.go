@@ -41,7 +41,7 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		kb.InlineKeyboard = append(kb.InlineKeyboard, []InlineButton{button(h.Texts.Get("settings.apply_all", settings.Locale), "bulk:menu")})
 	}
 	kb.InlineKeyboard = append(kb.InlineKeyboard, []InlineButton{h.backButton(settings.Locale, "menu:main")})
-	return h.respond(ctx, target, text, &kb)
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
 }
 
 // moderatorName resolves a moderator's stored display name so the history
@@ -79,14 +79,14 @@ func historyKindKey(kind string) string { return "history.kind." + kind }
 func (h *UpdateHandler) historyView(ctx context.Context, target replyTarget, settings chat.Settings) error {
 	back := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:settings")}}}
 	if h.AdminActions == nil {
-		return h.respond(ctx, target, h.Texts.Get("history.empty", settings.Locale), &back)
+		return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("history.empty", settings.Locale)), &back)
 	}
 	actions, err := h.AdminActions.Recent(ctx, settings.ChatID, chat.AdminActionHistorySize)
 	if err != nil {
 		return err
 	}
 	if len(actions) == 0 {
-		return h.respond(ctx, target, h.Texts.Get("history.empty", settings.Locale), &back)
+		return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("history.empty", settings.Locale)), &back)
 	}
 	loc := chatZone(settings)
 	lines := make([]string, 0, len(actions))
@@ -98,7 +98,7 @@ func (h *UpdateHandler) historyView(ctx context.Context, target replyTarget, set
 		lines = append(lines, line+"\n  <i>"+escapeHTML(actorLabel(action))+"</i>")
 	}
 	text := bold(h.Texts.Get("history.title", settings.Locale)) + "\n\n" + strings.Join(lines, "\n")
-	return h.respond(ctx, target, text, &back)
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &back)
 }
 
 // actorLabel names who acted, falling back to the numeric id for someone
@@ -137,5 +137,5 @@ func (h *UpdateHandler) moderatorsView(ctx context.Context, target replyTarget, 
 	}
 	rows = append(rows, []InlineButton{button(h.Texts.Get("moderators.add", settings.Locale), "moderators:add")})
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:settings")})
-	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
