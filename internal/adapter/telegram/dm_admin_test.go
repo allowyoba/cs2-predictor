@@ -353,7 +353,7 @@ func TestPrivateCallback_ManagedStatsEditsDMAndNeverSendsToGroup(t *testing.T) {
 	}
 }
 
-func TestGroupCallback_StatsStillPublishesPublicLeaderboard(t *testing.T) {
+func TestGroupCallback_StatsEditsInPlaceAndStaysPublic(t *testing.T) {
 	server, calls := newRecordingServer(t)
 	defer server.Close()
 	handler, chats := newTestHandler(t, server)
@@ -372,18 +372,59 @@ func TestGroupCallback_StatsStillPublishesPublicLeaderboard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var sawGroupSend bool
+	var sawGroupEdit bool
+	for _, call := range *calls {
+		if call["__method"] != "editMessageText" {
+			continue
+		}
+		chatID, _ := call["chat_id"].(float64)
+		messageID, _ := call["message_id"].(float64)
+		if int64(chatID) == groupChatID.Value && int64(messageID) == 55 {
+			sawGroupEdit = true
+		}
+	}
+	if !sawGroupEdit {
+		t.Fatalf("expected group stats to edit the tapped message in place, same as DM, calls: %+v", *calls)
+	}
+}
+
+func TestGroupCallback_MatchResultNotificationButtonNeverEditsTheNotification(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	handler.Scoring = fakeScoringWithStandings{}
+	groupChatID := common.ChatID{Value: -100123}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: groupChatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true, Title: "Public Group"})
+	eventID := common.NewEventID()
+
+	data := "stats:notif:event:" + eventID.Value.String()
+	cb := &CallbackQuery{
+		ID:      "notif-stats",
+		From:    User{ID: 7, FirstName: "Member"},
+		Message: &Message{Chat: Chat{ID: groupChatID.Value, Type: "group"}, MessageID: 55},
+		Data:    &data,
+	}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, call := range *calls {
+		if call["__method"] == "editMessageText" {
+			t.Fatalf("a match-result notification button must never edit the notification itself, calls: %+v", *calls)
+		}
+	}
+	var sawNewMessage bool
 	for _, call := range *calls {
 		if call["__method"] != "sendMessage" {
 			continue
 		}
 		chatID, _ := call["chat_id"].(float64)
 		if int64(chatID) == groupChatID.Value {
-			sawGroupSend = true
+			sawNewMessage = true
 		}
 	}
-	if !sawGroupSend {
-		t.Fatalf("expected group stats to remain publicly viewable, calls: %+v", *calls)
+	if !sawNewMessage {
+		t.Fatalf("expected a new leaderboard message in the group, calls: %+v", *calls)
 	}
 }
 
