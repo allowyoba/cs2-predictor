@@ -94,7 +94,12 @@
         name: configuration_backup
       vars:
         # Everything here already belongs to app_user — see
-        # ansible/README.md's "Least-privilege deploy" section.
+        # ansible/README.md's "Least-privilege deploy" section. The
+        # role's own default backup_root (/var/backups/cs2predictor)
+        # lives outside app_dir and is root-owned, which app_user's
+        # scoped sudo can't chown — kept under app_dir instead, which
+        # app_user already owns end to end.
+        backup_root: "{{ app_dir }}/backups"
         backup_owner: "{{ app_user }}"
         backup_group: "{{ app_user }}"
         backup_label: "deploy-{{ release_tag }}"
