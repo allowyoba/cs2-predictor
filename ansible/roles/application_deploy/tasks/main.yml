@@ -188,8 +188,13 @@
           changed_when: false
 
         - name: Start production services and wait for health checks
+          # 'missing' (Compose's own default), not 'never': the bot's
+          # image was just pulled above by exact digest, so Compose
+          # already has it and won't touch it, but postgres/caddy are
+          # plain tags Compose has to be allowed to pull on a first
+          # install, where neither has ever been fetched to this host.
           ansible.builtin.command:
-            argv: "{{ compose_argv + ['up', '-d', '--pull', 'never', '--remove-orphans', '--wait', '--wait-timeout', compose_wait_timeout | string] }}"
+            argv: "{{ compose_argv + ['up', '-d', '--pull', 'missing', '--remove-orphans', '--wait', '--wait-timeout', compose_wait_timeout | string] }}"
           changed_when: true
 
         - name: Record the successfully installed release
@@ -212,7 +217,7 @@
 
             - name: Bring the previously running release back up
               ansible.builtin.command:
-                argv: "{{ compose_argv + ['up', '-d', '--pull', 'never', '--remove-orphans', '--wait', '--wait-timeout', compose_wait_timeout | string] }}"
+                argv: "{{ compose_argv + ['up', '-d', '--pull', 'missing', '--remove-orphans', '--wait', '--wait-timeout', compose_wait_timeout | string] }}"
               environment:
                 APP_IMAGE: "{{ application_deploy_previous_image }}"
               changed_when: true
