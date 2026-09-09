@@ -162,22 +162,11 @@ func (h *UpdateHandler) personalStats(ctx context.Context, target replyTarget, s
 func leaderboardRows(standings []scoring.UserStanding) string {
 	var b strings.Builder
 	for i, s := range standings {
-		medal := ""
-		switch s.Rank {
-		case 1:
-			medal = "🥇"
-		case 2:
-			medal = "🥈"
-		case 3:
-			medal = "🥉"
-		}
 		name := truncate(s.DisplayName, 24)
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		if medal != "" {
-			b.WriteString(medal + " ")
-		}
+		b.WriteString(medalFor(s.Rank) + " ")
 		fmt.Fprintf(&b, "%s — %s", code(escapeHTML(fmt.Sprintf("%2d. %-24s", s.Rank, name))), bold(strconv.Itoa(s.Points)))
 	}
 	return b.String()

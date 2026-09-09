@@ -53,44 +53,58 @@ func TestAppendPollHashtags_DeduplicatesSameTeam(t *testing.T) {
 	}
 }
 
-func TestFormatVRSRanks_BothTeamsRanked(t *testing.T) {
+func TestFormatVRSCombined_BothTeamsRankedAndPointed(t *testing.T) {
+	first, second := common.NewTeamID(), common.NewTeamID()
+	firstRank, secondRank := 1, 3
+	firstPoints, secondPoints := 1993, 1908
+	rankings := map[common.TeamID]enrichment.TeamRanking{
+		first:  {TeamID: first, GlobalRank: &firstRank, Points: &firstPoints},
+		second: {TeamID: second, GlobalRank: &secondRank, Points: &secondPoints},
+	}
+	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	if want := "#1(1993) — #3(1908)"; got != want {
+		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
+	}
+}
+
+func TestFormatVRSCombined_RankOnlyOmitsParentheses(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank, secondRank := 1, 3
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first:  {TeamID: first, GlobalRank: &firstRank},
 		second: {TeamID: second, GlobalRank: &secondRank},
 	}
-	got := formatVRSRanks(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#1 — #3"; got != want {
-		t.Fatalf("formatVRSRanks = %q, want %q", got, want)
+		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
 	}
 }
 
-func TestFormatVRSRanks_OneTeamUnrankedShowsDash(t *testing.T) {
+func TestFormatVRSCombined_OneTeamUnrankedShowsDash(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank := 1
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first: {TeamID: first, GlobalRank: &firstRank},
 	}
-	got := formatVRSRanks(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#1 — —"; got != want {
-		t.Fatalf("formatVRSRanks = %q, want %q", got, want)
+		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
 	}
 }
 
-func TestFormatVRSRanks_NeitherTeamRankedOmitsLine(t *testing.T) {
+func TestFormatVRSCombined_NeitherTeamRankedOmitsLine(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
-	if got := formatVRSRanks(nil, &competition.Team{ID: first}, &competition.Team{ID: second}); got != "" {
-		t.Fatalf("formatVRSRanks = %q, want empty (line omitted)", got)
+	if got := formatVRSCombined(nil, &competition.Team{ID: first}, &competition.Team{ID: second}); got != "" {
+		t.Fatalf("formatVRSCombined = %q, want empty (line omitted)", got)
 	}
 }
 
-func TestFormatVRSRanks_NilTeamOmitsLine(t *testing.T) {
+func TestFormatVRSCombined_NilTeamOmitsLine(t *testing.T) {
 	rank := 1
 	teamID := common.NewTeamID()
 	rankings := map[common.TeamID]enrichment.TeamRanking{teamID: {TeamID: teamID, GlobalRank: &rank}}
-	if got := formatVRSRanks(rankings, &competition.Team{ID: teamID}, nil); got != "" {
-		t.Fatalf("formatVRSRanks = %q, want empty when a side of the match is unknown", got)
+	if got := formatVRSCombined(rankings, &competition.Team{ID: teamID}, nil); got != "" {
+		t.Fatalf("formatVRSCombined = %q, want empty when a side of the match is unknown", got)
 	}
 }
 
@@ -262,26 +276,6 @@ func TestFormatH2H_NilOrZeroSampleOmitsLine(t *testing.T) {
 	}
 }
 
-func TestFormatVRSPoints_BothTeamsHavePoints(t *testing.T) {
-	first, second := common.NewTeamID(), common.NewTeamID()
-	firstPoints, secondPoints := 1993, 1908
-	rankings := map[common.TeamID]enrichment.TeamRanking{
-		first:  {TeamID: first, Points: &firstPoints},
-		second: {TeamID: second, Points: &secondPoints},
-	}
-	got := formatVRSPoints(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
-	if want := "1993 — 1908"; got != want {
-		t.Fatalf("formatVRSPoints = %q, want %q", got, want)
-	}
-}
-
-func TestFormatVRSPoints_NeitherTeamOmitsLine(t *testing.T) {
-	first, second := common.NewTeamID(), common.NewTeamID()
-	if got := formatVRSPoints(nil, &competition.Team{ID: first}, &competition.Team{ID: second}); got != "" {
-		t.Fatalf("formatVRSPoints = %q, want empty", got)
-	}
-}
-
 // fakeFormRepository is a minimal enrichment.FormRepository — only FindForm
 // is exercised by PollGateway.Send.
 type fakeFormRepository struct {
@@ -334,7 +328,7 @@ func TestSend_IncludesFormAndH2HLinesWhenCached(t *testing.T) {
 	}
 }
 
-func TestSend_OrdersEnrichmentLinesByPriorityAndCapsAtFour(t *testing.T) {
+func TestSend_OrdersEnrichmentLinesByPriority(t *testing.T) {
 	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
 	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
 	firstRank, secondRank := 1, 3
@@ -351,15 +345,14 @@ func TestSend_OrdersEnrichmentLinesByPriorityAndCapsAtFour(t *testing.T) {
 
 	question := sendTestPoll(t, PollEnrichmentSources{Rankings: rankings, Form: form, H2H: h2h}, first, second)
 
-	rankIdx := strings.Index(question, "VRS #1 — #3")
+	rankIdx := strings.Index(question, "#1(1993) — #3(1908)")
 	formIdx := strings.Index(question, "4-1 — 3-2")
 	h2hIdx := strings.Index(question, "6-4")
-	pointsIdx := strings.Index(question, "1993 — 1908")
-	if rankIdx == -1 || formIdx == -1 || h2hIdx == -1 || pointsIdx == -1 {
-		t.Fatalf("expected all four enrichment lines present, got %q", question)
+	if rankIdx == -1 || formIdx == -1 || h2hIdx == -1 {
+		t.Fatalf("expected all three enrichment lines present, got %q", question)
 	}
-	if rankIdx >= formIdx || formIdx >= h2hIdx || h2hIdx >= pointsIdx {
-		t.Fatalf("expected enrichment line order VRS rank < form < H2H < VRS points, got %q", question)
+	if rankIdx >= formIdx || formIdx >= h2hIdx {
+		t.Fatalf("expected enrichment line order VRS < form < H2H, got %q", question)
 	}
 }
 
@@ -371,10 +364,9 @@ func TestComposePollQuestion_DropsWholeInsightLinesInsteadOfCuttingThem(t *testi
 	header := "🏆 " + strings.Repeat("Tournament ", 18) + "\n\n⚔️ Spirit — NAVI"
 	insights := []string{
 		ru(t, "poll.balance", "4-1", "3-2"),
-		ru(t, "poll.vrs", "#1 — #3"),
+		ru(t, "poll.vrs", "#1(1993) — #3(1908)"),
 		ru(t, "poll.form", "4-1 — 3-2"),
 		ru(t, "poll.h2h", "6-4"),
-		ru(t, "poll.vrspoints", "1993 — 1908"),
 	}
 	first := &competition.Team{Name: "Team Spirit"}
 	second := &competition.Team{Name: "Natus Vincere"}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -152,15 +151,16 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 
 	stage := "—"
 	if match.Stage != nil {
-		stage = *match.Stage
+		stage = escapeHTML(*match.Stage)
 	}
 	var when string
 	if match.ScheduledAt != nil {
 		when = match.ScheduledAt.In(loc).Format("02.01 15:04 MST")
 	}
-	firstName, secondName := formatTeamCompact(match.FirstTeam), formatTeamCompact(match.SecondTeam)
-	eventName := event.Tier.Badge() + event.Name
-	question := g.texts.Get("poll.question", locale, eventName, firstName, secondName, stage, match.Format.Label(), when)
+	firstName := escapeHTML(formatTeamCompact(match.FirstTeam))
+	secondName := escapeHTML(formatTeamCompact(match.SecondTeam))
+	eventName := event.Tier.Badge() + escapeHTML(event.Name)
+	question := g.texts.Get("poll.question", locale, eventName, firstName, secondName, stage, escapeHTML(match.Format.Label()), when)
 
 	// Balance and every enrichment line are short "insight" lines — grouped
 	// into one paragraph (matching the spec's target layout) rather than
@@ -190,6 +190,7 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	payload := map[string]any{
 		"chat_id":                 poll.ChatID.Value,
 		"question":                question,
+		"question_parse_mode":     "HTML",
 		"options":                 options,
 		"is_anonymous":            false,
 		"allows_multiple_answers": false,
@@ -261,7 +262,10 @@ func composePollQuestion(header string, insights []string, eventName string, fir
 	for kept := len(insights); kept >= 0; kept-- {
 		body := header
 		if kept > 0 {
-			body += "\n\n" + strings.Join(insights[:kept], "\n")
+			// \n\n, not \n: Telegram's poll question collapses a lone
+			// newline into a space when rendered, but keeps a blank-line
+			// break — so every logical line needs one to stay legible.
+			body += "\n\n" + strings.Join(insights[:kept], "\n\n")
 		}
 		candidate := appendPollHashtags(body, eventName, first, second)
 		// appendPollHashtags truncates as a last resort; only accept a
@@ -310,7 +314,18 @@ func appendPollHashtags(question, eventName string, first, second *competition.T
 		return truncate(question, telegramPollQuestionLimit)
 	}
 
-	tagLine := strings.Join(tags, " ")
+	// Each tag its own <code> span, not one span around the whole line:
+	// tapping a code span copies exactly that span's text, and a reader
+	// wants one tag at a time, not the entire hashtag line. Joined by
+	// \n\n rather than a space for the same reason composePollQuestion's
+	// insight lines are: Telegram's poll question collapses a lone
+	// newline into a space but keeps a blank-line break, so \n\n is what
+	// actually puts each tag on its own line.
+	codedTags := make([]string, len(tags))
+	for i, tag := range tags {
+		codedTags[i] = code(tag)
+	}
+	tagLine := strings.Join(codedTags, "\n\n")
 	const separator = "\n\n" // hashtags read as their own paragraph, not a trailing continuation
 	available := telegramPollQuestionLimit - len([]rune(tagLine)) - len([]rune(separator))
 	if available <= 0 {
@@ -328,19 +343,20 @@ func formatBalance(b competition.TeamBalance) string {
 
 // maxEnrichmentInsightLines caps how many enrichment-sourced lines (as
 // opposed to the PandaScore-native balance line) a poll question ever
-// carries — VRS rank, recent form, head-to-head, VRS points, in that
-// priority order. Kept explicit, rather than relying on there being
-// exactly 4 line types, so adding a 5th enrichment metric later doesn't
-// silently blow the poll past a readable length.
-const maxEnrichmentInsightLines = 4
+// carries — VRS rank (with points in parentheses), recent form,
+// head-to-head, in that priority order. Kept explicit, rather than relying
+// on there being exactly 3 line types, so adding a 4th enrichment metric
+// later doesn't silently blow the poll past a readable length.
+const maxEnrichmentInsightLines = 3
 
 // buildEnrichmentLines assembles the enrichment-sourced insight lines for a
-// match, most important first: VRS rank, recent form, head-to-head, VRS
-// points. A line is skipped if its data isn't available, and the result
-// is truncated to maxEnrichmentInsightLines even if more candidates exist.
+// match, most important first: VRS rank (points alongside, in parentheses),
+// recent form, head-to-head. A line is skipped if its data isn't available,
+// and the result is truncated to maxEnrichmentInsightLines even if more
+// candidates exist.
 func (g *PollGateway) buildEnrichmentLines(locale common.LocaleCode, rankings map[common.TeamID]enrichment.TeamRanking, homeForm, awayForm *enrichment.RecentForm, h2h *enrichment.HeadToHead, first, second *competition.Team) []string {
 	var lines []string
-	if line := formatVRSRanks(rankings, first, second); line != "" {
+	if line := formatVRSCombined(rankings, first, second); line != "" {
 		lines = append(lines, g.texts.Get("poll.vrs", locale, line))
 	}
 	if line := formatForm(homeForm, awayForm); line != "" {
@@ -349,31 +365,10 @@ func (g *PollGateway) buildEnrichmentLines(locale common.LocaleCode, rankings ma
 	if line := formatH2H(h2h); line != "" {
 		lines = append(lines, g.texts.Get("poll.h2h", locale, line))
 	}
-	if line := formatVRSPoints(rankings, first, second); line != "" {
-		lines = append(lines, g.texts.Get("poll.vrspoints", locale, line))
-	}
 	if len(lines) > maxEnrichmentInsightLines {
 		lines = lines[:maxEnrichmentInsightLines]
 	}
 	return lines
-}
-
-// formatIntPairLine renders "home — away" using format for each non-nil
-// side and "—" for a nil one. Returns "" (line omitted entirely) when
-// NEITHER side has a value — a single missing side is still worth showing,
-// per the spec, but two missing sides carry no information at all.
-func formatIntPairLine(first, second *int, format func(int) string) string {
-	if first == nil && second == nil {
-		return ""
-	}
-	firstStr, secondStr := "—", "—"
-	if first != nil {
-		firstStr = format(*first)
-	}
-	if second != nil {
-		secondStr = format(*second)
-	}
-	return firstStr + " — " + secondStr
 }
 
 // rankingInts pulls one *int field (chosen by pick) out of a cached ranking
@@ -389,20 +384,36 @@ func rankingInts(rankings map[common.TeamID]enrichment.TeamRanking, first, secon
 	return firstVal, secondVal
 }
 
-func formatVRSRanks(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
+// formatVRSCombined renders the poll's single VRS line, points alongside
+// rank in parentheses — "#1(1993) — #3(1908)" — rather than the rank and
+// points as two separate lines, since they're the same metric read two
+// ways and a reader wants them together, not spread across the question.
+func formatVRSCombined(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
 	if first == nil || second == nil {
 		return ""
 	}
-	firstVal, secondVal := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.GlobalRank })
-	return formatIntPairLine(firstVal, secondVal, func(n int) string { return fmt.Sprintf("#%d", n) })
+	firstRank, secondRank := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.GlobalRank })
+	firstPoints, secondPoints := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.Points })
+	if firstRank == nil && secondRank == nil && firstPoints == nil && secondPoints == nil {
+		return ""
+	}
+	return formatVRSSide(firstRank, firstPoints) + " — " + formatVRSSide(secondRank, secondPoints)
 }
 
-func formatVRSPoints(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
-	if first == nil || second == nil {
-		return ""
+// formatVRSSide renders one team's half of formatVRSCombined: "#rank",
+// "#rank(points)", "(points)" when only points are cached, or "—" when
+// neither is.
+func formatVRSSide(rank, points *int) string {
+	switch {
+	case rank != nil && points != nil:
+		return fmt.Sprintf("#%d(%d)", *rank, *points)
+	case rank != nil:
+		return fmt.Sprintf("#%d", *rank)
+	case points != nil:
+		return fmt.Sprintf("(%d)", *points)
+	default:
+		return "—"
 	}
-	firstVal, secondVal := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.Points })
-	return formatIntPairLine(firstVal, secondVal, strconv.Itoa)
 }
 
 // formatForm renders "wins-losses — wins-losses" for cached recent-form
