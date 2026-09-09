@@ -317,7 +317,9 @@ directory.
 ## Backups and failures
 
 Before replacing application configuration, deployment acquires the host lock and creates a unique directory under
-`/var/backups/cs2predictor` (`0700`). The backup contains existing `.env`, deployed Docker configuration, release
+`<APP_PATH>/backups` (`0700`, owned by `APP_USER` — kept inside `APP_PATH` rather than the role's own
+`/var/backups/cs2predictor` default, which is root-owned and outside what `APP_USER`'s scoped sudo can manage; see
+"Least-privilege deploy"). The backup contains existing `.env`, deployed Docker configuration, release
 metadata and any legacy root-level Compose files that still exist. The archive is mode
 `0600`, is verified with `tar`, and remains on the VM.
 
