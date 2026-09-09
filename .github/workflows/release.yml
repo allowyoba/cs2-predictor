@@ -60,10 +60,34 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - name: Run semantic-release
-        id: release
+        id: semantic_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx semantic-release
+        run: npx semantic-release 2>&1 | tee /tmp/semantic-release.log
+
+      - name: Determine whether semantic-release published a new version
+        # The plain `npx semantic-release` CLI never sets GitHub Actions
+        # step outputs on its own — that behavior belongs to third-party
+        # wrapper actions (e.g. cycjimmy/semantic-release-action), not to
+        # this invocation. Without this step, every step below silently
+        # skips even after a real release: the tag and GitHub release get
+        # created, but the image is never built, pushed or signed — this
+        # is exactly what happened releasing v1.0.0. Parsed from the
+        # CLI's own log line rather than git tag state, so a re-run on an
+        # already-released commit (the workflow_dispatch fallback) can't
+        # produce a false positive from a tag that merely already exists
+        # on the fetched history.
+        id: release
+        run: |
+          set -euo pipefail
+          clean_log="$(sed -E 's/\x1b\[[0-9;]*m//g' /tmp/semantic-release.log)"
+          tag="$(grep -oE 'Created tag v[0-9]+\.[0-9]+\.[0-9]+' <<<"$clean_log" | tail -1 | awk '{print $NF}')"
+          if [ -n "$tag" ]; then
+            echo "new_release_published=true" >> "$GITHUB_OUTPUT"
+            echo "new_release_version=${tag#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "new_release_published=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Assemble the image reference
         id: image
