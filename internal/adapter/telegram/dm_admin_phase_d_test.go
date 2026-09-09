@@ -114,7 +114,7 @@ func TestMatchResultPublisher_FallsBackToCallbackButtonWhenBotUsernameEmpty(t *t
 	}
 
 	cds, _ := findKeyboardButtons(*calls)
-	if !containsPrefix(cds, "stats:mine:") {
+	if !containsPrefix(cds, "stats:notif:mine:") {
 		t.Fatalf("expected the old in-group callback button as a fallback, got %v", cds)
 	}
 }

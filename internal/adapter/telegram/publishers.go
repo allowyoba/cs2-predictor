@@ -331,13 +331,18 @@ func (p *MatchResultPublisher) Publish(ctx context.Context, message common.Outbo
 	// (matching every other personal-stats view) instead of posting it into
 	// the group, unless the bot's own username is unresolved, in which case
 	// the old in-group callback button is the only way to still offer it.
-	myStatsButton := button(p.texts.Get("stats.mine", locale), "stats:mine:"+n.EventID)
+	myStatsButton := button(p.texts.Get("stats.mine", locale), "stats:notif:mine:"+n.EventID)
 	if p.botUsername != "" {
 		token := strconv.FormatInt(n.ChatID, 36) + ":" + strings.ReplaceAll(n.EventID, "-", "")
 		myStatsButton = urlButton(p.texts.Get("stats.mine", locale), fmt.Sprintf("https://t.me/%s?start=pstats_%s", p.botUsername, token))
 	}
 	msgPayload["reply_markup"] = InlineKeyboard{InlineKeyboard: [][]InlineButton{{
-		button(p.texts.Get("stats.all", locale), "stats:event:"+n.EventID),
+		// stats:notif:* rather than the menu's own stats:event:/stats:mine:
+		// prefixes: this button lives on a match-result notification, which
+		// routeCallback must never edit in place — doing so would silently
+		// overwrite that historical result with a leaderboard. See
+		// routeCallback's stats:notif: cases.
+		button(p.texts.Get("stats.all", locale), "stats:notif:event:"+n.EventID),
 		myStatsButton,
 	}}}
 

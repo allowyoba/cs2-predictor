@@ -68,29 +68,14 @@ func (h *UpdateHandler) handleCallback(ctx context.Context, cb *CallbackQuery) e
 // whether it already answered the callback query itself (via a toast),
 // so handleCallback doesn't try to answer it a second time.
 //
-// Navigation between screens the bot itself renders (menus, submenus) edits
-// the tapped message in place via editTargetFromCallback — one evolving
-// message instead of a new one per click. Leaf "answer" screens reachable
-// from BOTH a menu AND a standalone notification message (the
-// stats:all/year/month/event/mine family, populated by
-// MatchResultPublisher's buttons too) deliberately still send a new
-// message: editing them in place would silently overwrite a match-result
-// notification with a leaderboard, destroying that historical message.
-// statsResultTarget preserves the public group experience while making a
-// managed group's DM panel behave like a single mini-app. A stats request
-// tapped in a group posts a new public leaderboard; the same request tapped
-// in DM edits only that private panel and can never leak the result back to
-// the managed group.
-func statsResultTarget(cb *CallbackQuery, settings chat.Settings) replyTarget {
-	if cb != nil && cb.Message != nil && cb.Message.Chat.Type == "private" {
-		return editTargetFromCallback(cb, settings.ChatID)
-	}
-	if cb != nil && cb.Message != nil {
-		return sendTarget(settings.ChatID, cb.Message.MessageThreadID)
-	}
-	return sendTarget(settings.ChatID, nil)
-}
-
+// Navigation between screens the bot itself renders (menus, submenus,
+// period pickers, the leaderboard itself) edits the tapped message in place
+// via editTargetFromCallback — one evolving panel instead of a new message
+// per click, the same in a group as in a DM. The one deliberate exception
+// is the stats:notif: family below: those buttons live on a standalone
+// match-result notification, not on a screen this handler owns, and
+// editing one in place would silently overwrite that historical result
+// with a leaderboard. They always send a new message instead.
 func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, settings chat.Settings, data string) (answered bool, err error) {
 	target := editTargetFromCallback(cb, settings.ChatID)
 	switch {
@@ -168,7 +153,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 			if parseErr != nil || page < 0 {
 				return false, newValidationError("invalid leaderboard page")
 			}
-			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.AllTime(), "menu:stats", viewer, page)
+			return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime(), "menu:stats", viewer, page)
 		case "y":
 			if len(parts) != 6 {
 				return false, newValidationError("invalid yearly leaderboard page callback")
@@ -182,7 +167,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 			if parts[5] == "y" {
 				back = "stats:years"
 			}
-			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForYear(year), back, viewer, page)
+			return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year), back, viewer, page)
 		case "m":
 			if len(parts) != 6 || len(parts[3]) != 6 {
 				return false, newValidationError("invalid monthly leaderboard page callback")
@@ -197,7 +182,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 			if parts[5] == "m" {
 				back = fmt.Sprintf("stats:months:%d", year)
 			}
-			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForMonth(year, time.Month(monthInt)), back, viewer, page)
+			return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, time.Month(monthInt)), back, viewer, page)
 		case "e":
 			if len(parts) != 5 {
 				return false, newValidationError("invalid event leaderboard page callback")
@@ -207,12 +192,12 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 			if idErr != nil || pageErr != nil || page < 0 {
 				return false, newValidationError("invalid event leaderboard page")
 			}
-			return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", viewer, page)
+			return false, h.renderLeaderboard(ctx, target, settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", viewer, page)
 		default:
 			return false, newValidationError("unknown leaderboard period")
 		}
 	case data == "stats:all":
-		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.AllTime(), "menu:stats", common.UserID{Value: cb.From.ID})
+		return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime(), "menu:stats", common.UserID{Value: cb.From.ID})
 	case data == "stats:years":
 		return false, h.yearMenu(ctx, target, settings)
 	case strings.HasPrefix(data, "stats:months:"):
@@ -231,7 +216,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		if len(parts) == 4 && parts[3] == "years" {
 			back = "stats:years"
 		}
-		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForYear(year), back, common.UserID{Value: cb.From.ID})
+		return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year), back, common.UserID{Value: cb.From.ID})
 	case strings.HasPrefix(data, "stats:month:"):
 		parts := strings.Split(data, ":")
 		if len(parts) < 3 || len(parts) > 5 {
@@ -250,19 +235,33 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 			}
 			back = fmt.Sprintf("stats:months:%d", backYear)
 		}
-		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForMonth(year, month), back, common.UserID{Value: cb.From.ID})
+		return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, month), back, common.UserID{Value: cb.From.ID})
 	case strings.HasPrefix(data, "stats:event:"):
 		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:event:"))
 		if err != nil {
 			return false, newValidationError("invalid event id")
 		}
-		return false, h.renderLeaderboard(ctx, statsResultTarget(cb, settings), settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", common.UserID{Value: cb.From.ID})
+		return false, h.renderLeaderboard(ctx, target, settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", common.UserID{Value: cb.From.ID})
 	case strings.HasPrefix(data, "stats:mine:"):
 		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:mine:"))
 		if err != nil {
 			return false, newValidationError("invalid event id")
 		}
-		return false, h.personalStats(ctx, statsResultTarget(cb, settings), settings, cb.From, common.EventID{Value: id})
+		return false, h.personalStats(ctx, target, settings, cb.From, common.EventID{Value: id})
+	case strings.HasPrefix(data, "stats:notif:event:"):
+		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:notif:event:"))
+		if err != nil {
+			return false, newValidationError("invalid event id")
+		}
+		notifTarget := sendTarget(settings.ChatID, cb.Message.MessageThreadID)
+		return false, h.renderLeaderboard(ctx, notifTarget, settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", common.UserID{Value: cb.From.ID})
+	case strings.HasPrefix(data, "stats:notif:mine:"):
+		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:notif:mine:"))
+		if err != nil {
+			return false, newValidationError("invalid event id")
+		}
+		notifTarget := sendTarget(settings.ChatID, cb.Message.MessageThreadID)
+		return false, h.personalStats(ctx, notifTarget, settings, cb.From, common.EventID{Value: id})
 	case data == "stats:events":
 		return false, h.eventStatsMenu(ctx, target, settings)
 	case data == "settings:moderators":
