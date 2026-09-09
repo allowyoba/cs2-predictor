@@ -7,6 +7,9 @@
 # belongs on a public address.
 {$CADDY_DOMAIN} {
 	@public path /telegram/webhook /healthz/ready /version
-	reverse_proxy @public bot:8080
-	respond 404
+
+	route {
+		reverse_proxy @public bot:8080
+		respond 404
+	}
 }
