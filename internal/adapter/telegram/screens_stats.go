@@ -31,7 +31,11 @@ func (h *UpdateHandler) statsMenu(ctx context.Context, target replyTarget, setti
 	}
 	if len(available) == 0 {
 		rows := [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}
-		return h.respond(ctx, target, h.Texts.Get("stats.choose", settings.Locale)+"\n\n"+h.Texts.Get("stats.empty", settings.Locale), &InlineKeyboard{InlineKeyboard: rows})
+		text := h.Texts.Get("stats.choose", settings.Locale) + "\n\n" + h.Texts.Get("stats.empty", settings.Locale)
+		if target.chatID != settings.ChatID {
+			text = h.Texts.Get("stats.managed_choose", settings.Locale, escapeHTML(settings.Title)) + "\n\n" + h.Texts.Get("stats.empty", settings.Locale)
+		}
+		return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 	}
 	latest := available[0]
 	latestMonthLabel := fmt.Sprintf("%s %d", shortMonthName(latest.Month, settings.Locale), latest.Year)
@@ -39,9 +43,18 @@ func (h *UpdateHandler) statsMenu(ctx context.Context, target replyTarget, setti
 		{button(latestMonthLabel, fmt.Sprintf("stats:month:%04d-%02d", latest.Year, latest.Month)), button(strconv.Itoa(latest.Year), fmt.Sprintf("stats:year:%d", latest.Year))},
 		{button(h.Texts.Get("stats.all_time", settings.Locale), "stats:all"), button(h.Texts.Get("stats.event", settings.Locale), "stats:events")},
 		{button(h.Texts.Get("stats.other_period", settings.Locale), "stats:years")},
-		{h.backButton(settings.Locale, "menu:main")},
 	}
-	return h.respond(ctx, target, h.Texts.Get("stats.choose", settings.Locale), &InlineKeyboard{InlineKeyboard: rows})
+	if target.chatID == settings.ChatID {
+		if link, ok := h.statsDeepLink(settings.ChatID); ok {
+			rows = append(rows, []InlineButton{urlButton(h.Texts.Get("stats.open_dm", settings.Locale), link)})
+		}
+	}
+	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:main")})
+	text := h.Texts.Get("stats.choose", settings.Locale)
+	if target.chatID != settings.ChatID {
+		text = h.Texts.Get("stats.managed_choose", settings.Locale, escapeHTML(settings.Title))
+	}
+	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) yearMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -28,6 +29,17 @@ func escapeHTML(s string) string {
 func bold(s string) string   { return "<b>" + s + "</b>" }
 func italic(s string) string { return "<i>" + s + "</i>" }
 func code(s string) string   { return "<code>" + s + "</code>" }
+
+// managedScreenContext keeps the selected group visible on every screen
+// rendered inside the DM management panel. Group-chat rendering is left
+// unchanged. Screens that already carry the group header are not prefixed
+// a second time.
+func managedScreenContext(target replyTarget, settings chat.Settings, text string) string {
+	if target.chatID == settings.ChatID || strings.HasPrefix(text, "🎮 ") {
+		return text
+	}
+	return "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + text
+}
 
 // replyTarget is where a rendered view goes: sendTarget posts a brand-new
 // message (a /command has nothing to edit yet); editTarget rewrites an

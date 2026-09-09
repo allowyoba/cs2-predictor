@@ -272,6 +272,13 @@ func (h *UpdateHandler) renderPrivateChatStats(ctx context.Context, target reply
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 }
 
+func (h *UpdateHandler) statsDeepLink(chatID common.ChatID) (string, bool) {
+	if h.BotUsername == "" {
+		return "", false
+	}
+	return fmt.Sprintf("https://t.me/%s?start=stats_%s", h.BotUsername, strconv.FormatInt(chatID.Value, 36)), true
+}
+
 // dmDeepLink builds a t.me/<bot>?start=admin_<chatId> deep link, or
 // ok=false if the bot's own username hasn't been resolved yet (see
 // UpdateHandler.BotUsername).

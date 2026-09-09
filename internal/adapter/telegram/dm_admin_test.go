@@ -310,3 +310,20 @@ func TestPrivateCallback_NoDMSessionFallsBackToPersonalStats(t *testing.T) {
 		t.Fatal("expected the fallback personal-stats-empty screen to render")
 	}
 }
+
+func TestStatsDeepLink_ParsesValidPayload(t *testing.T) {
+	id := int64(-1001234567890)
+	text := "/start stats_" + int64Base36(id)
+	got, ok := parseStatsDeepLink(text)
+	if !ok || got.Value != id {
+		t.Fatalf("parseStatsDeepLink(%q) = %v, %v, want %d, true", text, got, ok, id)
+	}
+}
+
+func TestStatsDeepLink_BuildsURLWhenBotUsernameSet(t *testing.T) {
+	h := &UpdateHandler{BotUsername: "cs2predictor_bot"}
+	link, ok := h.statsDeepLink(common.ChatID{Value: -100123})
+	if !ok || !strings.Contains(link, "?start=stats_") {
+		t.Fatalf("statsDeepLink = %q, %v", link, ok)
+	}
+}

@@ -38,9 +38,10 @@ func (h *UpdateHandler) menu(ctx context.Context, target replyTarget, settings c
 	switch {
 	case dmContext:
 		rows = [][]InlineButton{
-			{button(h.Texts.Get("menu.events", locale), "menu:events"), button(h.Texts.Get("menu.settings", locale), "menu:settings")},
 			{button(h.Texts.Get("menu.stats", locale), "menu:stats"), button(h.Texts.Get("menu.upcoming", locale), "menu:upcoming")},
+			{button(h.Texts.Get("menu.events", locale), "menu:events"), button(h.Texts.Get("menu.settings", locale), "menu:settings")},
 			{button(h.Texts.Get("menu.rules", locale), "menu:rules")},
+			{button(h.Texts.Get("dm.change_group", locale), "manage:chats")},
 		}
 	default:
 		rows = [][]InlineButton{
@@ -58,8 +59,18 @@ func (h *UpdateHandler) menu(ctx context.Context, target replyTarget, settings c
 	}
 	text := h.Texts.Get("menu.title", locale)
 	if dmContext {
-		text = bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.manage_context", locale)
+		text = "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.manage_context", locale)
 	}
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
+}
+
+func (h *UpdateHandler) readOnlyGroupMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
+	rows := [][]InlineButton{
+		{button(h.Texts.Get("menu.stats", settings.Locale), "menu:stats"), button(h.Texts.Get("menu.upcoming", settings.Locale), "menu:upcoming")},
+		{button(h.Texts.Get("menu.rules", settings.Locale), "menu:rules")},
+		{h.backButton(settings.Locale, "pstats:menu")},
+	}
+	text := "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.view_context", settings.Locale)
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 }
 

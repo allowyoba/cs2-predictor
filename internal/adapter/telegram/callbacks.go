@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -78,6 +79,14 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 	target := editTargetFromCallback(cb, settings.ChatID)
 	switch {
 	case data == "menu:main":
+		if cb.Message.Chat.Type == "private" {
+			if accessErr := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); accessErr != nil {
+				if errors.Is(accessErr, chat.ErrAccessDenied) {
+					return false, h.readOnlyGroupMenu(ctx, target, settings)
+				}
+				return false, accessErr
+			}
+		}
 		return false, h.menu(ctx, target, settings, cb.Message.Chat.Type == "private")
 	case data == "menu:stats":
 		return false, h.statsMenu(ctx, target, settings)
