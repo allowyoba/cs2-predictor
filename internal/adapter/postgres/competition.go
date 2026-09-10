@@ -338,8 +338,15 @@ func (r *CompetitionRepository) SaveMatch(ctx context.Context, m competition.Mat
 			stageUUID = &b
 		}
 
+		// No existing row (ErrNoRows) is the expected case for a brand-new
+		// match and simply starts version at 0 -> 1; any other error (a
+		// lost connection, a broken query) must fail the save rather than
+		// silently proceeding as if the match were new, which would let a
+		// concurrent update's version get overwritten unnoticed.
 		var version int64
-		_ = ex.QueryRow(ctx, `SELECT version FROM esport_match WHERE id = $1`, m.ID.Value).Scan(&version)
+		if err := ex.QueryRow(ctx, `SELECT version FROM esport_match WHERE id = $1`, m.ID.Value).Scan(&version); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
 		version++
 
 		var firstScore, secondScore *int
