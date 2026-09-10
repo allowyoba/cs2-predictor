@@ -96,6 +96,15 @@ func (e *APIError) IsEditUnavailable() bool {
 	return e.isDescriptionContains("message to edit not found", "message can't be edited", "message is too old")
 }
 
+// IsPollAlreadyClosed matches stopPoll's error for a poll Telegram already
+// auto-closed via sendPoll's close_date — expected, not a real failure,
+// once a poll carries its own close_date (see PollGateway.Send): the
+// scheduled close job's own stopPoll call can lose the race to Telegram's
+// own timer and arrive after it already closed the poll.
+func (e *APIError) IsPollAlreadyClosed() bool {
+	return e.isDescriptionContains("poll has already been closed")
+}
+
 // Client is the single generic Bot API caller — every Bot API method goes
 // through Call(method, payload) rather than a per-method typed wrapper.
 type Client struct {
