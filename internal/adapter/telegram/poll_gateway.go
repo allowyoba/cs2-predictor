@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"unicode"
 
 	"golang.org/x/sync/errgroup"
 
@@ -150,42 +149,43 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	}
 	loc := chat.ZoneOrDefault(zoneName)
 
-	stage := "—"
+	// stage/eventName go into description, which (unlike question) does get
+	// HTML parse_mode below, so they're escaped; team names and the format
+	// label never appear in description text controlled by an external
+	// source in a way that needs it.
+	stage := ""
 	if match.Stage != nil {
-		stage = *match.Stage
+		stage = escapeHTML(*match.Stage)
 	}
-	var when string
+	var dateWhen, timeWhen string
 	if match.ScheduledAt != nil {
-		when = match.ScheduledAt.In(loc).Format("02.01 15:04 MST")
+		local := match.ScheduledAt.In(loc)
+		dateWhen = local.Format("02.01")
+		timeWhen = local.Format("15:04 MST")
 	}
 	firstName := formatTeamCompact(match.FirstTeam)
 	secondName := formatTeamCompact(match.SecondTeam)
-	eventName := event.Tier.Badge() + event.Name
-	// No HTML escaping here (unlike every other rendered text in this
-	// package): the poll question is sent with no parse_mode at all — see
-	// the payload below — so it's plain text end to end, and escaping would
-	// show literal "&amp;" for a team/tournament name containing "&".
-	question := g.texts.Get("poll.question", locale, eventName, firstName, secondName, stage, match.Format.Label(), when)
 
-	// Balance and every enrichment line are short "insight" lines — grouped
-	// into one paragraph (matching the spec's target layout) rather than
-	// each getting its own blank-line-separated block. Balance is
-	// PandaScore-native (always shown when available) and doesn't count
-	// against the enrichment cap in buildEnrichmentLines.
-	var insights []string
+	// The question is just "Team (record) · Team (record)" — short, single
+	// line, no parse_mode (question_parse_mode only honors custom-emoji
+	// entities anyway, per Bot API 7.3), so team names stay unescaped plain
+	// text. Everything else — tournament, stage/format, date/time, VRS,
+	// form, H2H — goes in description instead: added in Bot API 9.6,
+	// it's a real multi-line, HTML-formattable field (up to 1024 chars)
+	// attached to the same sendPoll call, unlike question, which Telegram
+	// renders every "\n" in as a single space with no way to opt out.
+	var firstRecord, secondRecord string
 	if haveFacts {
-		firstGames := facts.FirstEventBalance.Wins + facts.FirstEventBalance.Losses + facts.FirstEventBalance.Draws
-		secondGames := facts.SecondEventBalance.Wins + facts.SecondEventBalance.Losses + facts.SecondEventBalance.Draws
-		if firstGames > 0 || secondGames > 0 {
-			insights = append(insights, g.texts.Get("poll.balance", locale, formatBalance(facts.FirstEventBalance), formatBalance(facts.SecondEventBalance)))
-		}
+		firstRecord = formatTeamRecord(facts.FirstEventBalance)
+		secondRecord = formatTeamRecord(facts.SecondEventBalance)
 	}
-	insights = append(insights, g.buildEnrichmentLines(locale, rankings, homeForm, awayForm, h2h, match.FirstTeam, match.SecondTeam)...)
-	question, droppedInsights := composePollQuestion(question, insights, event.Name, match.FirstTeam, match.SecondTeam)
-	if droppedInsights > 0 {
-		g.log.Info("poll question over budget, dropped lowest-priority insight lines",
-			"matchId", match.ID.Value, "dropped", droppedInsights)
-	}
+	question := composePollQuestion(firstName, firstRecord, secondName, secondRecord)
+
+	eventName := event.Tier.Badge() + escapeHTML(event.Name)
+	vrsLine := formatVRSCombined(rankings, match.FirstTeam, match.SecondTeam)
+	formLine := formatForm(homeForm, awayForm)
+	h2hLine := formatH2H(h2h)
+	description := composePollDescription(g.texts, locale, eventName, stage, match.Format.Label(), dateWhen, timeWhen, vrsLine, formLine, h2hLine)
 
 	options := make([]map[string]string, len(poll.Options))
 	for i, o := range poll.Options {
@@ -197,12 +197,16 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 		// No question_parse_mode: Telegram's sendPoll only honors custom
 		// emoji entities there (Bot API 7.3+) — nothing this bot would send
 		// needs that, and leaving parse_mode unset avoids any risk of a
-		// stray "<"/">" in a team or tournament name being interpreted as
-		// (invalid, silently-dropped) markup instead of shown as-is.
+		// stray "<"/">" in a team name being interpreted as (invalid,
+		// silently-dropped) markup instead of shown as-is.
 		"question":                question,
 		"options":                 options,
 		"is_anonymous":            false,
 		"allows_multiple_answers": false,
+	}
+	if description != "" {
+		payload["description"] = truncate(description, telegramPollDescriptionLimit)
+		payload["description_parse_mode"] = "HTML"
 	}
 	usedTopic := poll.TopicID
 	if poll.TopicID != nil {
@@ -238,143 +242,91 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	return prediction.SentPoll{PollID: sent.Poll.ID, MessageID: sent.MessageID, TopicID: usedTopic}, nil
 }
 
-const telegramPollQuestionLimit = 300
+// telegramPollQuestionLimit/telegramPollDescriptionLimit are sendPoll's
+// documented caps: question is 1-300 characters with no real line-break
+// support (every "\n" renders as a single space in every Telegram client
+// checked); description — added in Bot API 9.6 — is 0-1024 characters,
+// does honor real line breaks, and supports normal HTML/MarkdownV2
+// formatting (unlike question_parse_mode, which is restricted to custom
+// emoji entities only).
+const (
+	telegramPollQuestionLimit    = 300
+	telegramPollDescriptionLimit = 1024
+)
 
-func pollHashtag(value string) string {
-	const maxTagRunes = 40
-	var b strings.Builder
-	count := 0
-	for _, r := range strings.TrimSpace(value) {
-		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
-			continue
-		}
-		if count >= maxTagRunes {
-			break
-		}
-		b.WriteRune(r)
-		count++
+// composePollQuestion renders the poll's single-line header: each team's
+// name immediately followed by its own tournament win-loss record in
+// parentheses, so the record visually belongs to that team rather than
+// reading as an unattached aside. A team with no record yet (hasn't played
+// here, or the data isn't cached) gets no parentheses at all — never an
+// empty "()" or a placeholder like "(0–0)".
+func composePollQuestion(firstName, firstRecord, secondName, secondRecord string) string {
+	left := firstName
+	if firstRecord != "" {
+		left += " (" + firstRecord + ")"
 	}
-	if b.Len() == 0 {
+	right := secondName
+	if secondRecord != "" {
+		right += " (" + secondRecord + ")"
+	}
+	return truncate(left+" · "+right, telegramPollQuestionLimit)
+}
+
+// formatTeamRecord renders a team's tournament win-loss record with a
+// typographic en dash ("2–1"), or "" if they haven't played a match here
+// yet — composePollQuestion omits the parenthetical entirely rather than
+// show a fake "(0–0)".
+func formatTeamRecord(b competition.TeamBalance) string {
+	if b.Wins+b.Losses+b.Draws == 0 {
 		return ""
 	}
-	return "#" + b.String()
-}
-
-// pollSegmentSeparator joins the logical segments of a poll question
-// (header, each insight line, each hashtag). Telegram's poll question does
-// not honor line breaks at all — every "\n", single or double, renders as a
-// single space in every client that has been checked, contrary to an
-// earlier assumption in this file — so structure has to come from a visible
-// separator instead of layout.
-const pollSegmentSeparator = " • "
-
-// composePollQuestion fits header + insight lines + hashtags inside
-// Telegram's poll-question limit. Insight lines are added by priority while
-// they fit and dropped whole from the bottom (VRS points, then H2H, then
-// form — buildEnrichmentLines' own order) when they don't, rather than
-// letting the hashtag pass truncate the text and cut a rank line in half.
-// The header and hashtags always survive: they identify the match, which is
-// the one thing the poll can't be read without.
-func composePollQuestion(header string, insights []string, eventName string, first, second *competition.Team) (question string, dropped int) {
-	for kept := len(insights); kept >= 0; kept-- {
-		body := header
-		if kept > 0 {
-			body += pollSegmentSeparator + strings.Join(insights[:kept], pollSegmentSeparator)
-		}
-		candidate := appendPollHashtags(body, eventName, first, second)
-		// appendPollHashtags truncates as a last resort; only accept a
-		// candidate it did not have to cut.
-		if len([]rune(candidate)) <= telegramPollQuestionLimit && strings.Contains(candidate, lastSegmentOf(body)) {
-			return candidate, len(insights) - kept
-		}
-	}
-	return appendPollHashtags(header, eventName, first, second), len(insights)
-}
-
-// lastSegmentOf is composePollQuestion's "was anything cut?" probe: if the
-// final segment of the assembled body survived into the result, nothing
-// before it was truncated either.
-func lastSegmentOf(s string) string {
-	if idx := strings.LastIndex(s, pollSegmentSeparator); idx >= 0 {
-		return s[idx+len(pollSegmentSeparator):]
-	}
-	return s
-}
-
-func appendPollHashtags(question, eventName string, first, second *competition.Team) string {
-	values := []string{eventName}
-	if first != nil {
-		values = append(values, first.Name)
-	}
-	if second != nil {
-		values = append(values, second.Name)
-	}
-
-	seen := map[string]struct{}{}
-	var tags []string
-	for _, value := range values {
-		tag := pollHashtag(value)
-		if tag == "" {
-			continue
-		}
-		key := strings.ToLower(tag)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		tags = append(tags, tag)
-	}
-	if len(tags) == 0 {
-		return truncate(question, telegramPollQuestionLimit)
-	}
-
-	// Plain text, not <code> spans: sendPoll's question_parse_mode only
-	// honors custom-emoji entities (Bot API 7.3+) — any <code>/<b>/etc. here
-	// is silently dropped by Telegram, never rendered as monospace, so
-	// wrapping tags in HTML bought nothing but dead code.
-	tagLine := strings.Join(tags, pollSegmentSeparator)
-	available := telegramPollQuestionLimit - len([]rune(tagLine)) - len([]rune(pollSegmentSeparator))
-	if available <= 0 {
-		return truncate(tagLine, telegramPollQuestionLimit)
-	}
-	return truncate(question, available) + pollSegmentSeparator + tagLine
-}
-
-func formatBalance(b competition.TeamBalance) string {
 	if b.Draws > 0 {
-		return fmt.Sprintf("%d-%d-%d", b.Wins, b.Losses, b.Draws)
+		return fmt.Sprintf("%d–%d–%d", b.Wins, b.Losses, b.Draws)
 	}
-	return fmt.Sprintf("%d-%d", b.Wins, b.Losses)
+	return fmt.Sprintf("%d–%d", b.Wins, b.Losses)
 }
 
-// maxEnrichmentInsightLines caps how many enrichment-sourced lines (as
-// opposed to the PandaScore-native balance line) a poll question ever
-// carries — VRS rank (with points in parentheses), recent form,
-// head-to-head, in that priority order. Kept explicit, rather than relying
-// on there being exactly 3 line types, so adding a 4th enrichment metric
-// later doesn't silently blow the poll past a readable length.
-const maxEnrichmentInsightLines = 3
-
-// buildEnrichmentLines assembles the enrichment-sourced insight lines for a
-// match, most important first: VRS rank (points alongside, in parentheses),
-// recent form, head-to-head. A line is skipped if its data isn't available,
-// and the result is truncated to maxEnrichmentInsightLines even if more
-// candidates exist.
-func (g *PollGateway) buildEnrichmentLines(locale common.LocaleCode, rankings map[common.TeamID]enrichment.TeamRanking, homeForm, awayForm *enrichment.RecentForm, h2h *enrichment.HeadToHead, first, second *competition.Team) []string {
+// composePollDescription builds the poll's multi-line context block: real
+// "\n" between lines (description, unlike question, honors them), each
+// logical block — tournament, stage/format, date/time, VRS, recent form,
+// head-to-head — on its own line, entirely omitted when it has nothing to
+// show. No separator character joins these blocks; every value that IS
+// present within one line joins with " · ".
+func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, stage, formatLabel, dateWhen, timeWhen, vrsLine, formLine, h2hLine string) string {
 	var lines []string
-	if line := formatVRSCombined(rankings, first, second); line != "" {
-		lines = append(lines, g.texts.Get("poll.vrs", locale, line))
+	if eventName != "" {
+		lines = append(lines, "🏆 "+eventName)
 	}
-	if line := formatForm(homeForm, awayForm); line != "" {
-		lines = append(lines, g.texts.Get("poll.form", locale, line))
+	if stageFormat := joinNonEmpty(stage, formatLabel); stageFormat != "" {
+		lines = append(lines, "🎯 "+stageFormat)
 	}
-	if line := formatH2H(h2h); line != "" {
-		lines = append(lines, g.texts.Get("poll.h2h", locale, line))
+	if when := joinNonEmpty(dateWhen, timeWhen); when != "" {
+		lines = append(lines, "🕒 "+when)
 	}
-	if len(lines) > maxEnrichmentInsightLines {
-		lines = lines[:maxEnrichmentInsightLines]
+	if vrsLine != "" {
+		lines = append(lines, texts.Get("poll.vrs", locale, vrsLine))
 	}
-	return lines
+	if formLine != "" {
+		lines = append(lines, texts.Get("poll.form", locale, formLine))
+	}
+	if h2hLine != "" {
+		lines = append(lines, texts.Get("poll.h2h", locale, h2hLine))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// joinNonEmpty joins only the non-empty values in parts with " · " — "" if
+// none are non-empty, one bare value if only one is, so a missing stage,
+// format, date, time, or VRS/form side never leaves a stray leading/
+// trailing separator behind.
+func joinNonEmpty(parts ...string) string {
+	var nonEmpty []string
+	for _, p := range parts {
+		if p != "" {
+			nonEmpty = append(nonEmpty, p)
+		}
+	}
+	return strings.Join(nonEmpty, " · ")
 }
 
 // rankingInts pulls one *int field (chosen by pick) out of a cached ranking
@@ -390,55 +342,54 @@ func rankingInts(rankings map[common.TeamID]enrichment.TeamRanking, first, secon
 	return firstVal, secondVal
 }
 
-// formatVRSCombined renders the poll's single VRS line, points alongside
-// rank in parentheses — "#1(1993) — #3(1908)" — rather than the rank and
-// points as two separate lines, since they're the same metric read two
-// ways and a reader wants them together, not spread across the question.
+// formatVRSCombined renders the poll's VRS line halves in the same
+// first/second order as the question's teams, joined by " · " — "#8 (1723)
+// · #121 (867)" — with team names never repeated (the question already
+// names them, and the order alone makes which is which unambiguous). A
+// side with no cached rank or points at all contributes nothing rather
+// than a placeholder, and the whole line is "" when neither side has any
+// data, so the caller omits it entirely.
 func formatVRSCombined(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
 	if first == nil || second == nil {
 		return ""
 	}
 	firstRank, secondRank := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.GlobalRank })
 	firstPoints, secondPoints := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.Points })
-	if firstRank == nil && secondRank == nil && firstPoints == nil && secondPoints == nil {
-		return ""
-	}
-	return formatVRSSide(firstRank, firstPoints) + " — " + formatVRSSide(secondRank, secondPoints)
+	return joinNonEmpty(formatVRSSide(firstRank, firstPoints), formatVRSSide(secondRank, secondPoints))
 }
 
-// formatVRSSide renders one team's half of formatVRSCombined: "#rank",
-// "#rank(points)", "(points)" when only points are cached, or "—" when
-// neither is.
+// formatVRSSide renders one team's half of formatVRSCombined: "#rank
+// (points)" when both are cached, "#rank" or "(points)" alone when only one
+// is, or "" — never a placeholder like "#0" or "N/A" — when neither is.
 func formatVRSSide(rank, points *int) string {
 	switch {
 	case rank != nil && points != nil:
-		return fmt.Sprintf("#%d(%d)", *rank, *points)
+		return fmt.Sprintf("#%d (%d)", *rank, *points)
 	case rank != nil:
 		return fmt.Sprintf("#%d", *rank)
 	case points != nil:
 		return fmt.Sprintf("(%d)", *points)
 	default:
-		return "—"
-	}
-}
-
-// formatForm renders "wins-losses — wins-losses" for cached recent-form
-// rows, "—" for a side with none. Returns "" when neither side has one.
-func formatForm(home, away *enrichment.RecentForm) string {
-	if home == nil && away == nil {
 		return ""
 	}
-	homeStr, awayStr := "—", "—"
-	if home != nil {
-		homeStr = fmt.Sprintf("%d-%d", home.Wins, home.Losses)
-	}
-	if away != nil {
-		awayStr = fmt.Sprintf("%d-%d", away.Wins, away.Losses)
-	}
-	return homeStr + " — " + awayStr
 }
 
-// formatH2H renders "teamAWins-teamBWins", matching the match's own
+// formatForm renders each side's recent-form win-loss record ("4–1 · 3–2")
+// for whichever side(s) actually have cached data — a side with none
+// contributes nothing rather than a "—" placeholder. Returns "" when
+// neither side has one, so the caller omits the whole line.
+func formatForm(home, away *enrichment.RecentForm) string {
+	var homeStr, awayStr string
+	if home != nil {
+		homeStr = fmt.Sprintf("%d–%d", home.Wins, home.Losses)
+	}
+	if away != nil {
+		awayStr = fmt.Sprintf("%d–%d", away.Wins, away.Losses)
+	}
+	return joinNonEmpty(homeStr, awayStr)
+}
+
+// formatH2H renders "teamAWins–teamBWins", matching the match's own
 // first/second order (HeadToHeadRepository.FindHeadToHead already
 // remaps TeamAWins/TeamBWins to whichever order it was asked for). Returns
 // "" when there's no cached record, or a zero-sample one (nothing played).
@@ -446,7 +397,7 @@ func formatH2H(h2h *enrichment.HeadToHead) string {
 	if h2h == nil || h2h.Sample == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d-%d", h2h.TeamAWins, h2h.TeamBWins)
+	return fmt.Sprintf("%d–%d", h2h.TeamAWins, h2h.TeamBWins)
 }
 
 // clearTopic clears whichever topic override actually matched what was
