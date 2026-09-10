@@ -419,6 +419,10 @@ func TestComposePollQuestion_KeepsEverythingWhenItFits(t *testing.T) {
 	}
 }
 
+// Telegram's poll question renders every "\n" (single or double) as a
+// space, in every client checked — there is no way to get an actual line
+// break — so structure comes from pollSegmentSeparator (" • ") instead of
+// layout; see composePollQuestion's doc comment.
 func TestSend_PollHeaderUsesSeparateVisualBlocks(t *testing.T) {
 	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
 	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
@@ -429,7 +433,10 @@ func TestSend_PollHeaderUsesSeparateVisualBlocks(t *testing.T) {
 			t.Fatalf("expected poll header block %q in %q", marker, question)
 		}
 	}
-	if !strings.Contains(question, "🏆 ") || strings.Count(question, "\n\n") < 2 || !strings.Contains(question, " · BO3\n🕒 ") {
-		t.Fatalf("expected poll metadata to be split into readable blocks, got %q", question)
+	if strings.Count(question, pollSegmentSeparator) < 4 || !strings.Contains(question, " · BO3"+pollSegmentSeparator+"🕒 ") {
+		t.Fatalf("expected poll metadata to be split into readable blocks by %q, got %q", pollSegmentSeparator, question)
+	}
+	if strings.Contains(question, "\n") {
+		t.Fatalf("expected no literal newlines — Telegram renders them as spaces anyway — got %q", question)
 	}
 }
