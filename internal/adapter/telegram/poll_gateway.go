@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -208,6 +209,18 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 		payload["description"] = truncate(description, telegramPollDescriptionLimit)
 		payload["description_parse_mode"] = "HTML"
 	}
+	// close_date hands Telegram the poll's own scheduled close time (valid
+	// up to ~30 days out, comfortably more than this bot's longest lead
+	// time) so it closes on the dot even if this process is down or
+	// delayed at that moment — a safety net alongside, not a replacement
+	// for, the scheduled CloseDue job, which still has to run to record
+	// the closure in this bot's own database and drive settlement. A lead
+	// time under Telegram's 5-second minimum is skipped rather than
+	// rejected outright by sendPoll; CloseDue's own stopPoll call still
+	// closes it in that case.
+	if lead := time.Until(poll.ClosesAt); lead >= minPollCloseDateLead {
+		payload["close_date"] = poll.ClosesAt.Unix()
+	}
 	usedTopic := poll.TopicID
 	if poll.TopicID != nil {
 		payload["message_thread_id"] = *poll.TopicID
@@ -252,6 +265,13 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 const (
 	telegramPollQuestionLimit    = 300
 	telegramPollDescriptionLimit = 1024
+
+	// minPollCloseDateLead is a small safety margin over sendPoll's own
+	// documented 5-second minimum for close_date, so a poll whose match is
+	// starting almost immediately doesn't risk sendPoll rejecting the call
+	// outright over a lead time that rounds down past the limit between
+	// this check and the request actually reaching Telegram.
+	minPollCloseDateLead = 10 * time.Second
 )
 
 // composePollQuestion renders the poll's single-line header: each team's
@@ -345,22 +365,26 @@ func rankingInts(rankings map[common.TeamID]enrichment.TeamRanking, first, secon
 // formatVRSCombined renders the poll's VRS line halves in the same
 // first/second order as the question's teams, joined by " · " — "#8 (1723)
 // · #121 (867)" — with team names never repeated (the question already
-// names them, and the order alone makes which is which unambiguous). A
-// side with no cached rank or points at all contributes nothing rather
-// than a placeholder, and the whole line is "" when neither side has any
-// data, so the caller omits it entirely.
+// names them, and the order alone makes which is which unambiguous). The
+// whole line is "" when NEITHER side has any cached data, so the caller
+// omits it entirely; but once at least one side does, the other side shows
+// "N/A" rather than being silently dropped — dropping it would otherwise
+// leave a single bare value with no way to tell which team it belongs to.
 func formatVRSCombined(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
 	if first == nil || second == nil {
 		return ""
 	}
 	firstRank, secondRank := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.GlobalRank })
 	firstPoints, secondPoints := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.Points })
-	return joinNonEmpty(formatVRSSide(firstRank, firstPoints), formatVRSSide(secondRank, secondPoints))
+	if firstRank == nil && firstPoints == nil && secondRank == nil && secondPoints == nil {
+		return ""
+	}
+	return formatVRSSide(firstRank, firstPoints) + " · " + formatVRSSide(secondRank, secondPoints)
 }
 
 // formatVRSSide renders one team's half of formatVRSCombined: "#rank
 // (points)" when both are cached, "#rank" or "(points)" alone when only one
-// is, or "" — never a placeholder like "#0" or "N/A" — when neither is.
+// is, or "N/A" when neither is cached for this team at all.
 func formatVRSSide(rank, points *int) string {
 	switch {
 	case rank != nil && points != nil:
@@ -370,7 +394,7 @@ func formatVRSSide(rank, points *int) string {
 	case points != nil:
 		return fmt.Sprintf("(%d)", *points)
 	default:
-		return ""
+		return "N/A"
 	}
 }
 
@@ -434,5 +458,14 @@ func (g *PollGateway) stop(ctx context.Context, poll prediction.Poll) error {
 		return prediction.ErrPollMissingTelegramMessage
 	}
 	_, err := g.client.Call(ctx, "stopPoll", map[string]any{"chat_id": poll.ChatID.Value, "message_id": *poll.TelegramMessageID})
+	if err == nil {
+		return nil
+	}
+	// Expected, not a failure, for a poll sent with close_date: Telegram's
+	// own timer can beat this scheduled call to closing it.
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.IsPollAlreadyClosed() {
+		return nil
+	}
 	return err
 }

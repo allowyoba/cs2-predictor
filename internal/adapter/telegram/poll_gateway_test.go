@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -217,23 +219,21 @@ func TestFormatVRSCombined_RankOnlyOmitsParentheses(t *testing.T) {
 	}
 }
 
-// If only one team has cached VRS data, the line must show only that
-// team's half — never a placeholder like "#0", "N/A", or empty parens for
-// the missing side.
-func TestFormatVRSCombined_OneTeamUnrankedShowsOnlyTheOtherSide(t *testing.T) {
+// If only one team has cached VRS data, the other side must show "N/A"
+// rather than being dropped — a bare "#1" with no second value would leave
+// the reader unable to tell which team it's for.
+func TestFormatVRSCombined_OneTeamUnrankedShowsNAForTheOtherSide(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank := 1
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first: {TeamID: first, GlobalRank: &firstRank},
 	}
 	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
-	if want := "#1"; got != want {
+	if want := "#1 · N/A"; got != want {
 		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
 	}
-	for _, placeholder := range []string{"#0", "N/A", "()"} {
-		if strings.Contains(got, placeholder) {
-			t.Fatalf("expected no placeholder %q in %q", placeholder, got)
-		}
+	if strings.Contains(got, "#0") {
+		t.Fatalf("expected no #0 placeholder in %q", got)
 	}
 }
 
@@ -336,6 +336,7 @@ func (c *factsCatalog) MatchFacts(context.Context, *competition.Match) (competit
 type sentPoll struct {
 	question    string
 	description string
+	closeDate   any // nil if the payload carried no close_date at all
 }
 
 // sendTestPoll wires a real PollGateway against a recording HTTP server and
@@ -398,7 +399,7 @@ func sendTestPoll(t *testing.T, catalog competition.Catalog, enrichmentSources P
 		if c["__method"] == "sendPoll" {
 			q, _ := c["question"].(string)
 			d, _ := c["description"].(string)
-			return sentPoll{question: q, description: d}
+			return sentPoll{question: q, description: d, closeDate: c["close_date"]}
 		}
 	}
 	t.Fatal("no sendPoll call recorded")
@@ -643,4 +644,118 @@ func (f *fakeHeadToHeadRepository) SaveHeadToHead(context.Context, common.TeamID
 }
 func (f *fakeHeadToHeadRepository) FindHeadToHead(context.Context, common.TeamID, common.TeamID, enrichment.Source) (*enrichment.HeadToHead, error) {
 	return f.h2h, f.err
+}
+
+// --- close_date ---
+
+func TestSend_SetsCloseDateForANormalLeadTime(t *testing.T) {
+	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
+	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
+	sent := sendTestPoll(t, nil, PollEnrichmentSources{}, first, second)
+	if sent.closeDate == nil {
+		t.Fatal("expected close_date to be set for a poll closing an hour from now")
+	}
+}
+
+// TestSend_OmitsCloseDateWhenTheLeadTimeIsTooShort covers a match starting
+// almost immediately: sendPoll would reject close_date outright below its
+// documented 5-second minimum, so Send must skip the field entirely rather
+// than risk the whole call failing over it — the scheduled CloseDue job
+// still closes the poll the ordinary way.
+func TestSend_OmitsCloseDateWhenTheLeadTimeIsTooShort(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	client := NewClient(Config{BaseURL: srv.URL, Token: "test-token"}, srv.Client())
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	chats := newFakeChats()
+	chatID := common.ChatID{Value: -1}
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	eventID := common.NewEventID()
+	format, err := competition.NewSeriesFormat(competition.BestOf, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduledAt := time.Now().Add(2 * time.Second)
+	matchID := common.NewMatchID()
+	match := competition.Match{
+		ID: matchID, EventID: eventID, Format: format, Status: competition.MatchNotStarted,
+		FirstTeam:   &competition.Team{ID: common.NewTeamID(), Name: "Spirit"},
+		SecondTeam:  &competition.Team{ID: common.NewTeamID(), Name: "NAVI"},
+		ScheduledAt: &scheduledAt,
+	}
+	catalog := &dataCatalog{
+		events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}},
+		unstartedMatches: map[common.EventID][]competition.Match{eventID: {match}},
+	}
+	score, err := competition.NewMatchScore(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poll := prediction.Poll{
+		ID: common.NewPollID(), ChatID: chatID, MatchID: matchID,
+		Options: []prediction.Option{{Index: 0, Score: score}},
+		Status:  prediction.PollOpen, ClosesAt: scheduledAt,
+	}
+	gateway := NewPollGateway(client, catalog, chats, texts, slog.Default(), PollEnrichmentSources{})
+	if _, err := gateway.Send(context.Background(), poll); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range *calls {
+		if c["__method"] == "sendPoll" {
+			if _, ok := c["close_date"]; ok {
+				t.Fatalf("expected no close_date for a 2-second lead time, got %v", c["close_date"])
+			}
+			return
+		}
+	}
+	t.Fatal("no sendPoll call recorded")
+}
+
+// TestStop_TreatsAlreadyClosedAsSuccess covers the race close_date
+// introduces: the scheduled CloseDue job's own stopPoll call can lose the
+// race to Telegram's own timer and arrive after the poll is already closed
+// — that must not surface as an error.
+func TestStop_TreatsAlreadyClosedAsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: poll has already been closed"}`))
+	}))
+	defer server.Close()
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := NewPollGateway(client, &dataCatalog{}, newFakeChats(), texts, slog.Default(), PollEnrichmentSources{})
+	messageID := int64(42)
+	poll := prediction.Poll{ID: common.NewPollID(), ChatID: common.ChatID{Value: -1}, TelegramMessageID: &messageID}
+	if err := gateway.Close(context.Background(), poll); err != nil {
+		t.Fatalf("expected 'poll has already been closed' to be treated as success, got %v", err)
+	}
+}
+
+func TestStop_PropagatesOtherErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}`))
+	}))
+	defer server.Close()
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := NewPollGateway(client, &dataCatalog{}, newFakeChats(), texts, slog.Default(), PollEnrichmentSources{})
+	messageID := int64(42)
+	poll := prediction.Poll{ID: common.NewPollID(), ChatID: common.ChatID{Value: -1}, TelegramMessageID: &messageID}
+	if err := gateway.Close(context.Background(), poll); err == nil {
+		t.Fatal("expected an unrelated stopPoll error to propagate")
+	}
 }
