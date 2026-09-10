@@ -152,6 +152,7 @@ func betterAccuracy(a, b scoring.UserStanding) bool {
 	return a.UserID.Value < b.UserID.Value
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func buildAnnualHighlights(rows []scoring.UserStanding, specials scoring.AnnualSpecials) common.AnnualHighlightsNotification {
 	var out common.AnnualHighlightsNotification
 	if len(rows) == 0 {

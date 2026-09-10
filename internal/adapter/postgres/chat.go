@@ -83,10 +83,16 @@ func (r *ChatRepository) IsModerator(ctx context.Context, chatID common.ChatID, 
 }
 
 // ensureUser auto-creates a stub telegram_user row if missing, with a
-// placeholder display name ("Telegram user <id>"), so foreign keys from
-// chat_moderator always resolve.
+// placeholder display name ("Telegram user <id>"), so any foreign key
+// referencing telegram_user resolves regardless of which repository writes
+// first — chat_moderator (via ChatRepository) and moderator_invitation (via
+// InvitationRepository.created_by) both depend on this.
 func (r *ChatRepository) ensureUser(ctx context.Context, id common.UserID) error {
-	_, err := executor(ctx, r.pool).Exec(ctx,
+	return ensureUser(ctx, executor(ctx, r.pool), id)
+}
+
+func ensureUser(ctx context.Context, ex dbtx, id common.UserID) error {
+	_, err := ex.Exec(ctx,
 		`INSERT INTO telegram_user(id, display_name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
 		id.Value, "Telegram user "+id.String())
 	return err

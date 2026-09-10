@@ -270,6 +270,251 @@ func TestGranularPermission_GroupSettingsModeratorCanChangeLocale(t *testing.T) 
 	}
 }
 
+// lastEditedText returns the text of the most recent editMessageText call,
+// failing the test if there wasn't one.
+func lastEditedText(t *testing.T, calls []map[string]any) string {
+	t.Helper()
+	var text string
+	found := false
+	for _, c := range calls {
+		if c["__method"] == "editMessageText" {
+			text, _ = c["text"].(string)
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no editMessageText call found among %+v", calls)
+	}
+	return text
+}
+
+// lastEditedButtons flattens the inline keyboard of the most recent
+// editMessageText call into its button texts and callback data, failing
+// the test if there wasn't one.
+func lastEditedButtons(t *testing.T, calls []map[string]any) []map[string]any {
+	t.Helper()
+	var edited map[string]any
+	for _, c := range calls {
+		if c["__method"] == "editMessageText" {
+			edited = c
+		}
+	}
+	if edited == nil {
+		t.Fatal("no editMessageText call found")
+	}
+	kb, _ := edited["reply_markup"].(map[string]any)
+	rows, _ := kb["inline_keyboard"].([]any)
+	var buttons []map[string]any
+	for _, row := range rows {
+		for _, btn := range row.([]any) {
+			buttons = append(buttons, btn.(map[string]any))
+		}
+	}
+	return buttons
+}
+
+func buttonCallbackDatas(buttons []map[string]any) []string {
+	var out []string
+	for _, b := range buttons {
+		if cd, ok := b["callback_data"].(string); ok {
+			out = append(out, cd)
+		}
+	}
+	return out
+}
+
+// TestModeratorsCardCallback_RendersPermissionsAndEditButton is the
+// route-table wiring test for "moderators:card:<id>": tapping a moderator
+// in the list must actually reach moderatorCardView with their current
+// permissions, not just work when reached indirectly as a post-save
+// redirect (the only way earlier tests exercised it).
+func TestModeratorsCardCallback_RendersPermissionsAndEditButton(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	target := common.UserID{Value: 5}
+	_ = chats.AddModerator(context.Background(), chat.Moderator{ChatID: chatID, UserID: target, AppointedBy: common.UserID{Value: 1}, DisplayName: "Target Mod", Permissions: chat.PresetStatsOnly()})
+
+	data := cbModeratorCard(target)
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	text := lastEditedText(t, *calls)
+	if !strings.Contains(text, "Target Mod") {
+		t.Fatalf("expected the card to show the moderator's name, got %q", text)
+	}
+	if !strings.Contains(text, ru(t, "moderators.perm.view_stats")) {
+		t.Fatalf("expected the card to list their view_stats permission, got %q", text)
+	}
+}
+
+// TestModeratorsPick_ListsParticipantsNotAlreadyModerators is the
+// route-table wiring test for "moderators:pick:<page>": the actual
+// participant-list screen, previously only reached (bypassed) by earlier
+// tests that jumped straight to the wizard's apply step.
+func TestModeratorsPick_ListsParticipantsNotAlreadyModerators(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	candidate := common.UserID{Value: 77}
+	alreadyMod := common.UserID{Value: 88}
+	_ = chats.AddModerator(context.Background(), chat.Moderator{ChatID: chatID, UserID: alreadyMod, AppointedBy: common.UserID{Value: 1}, Permissions: chat.PresetFullAccess()})
+	preds := &inMemoryPredictions{participants: []common.UserID{candidate, alreadyMod}}
+	handler.Predictions = prediction.NewService(preds, nil, handler.Clock)
+
+	data := cbModeratorPick(0)
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	callbackDatas := buttonCallbackDatas(lastEditedButtons(t, *calls))
+	wantSubject := permWizardSubject(permPurposeAssignNew, candidate)
+	if !containsPrefix(callbackDatas, cbPermStart(permPurposeAssignNew, wantSubject)) {
+		t.Fatalf("expected a button starting the assign wizard for the candidate, got %v", callbackDatas)
+	}
+	alreadyModSubject := permWizardSubject(permPurposeAssignNew, alreadyMod)
+	if containsPrefix(callbackDatas, cbPermStart(permPurposeAssignNew, alreadyModSubject)) {
+		t.Fatalf("expected the already-appointed moderator to be excluded from candidates, got %v", callbackDatas)
+	}
+}
+
+// TestPermWizard_ManualToggleFlow drives the full manual-configuration path
+// step by step — permstart -> preset("manual") -> toggle -> confirm ->
+// apply — none of which (besides apply) any earlier test actually
+// exercised through routeCallback.
+func TestPermWizard_ManualToggleFlow(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	target := common.UserID{Value: 5}
+	_ = chats.AddModerator(context.Background(), chat.Moderator{ChatID: chatID, UserID: target, AppointedBy: common.UserID{Value: 1}})
+	subject := permWizardSubject(permPurposeEditModerator, target)
+	admin := User{ID: 1, FirstName: "Admin"}
+	tap := func(data string) {
+		t.Helper()
+		cb := &CallbackQuery{ID: "cb", From: admin, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+		if err := handler.handleCallback(context.Background(), cb); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// permstart: the preset menu itself — the manual option is a button,
+	// not part of the message text, so check the keyboard.
+	tap(cbPermStart(permPurposeEditModerator, subject))
+	callbackDatas := buttonCallbackDatas(lastEditedButtons(t, *calls))
+	if !containsPrefix(callbackDatas, cbPermPreset(permPurposeEditModerator, subject, "manual")) {
+		t.Fatalf("expected the preset menu to offer manual configuration, got %v", callbackDatas)
+	}
+
+	// preset("manual"): lands on the toggle screen with everything off.
+	tap(cbPermPreset(permPurposeEditModerator, subject, "manual"))
+	text := lastEditedText(t, *calls)
+	if !strings.Contains(text, ru(t, "moderators.toggle_title")) {
+		t.Fatalf("expected the manual toggle screen, got %q", text)
+	}
+	if strings.Contains(text, "✅") {
+		t.Fatalf("expected every permission to start unchecked, got %q", text)
+	}
+
+	// toggle one bit on: the re-rendered screen shows it checked — the
+	// checkmark is a button label, not part of the message text.
+	events := chat.PermissionManageEvents
+	newMask := permMask([]chat.Permission{events})
+	tap(cbPermToggle(permPurposeEditModerator, subject, newMask))
+	var labels []string
+	for _, b := range lastEditedButtons(t, *calls) {
+		if s, ok := b["text"].(string); ok {
+			labels = append(labels, s)
+		}
+	}
+	if !containsPrefix(labels, "✅ "+ru(t, "moderators.perm.manage_events")) {
+		t.Fatalf("expected manage_events to now show checked, got %v", labels)
+	}
+
+	// confirm: shows the resulting permission list before saving.
+	tap(cbPermConfirm(permPurposeEditModerator, subject, newMask))
+	text = lastEditedText(t, *calls)
+	if !strings.Contains(text, ru(t, "moderators.perm.manage_events")) {
+		t.Fatalf("expected the confirm screen to list manage_events, got %q", text)
+	}
+
+	// apply: actually saves it.
+	tap(cbPermApply(permPurposeEditModerator, subject, newMask))
+	perms, err := chats.ModeratorPermissions(context.Background(), chatID, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(perms) != 1 || perms[0] != events {
+		t.Fatalf("expected exactly manage_events to be saved, got %v", perms)
+	}
+}
+
+// TestInvitationRevoke_AskThenDoPreventsLaterAcceptance drives the
+// two-step revoke confirmation (never exercised end to end before) and
+// checks a revoked invitation can no longer be accepted.
+func TestInvitationRevoke_AskThenDoPreventsLaterAcceptance(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	handler.BotUsername = "cs2predictor_bot"
+	invitations := newFakeInvitations()
+	handler.Invitations = invitations
+
+	applyData := cbPermApply(permPurposeInvitation, "", permMask(chat.PresetStatsOnly()))
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &applyData}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	var token string
+	for tok := range invitations.items {
+		token = tok
+	}
+
+	askData := cbInvitationRevokeAsk(token)
+	askCB := &CallbackQuery{ID: "cb2", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &askData}
+	if err := handler.handleCallback(context.Background(), askCB); err != nil {
+		t.Fatal(err)
+	}
+	text := lastEditedText(t, *calls)
+	if !strings.Contains(text, ru(t, "moderators.invite_revoke_question")) {
+		t.Fatalf("expected the revoke confirmation question, got %q", text)
+	}
+
+	doData := cbInvitationRevokeDo(token)
+	doCB := &CallbackQuery{ID: "cb3", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &doData}
+	if err := handler.handleCallback(context.Background(), doCB); err != nil {
+		t.Fatal(err)
+	}
+
+	acceptor := common.UserID{Value: 42}
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleMember})
+	acceptData := cbInvitationAccept(token)
+	acceptCB := &CallbackQuery{ID: "cb4", From: User{ID: acceptor.Value, FirstName: "Newbie"}, Message: &Message{MessageID: 5, Chat: Chat{ID: acceptor.Value, Type: "private"}}, Data: &acceptData}
+	if err := handler.handleCallback(context.Background(), acceptCB); err != nil {
+		t.Fatal(err)
+	}
+	isMod, err := chats.IsModerator(context.Background(), chatID, acceptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isMod {
+		t.Fatal("expected a revoked invitation to not be acceptable")
+	}
+}
+
 // TestInvitation_CreateAndAccept exercises the whole invitation lifecycle:
 // an admin creates a link with a chosen permission set, and a different
 // user who is a member of the chat accepts it, ending up appointed with

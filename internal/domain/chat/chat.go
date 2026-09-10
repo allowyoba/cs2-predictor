@@ -1,18 +1,17 @@
 // Package chat holds chat settings, per-event topic overrides, moderator
-// management, and the Telegram-membership-aware authorization rules.
+// management, and the Telegram-membership-aware authorization rules. Split
+// across three files by responsibility: chat.go (this file) has settings
+// persistence and the shared Repository port, moderator.go has the
+// moderator/permission model, and authorization.go has the
+// Telegram-membership-aware AuthorizationService.
 package chat
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"cs2predictor/internal/platform/common"
 )
-
-// ErrAccessDenied is returned by ChatAuthorizationService when the caller
-// isn't allowed to manage the chat.
-var ErrAccessDenied = errors.New("user is not allowed to manage this chat")
 
 // Settings mirrors ChatSettings: locale defaults to RU, timezone defaults to
 // "Europe/Moscow" (not UTC) — that default drives leaderboard period
@@ -62,103 +61,11 @@ type EventTopic struct {
 	TopicID int64
 }
 
-type Moderator struct {
-	ChatID      common.ChatID
-	UserID      common.UserID
-	AppointedBy common.UserID
-	Username    string
-	DisplayName string
-	// Permissions granted at appointment time. A nil/empty slice means the
-	// moderator has no granted permissions yet (a state that only happens
-	// transiently — every UI path that appoints a moderator picks a preset
-	// or manual set before saving).
-	Permissions []Permission
-}
-
-type ModeratorInfo struct {
-	UserID      common.UserID
-	Username    string
-	DisplayName string
-	AppointedBy common.UserID
-	Permissions []Permission
-}
-
-// Permission is one granular capability a moderator can be granted,
-// independent of the others — a moderator with only ViewStats cannot touch
-// events, and vice versa. Telegram owner/admin bypass this entirely (see
-// AuthorizationService.HasPermission).
-type Permission string
-
-const (
-	PermissionManageEvents        Permission = "manage_events"
-	PermissionManageMatches       Permission = "manage_matches"
-	PermissionViewStats           Permission = "view_stats"
-	PermissionManageGroupSettings Permission = "manage_group_settings"
-)
-
-// AllPermissions lists every known permission, in the fixed order used to
-// render toggle screens and to encode/decode the manual-selection bitmask
-// (see the telegram adapter's permission wizard).
-func AllPermissions() []Permission {
-	return []Permission{PermissionManageEvents, PermissionManageMatches, PermissionViewStats, PermissionManageGroupSettings}
-}
-
-// ValidPermission reports whether p is one of the known permissions —
-// guards against persisting or matching against a typo'd or stale slug.
-func ValidPermission(p Permission) bool {
-	for _, known := range AllPermissions() {
-		if p == known {
-			return true
-		}
-	}
-	return false
-}
-
-// PresetFullAccess/PresetContent/PresetStatsOnly are the three canned
-// permission sets offered on the assignment/edit screens, alongside a
-// fourth "configure manually" option that starts from an empty set.
-func PresetFullAccess() []Permission { return AllPermissions() }
-func PresetContent() []Permission {
-	return []Permission{PermissionManageEvents, PermissionManageMatches}
-}
-func PresetStatsOnly() []Permission { return []Permission{PermissionViewStats} }
-
-// HasPermission reports whether perms includes p.
-func HasPermission(perms []Permission, p Permission) bool {
-	for _, has := range perms {
-		if has == p {
-			return true
-		}
-	}
-	return false
-}
-
 // ActiveChatLister is the narrow view scheduled chat-wide reports need:
 // just ListActive. DigestScheduler and CompetitionSynchronization declare
 // it as their field type instead of depending on the full Repository.
 type ActiveChatLister interface {
 	ListActive(ctx context.Context) ([]Settings, error)
-}
-
-type MemberRole string
-
-const (
-	RoleOwner         MemberRole = "OWNER"
-	RoleAdministrator MemberRole = "ADMINISTRATOR"
-	RoleMember        MemberRole = "MEMBER"
-	RoleRestricted    MemberRole = "RESTRICTED"
-	RoleLeft          MemberRole = "LEFT"
-	RoleKicked        MemberRole = "KICKED"
-)
-
-// MembershipGateway fetches a user's live Telegram role for a chat — never
-// cached, so every authorization check hits the Bot API.
-type MembershipGateway interface {
-	Role(ctx context.Context, chatID common.ChatID, userID common.UserID) (MemberRole, error)
-}
-
-type AdministratorLister interface {
-	Administrators(ctx context.Context, chatID common.ChatID) ([]common.UserID, error)
 }
 
 // Repository is the chat-settings persistence port. Everything the admin
@@ -258,187 +165,4 @@ type NotificationPrefs struct {
 type NotificationPrefsRepository interface {
 	NotificationPrefs(ctx context.Context, userID common.UserID) (NotificationPrefs, error)
 	SetNotificationPref(ctx context.Context, userID common.UserID, kind common.NotificationKind, on bool) error
-}
-
-// AuthorizationService implements the exact canManage rule: Telegram
-// owner/admin always passes; a MEMBER passes only if also flagged as an
-// internal moderator (moderator flag alone is insufficient without current
-// Telegram membership — RESTRICTED/LEFT/KICKED never pass even if flagged).
-type AuthorizationService struct {
-	chats    Repository
-	telegram MembershipGateway
-}
-
-func NewAuthorizationService(chats Repository, telegram MembershipGateway) *AuthorizationService {
-	return &AuthorizationService{chats: chats, telegram: telegram}
-}
-
-func (s *AuthorizationService) IsTelegramAdmin(ctx context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {
-	role, err := s.telegram.Role(ctx, chatID, userID)
-	if err != nil {
-		return false, err
-	}
-	return role == RoleOwner || role == RoleAdministrator, nil
-}
-
-func (s *AuthorizationService) CanManage(ctx context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {
-	role, err := s.telegram.Role(ctx, chatID, userID)
-	if err != nil {
-		return false, err
-	}
-	if role == RoleOwner || role == RoleAdministrator {
-		return true, nil
-	}
-	if role == RoleMember {
-		return s.chats.IsModerator(ctx, chatID, userID)
-	}
-	return false, nil
-}
-
-// HasOtherManager reports whether OtherManagers would return anything,
-// without paying for building the full deduplicated list — cheaper for
-// callers (e.g. picking which explanation text to show) that only need the
-// yes/no answer.
-func (s *AuthorizationService) HasOtherManager(ctx context.Context, chatID common.ChatID, actor common.UserID) (bool, error) {
-	if admins, ok := s.telegram.(AdministratorLister); ok {
-		ids, err := admins.Administrators(ctx, chatID)
-		if err != nil {
-			return false, err
-		}
-		for _, id := range ids {
-			if id != actor {
-				return true, nil
-			}
-		}
-	}
-	items, err := s.chats.ListModerators(ctx, chatID)
-	if err != nil {
-		return false, err
-	}
-	for _, item := range items {
-		if item.UserID == actor {
-			continue
-		}
-		ok, err := s.CanManage(ctx, chatID, item.UserID)
-		if err != nil {
-			return false, err
-		}
-		if ok {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// OtherManagers returns every qualifying manager of chatID besides actor:
-// the deduplicated union of live Telegram admins/owners and flagged
-// moderators who currently pass CanManage. Used to fan a DM confirmation
-// request out to everyone who could approve it (see
-// PendingUnsubscribeRepository). Order is not significant.
-func (s *AuthorizationService) OtherManagers(ctx context.Context, chatID common.ChatID, actor common.UserID) ([]common.UserID, error) {
-	seen := map[common.UserID]bool{actor: true}
-	var out []common.UserID
-	add := func(id common.UserID) {
-		if seen[id] {
-			return
-		}
-		seen[id] = true
-		out = append(out, id)
-	}
-
-	if admins, ok := s.telegram.(AdministratorLister); ok {
-		ids, err := admins.Administrators(ctx, chatID)
-		if err != nil {
-			return nil, err
-		}
-		for _, id := range ids {
-			add(id)
-		}
-	}
-	items, err := s.chats.ListModerators(ctx, chatID)
-	if err != nil {
-		return nil, err
-	}
-	for _, item := range items {
-		if seen[item.UserID] {
-			continue
-		}
-		ok, err := s.CanManage(ctx, chatID, item.UserID)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			add(item.UserID)
-		}
-	}
-	return out, nil
-}
-
-func (s *AuthorizationService) RequireManager(ctx context.Context, chatID common.ChatID, userID common.UserID) error {
-	ok, err := s.CanManage(ctx, chatID, userID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrAccessDenied
-	}
-	return nil
-}
-
-func (s *AuthorizationService) RequireTelegramAdmin(ctx context.Context, chatID common.ChatID, userID common.UserID) error {
-	ok, err := s.IsTelegramAdmin(ctx, chatID, userID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrAccessDenied
-	}
-	return nil
-}
-
-// HasPermission is CanManage's granular sibling: Telegram owner/admin always
-// pass, unconditionally; a plain MEMBER passes only if flagged as a
-// moderator AND holding the specific permission asked about. RESTRICTED,
-// LEFT and KICKED never pass, matching CanManage.
-func (s *AuthorizationService) HasPermission(ctx context.Context, chatID common.ChatID, userID common.UserID, permission Permission) (bool, error) {
-	role, err := s.telegram.Role(ctx, chatID, userID)
-	if err != nil {
-		return false, err
-	}
-	if role == RoleOwner || role == RoleAdministrator {
-		return true, nil
-	}
-	if role != RoleMember {
-		return false, nil
-	}
-	perms, err := s.chats.ModeratorPermissions(ctx, chatID, userID)
-	if err != nil {
-		return false, err
-	}
-	return HasPermission(perms, permission), nil
-}
-
-// RequirePermission is HasPermission's error-returning form, mirroring
-// RequireManager.
-func (s *AuthorizationService) RequirePermission(ctx context.Context, chatID common.ChatID, userID common.UserID, permission Permission) error {
-	ok, err := s.HasPermission(ctx, chatID, userID, permission)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrAccessDenied
-	}
-	return nil
-}
-
-// IsMember reports whether userID currently belongs to chatID at all
-// (any role except LEFT/KICKED) — the membership check the moderator
-// invitation flow runs before granting access, independent of whether the
-// user is already trusted with anything.
-func (s *AuthorizationService) IsMember(ctx context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {
-	role, err := s.telegram.Role(ctx, chatID, userID)
-	if err != nil {
-		return false, err
-	}
-	return role != "" && role != RoleLeft && role != RoleKicked, nil
 }

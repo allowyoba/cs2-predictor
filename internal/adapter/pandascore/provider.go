@@ -41,6 +41,8 @@ func (p *Provider) ProviderName() string { return "PANDASCORE" }
 // This matches PandaScore's current hierarchy (League -> Series -> Tournament
 // -> Match) and avoids an N+1 "fetch tournaments for each series" pattern:
 // three paginated tournament lists are enough for the whole catalog.
+//
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (p *Provider) UpcomingEvents(ctx context.Context) ([]competition.Event, error) {
 	const cs2Filter = "filter[videogame_title]=cs-2"
 	upcoming, err := fetchPages[tournamentDTO](ctx, p, "/csgo/tournaments/upcoming?"+cs2Filter, -1)
@@ -181,6 +183,8 @@ func (p *Provider) Matches(ctx context.Context, events []competition.Event) ([]c
 // loops while page<=maxPages (maxPages<0 means unlimited) AND the page
 // returned exactly pageSize rows AND (X-Total is unknown OR fewer rows than
 // X-Total have been collected so far).
+//
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func fetchPages[T any](ctx context.Context, p *Provider, path string, maxPages int) ([]T, error) {
 	if strings.TrimSpace(p.config.Token) == "" {
 		return nil, fmt.Errorf("pandascore token is not configured")

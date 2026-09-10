@@ -95,6 +95,11 @@ type UpdateHandler struct {
 	// moderator_invitations.go). Nil disables the "🔗 Создать приглашение"
 	// assignment method.
 	Invitations chat.ModeratorInvitationRepository
+	// InboundLimiter caps how often a single Telegram user may trigger the
+	// bot to do any work at all — a lightweight defense against one account
+	// flooding the bot with commands or callback taps. Nil disables
+	// throttling entirely (every test today).
+	InboundLimiter *InboundLimiter
 	// BotUsername (without the leading "@") is resolved once at startup via
 	// getMe, and builds the t.me/<username>?start=... deep links that hand
 	// a group's admin panel off to a DM. Left empty, deep-link buttons
@@ -255,6 +260,12 @@ func (h *UpdateHandler) Handle(ctx context.Context, update Update) error {
 		return nil
 	}
 
+	if actor, ok := updateActor(update); ok && !h.InboundLimiter.Allow(actor) {
+		log.Debug("inbound rate limit exceeded, dropping update", "userId", actor)
+		h.recordAdminAction("inbound_rate_limit", "dropped")
+		return nil
+	}
+
 	if err := h.dispatch(ctx, update); err != nil {
 		// Un-claim so a Telegram webhook retry can reprocess this update,
 		// so a retried delivery gets a fresh attempt.
@@ -284,6 +295,7 @@ func (h *UpdateHandler) dispatch(ctx context.Context, update Update) error {
 	return nil
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 	if msg.Chat.Type == "private" {
 		return h.handlePrivateMessage(ctx, msg)
@@ -365,6 +377,7 @@ func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 	return h.handleCommandError(ctx, settings, msg.MessageThreadID, text, cmdErr)
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) error {
 	if msg.From == nil {
 		return newValidationError("message.from is required")

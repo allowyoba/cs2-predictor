@@ -40,7 +40,10 @@ func scanStatsMonths(rows pgx.Rows) ([]scoring.StatsMonth, error) {
 }
 
 func (r *ScoringRepository) AvailableMonths(ctx context.Context, chatID common.ChatID) ([]scoring.StatsMonth, error) {
-	zone := r.chatTimezone(ctx, chatID)
+	zone, err := r.chatTimezone(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := executor(ctx, r.pool).Query(ctx, `
 		SELECT DISTINCT
 		       EXTRACT(YEAR FROM timezone($2, COALESCE(m.actual_started_at, m.scheduled_at)))::int AS year,
@@ -125,11 +128,18 @@ func (r *ScoringRepository) ReplaceAwards(ctx context.Context, pollID common.Pol
 
 // chatTimezone resolves a chat's IANA zone, falling back to
 // chat.DefaultTimezone ("Europe/Moscow") if the chat is missing or its
-// stored zone string doesn't parse.
-func (r *ScoringRepository) chatTimezone(ctx context.Context, chatID common.ChatID) *time.Location {
+// stored zone string doesn't parse. A missing row is expected (the chat may
+// not have been seen by this repository yet) and silently takes the
+// fallback; any other error — a lost connection, a broken query — is
+// propagated instead of being indistinguishable from "chat not found",
+// since callers have a logger and this package deliberately doesn't.
+func (r *ScoringRepository) chatTimezone(ctx context.Context, chatID common.ChatID) (*time.Location, error) {
 	var tz string
-	_ = executor(ctx, r.pool).QueryRow(ctx, `SELECT timezone FROM telegram_chat WHERE id = $1`, chatID.Value).Scan(&tz)
-	return chat.ZoneOrDefault(tz)
+	err := executor(ctx, r.pool).QueryRow(ctx, `SELECT timezone FROM telegram_chat WHERE id = $1`, chatID.Value).Scan(&tz)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	return chat.ZoneOrDefault(tz), nil
 }
 
 // periodClause returns the extra SQL predicate and its args for a
@@ -178,7 +188,10 @@ const leaderboardQuery = scoringAggregateSelect + `
 	 WHERE p.chat_id = $1 AND m.status = 'FINISHED'`
 
 func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatID, period scoring.StatsPeriod) ([]scoring.UserStanding, error) {
-	zone := r.chatTimezone(ctx, chatID)
+	zone, err := r.chatTimezone(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
 	clause, extraArgs := periodClause(period, zone)
 	args := append([]any{chatID.Value}, extraArgs...)
 
@@ -448,7 +461,10 @@ func (r *SettlementRepository) MarkSettled(ctx context.Context, pollID common.Po
 // current (and only) caller, DigestScheduler.enqueueAnnual, calls it before
 // its own claim/enqueue transaction begins, so this holds today.
 func (r *ScoringRepository) AnnualSpecials(ctx context.Context, chatID common.ChatID, year int) (scoring.AnnualSpecials, error) {
-	zone := r.chatTimezone(ctx, chatID)
+	zone, err := r.chatTimezone(ctx, chatID)
+	if err != nil {
+		return scoring.AnnualSpecials{}, err
+	}
 	from := time.Date(year, time.January, 1, 0, 0, 0, 0, zone).UTC()
 	until := time.Date(year+1, time.January, 1, 0, 0, 0, 0, zone).UTC()
 

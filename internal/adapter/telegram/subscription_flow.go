@@ -16,6 +16,7 @@ import (
 
 // --- subscribe / unsubscribe / event-topic ---
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) subscribe(ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, idStr string) (bool, error) {
 	if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 		return false, err
@@ -218,6 +219,7 @@ func (h *UpdateHandler) eventsExit(locale common.LocaleCode) *InlineKeyboard {
 	}}
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) confirmUnsubscribe(ctx context.Context, cb *CallbackQuery, requestIDStr string) (bool, error) {
 	actor := common.UserID{Value: cb.From.ID}
 	requestID, err := common.ParseRequestID(requestIDStr)

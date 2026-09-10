@@ -34,22 +34,24 @@ func (d *fakeDedup) Claim(_ context.Context, id int64) (bool, error) {
 func (d *fakeDedup) Release(_ context.Context, id int64) error { delete(d.claimed, id); return nil }
 
 type fakeChats struct {
-	settings    map[int64]chat.Settings
-	moderators  map[[2]int64]bool
-	permissions map[[2]int64][]chat.Permission
-	managed     map[[2]int64]bool
-	dmSessions  map[int64]int64
-	locales     map[int64]common.LocaleCode
-	reachable   map[int64]bool
-	notifyPrefs map[int64]chat.NotificationPrefs
-	nicknames   map[int64]string
+	settings      map[int64]chat.Settings
+	moderators    map[[2]int64]bool
+	permissions   map[[2]int64][]chat.Permission
+	moderatorMeta map[[2]int64]chat.ModeratorInfo
+	managed       map[[2]int64]bool
+	dmSessions    map[int64]int64
+	locales       map[int64]common.LocaleCode
+	reachable     map[int64]bool
+	notifyPrefs   map[int64]chat.NotificationPrefs
+	nicknames     map[int64]string
 }
 
 func newFakeChats() *fakeChats {
 	return &fakeChats{
 		settings: map[int64]chat.Settings{}, moderators: map[[2]int64]bool{},
-		permissions: map[[2]int64][]chat.Permission{},
-		managed:     map[[2]int64]bool{}, dmSessions: map[int64]int64{},
+		permissions:   map[[2]int64][]chat.Permission{},
+		moderatorMeta: map[[2]int64]chat.ModeratorInfo{},
+		managed:       map[[2]int64]bool{}, dmSessions: map[int64]int64{},
 		locales: map[int64]common.LocaleCode{}, reachable: map[int64]bool{},
 		notifyPrefs: map[int64]chat.NotificationPrefs{},
 		nicknames:   map[int64]string{},
@@ -128,7 +130,11 @@ func (f *fakeChats) ListModerators(_ context.Context, chatID common.ChatID) ([]c
 	var out []chat.ModeratorInfo
 	for key := range f.moderators {
 		if key[0] == chatID.Value {
-			out = append(out, chat.ModeratorInfo{UserID: common.UserID{Value: key[1]}, DisplayName: "Moderator", Permissions: f.permissions[key]})
+			info := chat.ModeratorInfo{UserID: common.UserID{Value: key[1]}, DisplayName: "Moderator", Permissions: f.permissions[key]}
+			if meta, ok := f.moderatorMeta[key]; ok {
+				info.Username, info.DisplayName, info.AppointedBy = meta.Username, meta.DisplayName, meta.AppointedBy
+			}
+			out = append(out, info)
 		}
 	}
 	return out, nil
@@ -160,12 +166,14 @@ func (f *fakeChats) AddModerator(_ context.Context, m chat.Moderator) error {
 	key := [2]int64{m.ChatID.Value, m.UserID.Value}
 	f.moderators[key] = true
 	f.permissions[key] = m.Permissions
+	f.moderatorMeta[key] = chat.ModeratorInfo{UserID: m.UserID, Username: m.Username, DisplayName: m.DisplayName, AppointedBy: m.AppointedBy}
 	return nil
 }
 func (f *fakeChats) RemoveModerator(_ context.Context, chatID common.ChatID, userID common.UserID) error {
 	key := [2]int64{chatID.Value, userID.Value}
 	delete(f.moderators, key)
 	delete(f.permissions, key)
+	delete(f.moderatorMeta, key)
 	return nil
 }
 func (f *fakeChats) ModeratorPermissions(_ context.Context, chatID common.ChatID, userID common.UserID) ([]chat.Permission, error) {
