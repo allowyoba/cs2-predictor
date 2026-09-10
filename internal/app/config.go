@@ -187,6 +187,8 @@ func envFloat(key string, def float64) (float64, error) {
 // LoadConfig reads Config from the environment. Required secrets
 // (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET >= 16 chars, PANDASCORE_TOKEN)
 // fail fast at startup rather than at first use.
+//
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func LoadConfig() (Config, error) {
 	var cfg Config
 	cfg.Port = envString("PORT", "8080")

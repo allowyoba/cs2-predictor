@@ -233,6 +233,10 @@ func routeEventsView(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, t
 	return false, h.eventDetails(ctx, target, settings, common.EventID{Value: id}, cb.Message.Chat.Type == "private")
 }
 
+// routeStatsPage dispatches "stats:p:<kind>:..." to the parser for that one
+// leaderboard-period kind — split out of a single function (once one long
+// nested switch) so each kind's parsing stays independently readable and
+// under the complexity budget the rest of this file holds to.
 func routeStatsPage(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 	parts := strings.Split(data, ":")
 	if len(parts) < 4 {
@@ -241,56 +245,72 @@ func routeStatsPage(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, ta
 	viewer := common.UserID{Value: cb.From.ID}
 	switch parts[2] {
 	case "a":
-		if len(parts) != 4 {
-			return false, newValidationError("invalid all-time leaderboard page callback")
-		}
-		page, parseErr := strconv.Atoi(parts[3])
-		if parseErr != nil || page < 0 {
-			return false, newValidationError("invalid leaderboard page")
-		}
-		return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime(), "menu:stats", viewer, page)
+		return routeStatsPageAllTime(h, ctx, target, settings, viewer, parts)
 	case "y":
-		if len(parts) != 6 {
-			return false, newValidationError("invalid yearly leaderboard page callback")
-		}
-		year, yearErr := strconv.Atoi(parts[3])
-		page, pageErr := strconv.Atoi(parts[4])
-		if yearErr != nil || pageErr != nil || page < 0 {
-			return false, newValidationError("invalid yearly leaderboard page")
-		}
-		back := "menu:stats"
-		if parts[5] == "y" {
-			back = "stats:years"
-		}
-		return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year), back, viewer, page)
+		return routeStatsPageYear(h, ctx, target, settings, viewer, parts)
 	case "m":
-		if len(parts) != 6 || len(parts[3]) != 6 {
-			return false, newValidationError("invalid monthly leaderboard page callback")
-		}
-		year, yearErr := strconv.Atoi(parts[3][:4])
-		monthInt, monthErr := strconv.Atoi(parts[3][4:])
-		page, pageErr := strconv.Atoi(parts[4])
-		if yearErr != nil || monthErr != nil || monthInt < 1 || monthInt > 12 || pageErr != nil || page < 0 {
-			return false, newValidationError("invalid monthly leaderboard page")
-		}
-		back := "menu:stats"
-		if parts[5] == "m" {
-			back = fmt.Sprintf("stats:months:%d", year)
-		}
-		return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, time.Month(monthInt)), back, viewer, page)
+		return routeStatsPageMonth(h, ctx, target, settings, viewer, parts)
 	case "e":
-		if len(parts) != 5 {
-			return false, newValidationError("invalid event leaderboard page callback")
-		}
-		id, idErr := uuid.Parse(parts[3])
-		page, pageErr := strconv.Atoi(parts[4])
-		if idErr != nil || pageErr != nil || page < 0 {
-			return false, newValidationError("invalid event leaderboard page")
-		}
-		return false, h.renderLeaderboard(ctx, target, settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", viewer, page)
+		return routeStatsPageEvent(h, ctx, target, settings, viewer, parts)
 	default:
 		return false, newValidationError("unknown leaderboard period")
 	}
+}
+
+func routeStatsPageAllTime(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
+	if len(parts) != 4 {
+		return false, newValidationError("invalid all-time leaderboard page callback")
+	}
+	page, parseErr := strconv.Atoi(parts[3])
+	if parseErr != nil || page < 0 {
+		return false, newValidationError("invalid leaderboard page")
+	}
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime(), "menu:stats", viewer, page)
+}
+
+func routeStatsPageYear(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
+	if len(parts) != 6 {
+		return false, newValidationError("invalid yearly leaderboard page callback")
+	}
+	year, yearErr := strconv.Atoi(parts[3])
+	page, pageErr := strconv.Atoi(parts[4])
+	if yearErr != nil || pageErr != nil || page < 0 {
+		return false, newValidationError("invalid yearly leaderboard page")
+	}
+	back := "menu:stats"
+	if parts[5] == "y" {
+		back = "stats:years"
+	}
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year), back, viewer, page)
+}
+
+func routeStatsPageMonth(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
+	if len(parts) != 6 || len(parts[3]) != 6 {
+		return false, newValidationError("invalid monthly leaderboard page callback")
+	}
+	year, yearErr := strconv.Atoi(parts[3][:4])
+	monthInt, monthErr := strconv.Atoi(parts[3][4:])
+	page, pageErr := strconv.Atoi(parts[4])
+	if yearErr != nil || monthErr != nil || monthInt < 1 || monthInt > 12 || pageErr != nil || page < 0 {
+		return false, newValidationError("invalid monthly leaderboard page")
+	}
+	back := "menu:stats"
+	if parts[5] == "m" {
+		back = fmt.Sprintf("stats:months:%d", year)
+	}
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, time.Month(monthInt)), back, viewer, page)
+}
+
+func routeStatsPageEvent(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
+	if len(parts) != 5 {
+		return false, newValidationError("invalid event leaderboard page callback")
+	}
+	id, idErr := uuid.Parse(parts[3])
+	page, pageErr := strconv.Atoi(parts[4])
+	if idErr != nil || pageErr != nil || page < 0 {
+		return false, newValidationError("invalid event leaderboard page")
+	}
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", viewer, page)
 }
 
 func routeStatsYear(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {

@@ -47,6 +47,7 @@ func NewPollGateway(client *Client, catalog competition.Catalog, chats chat.Repo
 	return &PollGateway{client: client, catalog: catalog, chats: chats, texts: texts, log: log, enrichment: enrichmentSources}
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (prediction.SentPoll, error) {
 	match, err := g.catalog.FindMatch(ctx, poll.MatchID)
 	if err != nil {

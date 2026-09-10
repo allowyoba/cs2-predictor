@@ -50,6 +50,7 @@ func main() {
 	}
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func run() error {
 	cfg, err := app.LoadConfig()
 	if err != nil {

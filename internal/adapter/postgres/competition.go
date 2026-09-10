@@ -289,6 +289,8 @@ func (r *CompetitionRepository) FindMatches(ctx context.Context, eventID common.
 // inside one transaction, so a failure partway through never leaves the
 // match row and its participant rows inconsistent (e.g. match_team deleted
 // but not yet re-inserted).
+//
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (r *CompetitionRepository) SaveMatch(ctx context.Context, m competition.Match) (competition.Match, error) {
 	err := RunInTx(ctx, r.pool, func(ctx context.Context) error {
 		event, err := r.FindEvent(ctx, m.EventID)

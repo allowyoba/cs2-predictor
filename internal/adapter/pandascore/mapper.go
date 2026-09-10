@@ -151,6 +151,7 @@ func mapTeam(dto namedDTO) competition.Team {
 	}
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func mapMatch(dto matchDTO) competition.Match {
 	var opponents []namedDTO
 	for _, o := range dto.Opponents {

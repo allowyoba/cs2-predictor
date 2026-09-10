@@ -144,6 +144,7 @@ func (s *CompetitionSynchronization) CloseDuePolls(ctx context.Context) {
 	})
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (s *CompetitionSynchronization) processMatch(ctx context.Context, incoming competition.Match) error {
 	previous, err := s.Catalog.FindMatch(ctx, incoming.ID)
 	if err != nil {

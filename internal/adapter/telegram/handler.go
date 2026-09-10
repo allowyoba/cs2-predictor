@@ -284,6 +284,7 @@ func (h *UpdateHandler) dispatch(ctx context.Context, update Update) error {
 	return nil
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 	if msg.Chat.Type == "private" {
 		return h.handlePrivateMessage(ctx, msg)
@@ -365,6 +366,7 @@ func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 	return h.handleCommandError(ctx, settings, msg.MessageThreadID, text, cmdErr)
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) error {
 	if msg.From == nil {
 		return newValidationError("message.from is required")

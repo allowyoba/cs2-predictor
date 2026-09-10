@@ -91,6 +91,7 @@ func (s *PollReminderScheduler) run(ctx context.Context) error {
 	return nil
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (s *PollReminderScheduler) remind(ctx context.Context, poll prediction.Poll, now time.Time) error {
 	// Marked first, and unconditionally: a poll nobody needs reminding
 	// about must not be re-examined every minute until it closes.

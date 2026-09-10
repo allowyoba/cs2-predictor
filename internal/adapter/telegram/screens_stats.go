@@ -275,6 +275,7 @@ func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scori
 	return &InlineKeyboard{InlineKeyboard: rows}
 }
 
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) renderLeaderboard(ctx context.Context, target replyTarget, settings chat.Settings, period scoring.StatsPeriod, backData string, viewer common.UserID, pageOpt ...int) error {
 	standings, err := h.Scoring.Leaderboard(ctx, settings.ChatID, period)
 	if err != nil {

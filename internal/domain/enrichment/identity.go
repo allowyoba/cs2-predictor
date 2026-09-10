@@ -48,6 +48,8 @@ func normalizePlayerName(name string) string {
 // Returns ok=false when nothing clears the bar — callers MUST skip
 // enrichment entirely in that case rather than guess: showing a chat the
 // wrong team's ranking is worse than showing none.
+//
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func MatchTeam(candidates []TeamCandidate, external TeamIdentity) (teamID common.TeamID, confidence MatchConfidence, ok bool) {
 	normExternal := NormalizeTeamName(external.Name)
 	if normExternal == "" {

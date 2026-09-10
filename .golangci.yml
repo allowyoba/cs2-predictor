@@ -8,13 +8,35 @@ linters:
     - unconvert   # unnecessary type conversions
     - unparam     # unused function parameters
     - misspell
+    - gocyclo     # flags functions whose branching has grown past easy review
+    # revive was tried alongside gocyclo but dropped: its default rule set
+    # is dominated by doc-comment nagging (hundreds of pre-existing
+    # "exported X should have comment" hits) and two rules that actively
+    # fight idioms used deliberately in this codebase — context-as-argument
+    # rejects the (h *UpdateHandler, ctx, ...) shape callback_routes.go
+    # needs for method-expression handlers, and unused-parameter flags the
+    # http.HandlerFunc(w, r) signature every stdlib-shaped handler must
+    # keep even when r is unused. Re-evaluate with a curated rule subset if
+    # a real need shows up; enabling it wholesale bought noise, not signal.
+  settings:
+    gocyclo:
+      # The default (30) lets a router-style switch grow to hundreds of
+      # lines before anyone notices — that's exactly how routeCallback got
+      # to ~430 lines/40 branches before it was split into a table (see
+      # callback_routes.go). 15 is tight enough to flag that class of
+      # function early, loose enough not to fight normal validation/parsing
+      # code with a handful of guard clauses.
+      min-complexity: 15
   exclusions:
     rules:
       # Test fixtures/fakes intentionally build requests with constants and
-      # don't need the same scrutiny as production code paths.
+      # don't need the same scrutiny as production code paths; table-driven
+      # tests also legitimately rack up branches that gocyclo has no way to
+      # tell apart from real logical complexity.
       - path: _test\.go
         linters:
           - gosec
+          - gocyclo
 
 issues:
   max-issues-per-linter: 0

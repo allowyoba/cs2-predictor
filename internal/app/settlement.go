@@ -171,6 +171,8 @@ func (s *ResultSettlementService) settleOne(ctx context.Context, event competiti
 // A vote with no award is still worth a recap: "you had 2:1, it finished
 // 2:0" is the interesting half of the message, and only telling people
 // when they were right makes the feature feel like flattery.
+//
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (s *ResultSettlementService) enqueueRecaps(ctx context.Context, poll prediction.Poll, match competition.Match,
 	event competition.Event, score string, deltas map[common.UserID]int) error {
 	if s.audience == nil {
