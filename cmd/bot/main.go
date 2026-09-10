@@ -174,6 +174,11 @@ func run() error {
 	if botUser.Username == nil || *botUser.Username == "" {
 		return fmt.Errorf("bot account has no username set")
 	}
+	// Best-effort: the "/" autocomplete hints are a convenience, not a
+	// dependency — a failure here must never block startup.
+	if err := telegram.RegisterCommands(ctx, telegramClient); err != nil {
+		log.Warn("registering telegram command hints failed", "error", err)
+	}
 	membership := telegram.NewMembershipAdapter(telegramClient)
 	authorization := chat.NewAuthorizationService(chats, membership)
 	var pollEnrichment telegram.PollEnrichmentSources

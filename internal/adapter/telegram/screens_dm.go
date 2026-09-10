@@ -90,6 +90,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 			{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
 			{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 			{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
+			{button(h.Texts.Get("menu.help", locale), "pstats:help")},
 		}}
 		return h.respond(ctx, target, h.Texts.Get("private.stats_empty", locale), &kb)
 	}
@@ -103,6 +104,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
 		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
+		{button(h.Texts.Get("menu.help", locale), "pstats:help")},
 	}
 	return h.respond(ctx, target, h.Texts.Get("private.stats_choose", locale), &InlineKeyboard{InlineKeyboard: rows})
 }

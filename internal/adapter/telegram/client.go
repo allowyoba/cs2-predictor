@@ -129,6 +129,41 @@ func (c *Client) GetMe(ctx context.Context) (User, error) {
 	return me, nil
 }
 
+// BotCommand is one entry Telegram shows in a chat's "/" command menu.
+// Command is the bare name (no leading slash, lowercase letters/digits/
+// underscores, ≤32 chars); Description is the one-line explanation shown
+// next to it (≤256 chars).
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// botCommandScope selects which chats a SetMyCommands call applies to.
+// Telegram resolves the most specific scope that matches a given chat, so
+// "all_private_chats"/"all_group_chats" only need setting once each — no
+// per-chat calls.
+type botCommandScope struct {
+	Type string `json:"type"`
+}
+
+var (
+	scopeAllPrivateChats = botCommandScope{Type: "all_private_chats"}
+	scopeAllGroupChats   = botCommandScope{Type: "all_group_chats"}
+)
+
+// SetMyCommands registers the "/" command hints Telegram shows while typing,
+// scoped to either private or group chats and optionally to one client
+// language (empty languageCode is the fallback shown to every language that
+// has no explicit entry of its own).
+func (c *Client) SetMyCommands(ctx context.Context, commands []BotCommand, scope botCommandScope, languageCode string) error {
+	payload := map[string]any{"commands": commands, "scope": scope}
+	if languageCode != "" {
+		payload["language_code"] = languageCode
+	}
+	_, err := c.Call(ctx, "setMyCommands", payload)
+	return err
+}
+
 func sleepContext(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()

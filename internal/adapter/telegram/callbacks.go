@@ -138,6 +138,8 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		return false, h.upcoming(ctx, target, settings)
 	case data == "menu:rules":
 		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("rules.text", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}})
+	case data == "menu:help":
+		return false, h.helpView(ctx, target, settings.Locale, "menu:main")
 	case strings.HasPrefix(data, "stats:p:"):
 		parts := strings.Split(data, ":")
 		if len(parts) < 4 {
@@ -604,6 +606,8 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.toggleNotification(ctx, target, userID, locale, strings.TrimPrefix(data, "notify:toggle:"))
 	case data == "pstats:insights":
 		err = h.renderPersonalInsights(ctx, target, userID, locale)
+	case data == "pstats:help":
+		err = h.helpView(ctx, target, locale, "pstats:menu")
 	case data == "pstats:rename":
 		err = h.renameMenu(ctx, target, userID, locale)
 	case data == cbRenameAsk():
