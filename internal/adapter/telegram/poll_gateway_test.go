@@ -219,23 +219,21 @@ func TestFormatVRSCombined_RankOnlyOmitsParentheses(t *testing.T) {
 	}
 }
 
-// If only one team has cached VRS data, the line must show only that
-// team's half — never a placeholder like "#0", "N/A", or empty parens for
-// the missing side.
-func TestFormatVRSCombined_OneTeamUnrankedShowsOnlyTheOtherSide(t *testing.T) {
+// If only one team has cached VRS data, the other side must show "N/A"
+// rather than being dropped — a bare "#1" with no second value would leave
+// the reader unable to tell which team it's for.
+func TestFormatVRSCombined_OneTeamUnrankedShowsNAForTheOtherSide(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank := 1
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first: {TeamID: first, GlobalRank: &firstRank},
 	}
 	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
-	if want := "#1"; got != want {
+	if want := "#1 · N/A"; got != want {
 		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
 	}
-	for _, placeholder := range []string{"#0", "N/A", "()"} {
-		if strings.Contains(got, placeholder) {
-			t.Fatalf("expected no placeholder %q in %q", placeholder, got)
-		}
+	if strings.Contains(got, "#0") {
+		t.Fatalf("expected no #0 placeholder in %q", got)
 	}
 }
 

@@ -365,22 +365,26 @@ func rankingInts(rankings map[common.TeamID]enrichment.TeamRanking, first, secon
 // formatVRSCombined renders the poll's VRS line halves in the same
 // first/second order as the question's teams, joined by " · " — "#8 (1723)
 // · #121 (867)" — with team names never repeated (the question already
-// names them, and the order alone makes which is which unambiguous). A
-// side with no cached rank or points at all contributes nothing rather
-// than a placeholder, and the whole line is "" when neither side has any
-// data, so the caller omits it entirely.
+// names them, and the order alone makes which is which unambiguous). The
+// whole line is "" when NEITHER side has any cached data, so the caller
+// omits it entirely; but once at least one side does, the other side shows
+// "N/A" rather than being silently dropped — dropping it would otherwise
+// leave a single bare value with no way to tell which team it belongs to.
 func formatVRSCombined(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
 	if first == nil || second == nil {
 		return ""
 	}
 	firstRank, secondRank := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.GlobalRank })
 	firstPoints, secondPoints := rankingInts(rankings, first.ID, second.ID, func(r enrichment.TeamRanking) *int { return r.Points })
-	return joinNonEmpty(formatVRSSide(firstRank, firstPoints), formatVRSSide(secondRank, secondPoints))
+	if firstRank == nil && firstPoints == nil && secondRank == nil && secondPoints == nil {
+		return ""
+	}
+	return formatVRSSide(firstRank, firstPoints) + " · " + formatVRSSide(secondRank, secondPoints)
 }
 
 // formatVRSSide renders one team's half of formatVRSCombined: "#rank
 // (points)" when both are cached, "#rank" or "(points)" alone when only one
-// is, or "" — never a placeholder like "#0" or "N/A" — when neither is.
+// is, or "N/A" when neither is cached for this team at all.
 func formatVRSSide(rank, points *int) string {
 	switch {
 	case rank != nil && points != nil:
@@ -390,7 +394,7 @@ func formatVRSSide(rank, points *int) string {
 	case points != nil:
 		return fmt.Sprintf("(%d)", *points)
 	default:
-		return ""
+		return "N/A"
 	}
 }
 
