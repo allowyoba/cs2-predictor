@@ -55,6 +55,30 @@ func TestRateLimiter_PacesRepeatedSendsToTheSameChat(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_EnforcesThePerMinuteCapEvenBelowThePerSecondOne is the
+// regression test for Telegram's separate, tighter "20 messages per
+// minute into a group" ceiling (see the doc comment on the const block):
+// spacing sends out by exactly the per-second interval still isn't enough
+// once the per-minute budget's burst is exhausted.
+func TestRateLimiter_EnforcesThePerMinuteCapEvenBelowThePerSecondOne(t *testing.T) {
+	l := newRateLimiter(DefaultGlobalMessagesPerSecond, DefaultPerChatMessagesPerSecond)
+	now := time.Now()
+	l.now = func() time.Time { return now }
+
+	entry := l.forChat(-100)
+	// Spend the per-minute burst (20 tokens) at a single instant — the
+	// per-second limiter isn't involved in this check at all, only
+	// entry.perMinute's own configured burst.
+	for i := 0; i < perChatPerMinuteBurst; i++ {
+		if !entry.perMinute.AllowN(now, 1) {
+			t.Fatalf("expected the per-minute limiter to allow call %d (within its burst of %d)", i, perChatPerMinuteBurst)
+		}
+	}
+	if entry.perMinute.AllowN(now, 1) {
+		t.Fatal("expected the per-minute burst to be exhausted after 20 calls at the same instant")
+	}
+}
+
 // Limiters for chats nobody has messaged in a long time are dropped, so a
 // long-lived process doesn't accumulate one per chat forever.
 func TestRateLimiter_ForgetsIdleChats(t *testing.T) {

@@ -9,17 +9,29 @@ import (
 )
 
 // Telegram's documented ceilings for a bot: roughly 30 messages per second
-// overall, and about one per second into any single chat. Handling 429s
-// after the fact (which Call already does) recovers from crossing them;
-// pacing keeps the bot from crossing them in the first place, which matters
-// most exactly when it's busiest — a big event fanned out across every
-// subscribed chat, or several polls resolving at once.
+// overall, about one per second into any single chat, and — a separate,
+// tighter ceiling straight from Telegram's own FAQ — no more than 20
+// messages per minute into any one group. That per-minute cap binds first
+// on any burst longer than ~20 seconds even while the flat 1/sec cap is
+// respected instant-to-instant (a poll plus several admin-panel edits and
+// confirmations landing in the same group in quick succession is exactly
+// that kind of burst), so both budgets are enforced, not just the
+// per-second one. Applied to every chat uniformly, private chats included,
+// even though Telegram's 20/min wording is group-specific — DMs are
+// low-volume enough that the extra caution costs nothing observable.
+// Handling 429s after the fact (which Call already does) recovers from
+// crossing these; pacing keeps the bot from crossing them in the first
+// place, which matters most exactly when it's busiest.
 const (
 	DefaultGlobalMessagesPerSecond  = 25 // a little under 30, deliberately
 	DefaultPerChatMessagesPerSecond = 1
+	// perChatMessagesPerMinute mirrors Telegram's documented per-group
+	// ceiling exactly, so it isn't a tunable like the two rates above.
+	perChatMessagesPerMinute = 20
 
-	globalBurst  = 5
-	perChatBurst = 1
+	globalBurst           = 5
+	perChatBurst          = 1
+	perChatPerMinuteBurst = perChatMessagesPerMinute
 
 	// perChatLimiterTTL bounds how long an idle chat's limiter is kept.
 	// Without it a long-running process accumulates one limiter per chat it
@@ -27,9 +39,10 @@ const (
 	perChatLimiterTTL = 30 * time.Minute
 )
 
-// rateLimiter paces outbound Bot API calls: one global bucket plus one per
-// destination chat. Waiting happens before the request is sent, so a burst
-// is spread out rather than rejected and retried.
+// rateLimiter paces outbound Bot API calls: one global bucket plus two per
+// destination chat (per-second and per-minute — see the doc comment
+// above). Waiting happens before the request is sent, so a burst is spread
+// out rather than rejected and retried.
 type rateLimiter struct {
 	global      *rate.Limiter
 	perChatRate rate.Limit
@@ -41,8 +54,9 @@ type rateLimiter struct {
 }
 
 type chatLimiter struct {
-	limiter  *rate.Limiter
-	lastUsed time.Time
+	perSecond *rate.Limiter
+	perMinute *rate.Limiter
+	lastUsed  time.Time
 }
 
 // newRateLimiter returns nil — meaning "no pacing" — when either rate is
@@ -74,10 +88,14 @@ func (l *rateLimiter) wait(ctx context.Context, chatID int64) error {
 	if chatID == 0 {
 		return nil
 	}
-	return l.forChat(chatID).Wait(ctx)
+	entry := l.forChat(chatID)
+	if err := entry.perSecond.Wait(ctx); err != nil {
+		return err
+	}
+	return entry.perMinute.Wait(ctx)
 }
 
-func (l *rateLimiter) forChat(chatID int64) *rate.Limiter {
+func (l *rateLimiter) forChat(chatID int64) *chatLimiter {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -86,11 +104,14 @@ func (l *rateLimiter) forChat(chatID int64) *rate.Limiter {
 
 	entry, ok := l.perChat[chatID]
 	if !ok {
-		entry = &chatLimiter{limiter: rate.NewLimiter(l.perChatRate, perChatBurst)}
+		entry = &chatLimiter{
+			perSecond: rate.NewLimiter(l.perChatRate, perChatBurst),
+			perMinute: rate.NewLimiter(rate.Limit(perChatMessagesPerMinute)/60, perChatPerMinuteBurst),
+		}
 		l.perChat[chatID] = entry
 	}
 	entry.lastUsed = now
-	return entry.limiter
+	return entry
 }
 
 // gcLocked drops limiters for chats that have been idle longer than the
