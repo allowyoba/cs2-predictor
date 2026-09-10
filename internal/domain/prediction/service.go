@@ -19,6 +19,14 @@ func NewService(repo Repository, gateway Gateway, clock common.Clock) *Service {
 	return &Service{repo: repo, gateway: gateway, clock: clock}
 }
 
+// ChatParticipants passes through to the repository — exposed on Service so
+// callers that only hold a *Service (the telegram adapter's moderator
+// assignment screen) can list "the people who play here" without depending
+// on the full Repository interface.
+func (s *Service) ChatParticipants(ctx context.Context, chatID common.ChatID, since time.Time) ([]common.UserID, error) {
+	return s.repo.ChatParticipants(ctx, chatID, since)
+}
+
 // Create is idempotent per (matchID, chatID): if a poll already exists for
 // that pair it is returned as-is without re-sending to Telegram. Known
 // limitation: if a prior call persisted the draft but then failed to send

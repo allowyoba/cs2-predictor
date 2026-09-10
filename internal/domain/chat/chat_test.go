@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"testing"
+	"time"
 
 	"cs2predictor/internal/platform/common"
 )
@@ -13,7 +14,10 @@ func (f fakeMembership) Role(context.Context, common.ChatID, common.UserID) (Mem
 	return f.role, nil
 }
 
-type fakeRepo struct{ moderator bool }
+type fakeRepo struct {
+	moderator   bool
+	permissions []Permission
+}
 
 func (f fakeRepo) Find(context.Context, common.ChatID) (*Settings, error) { return nil, nil }
 func (f fakeRepo) Save(_ context.Context, s Settings) (Settings, error)   { return s, nil }
@@ -44,6 +48,13 @@ func (f fakeRepo) UserLocale(context.Context, common.UserID) (*common.LocaleCode
 	return nil, nil
 }
 func (f fakeRepo) SetUserLocale(context.Context, common.UserID, common.LocaleCode) error { return nil }
+func (f fakeRepo) ModeratorPermissions(context.Context, common.ChatID, common.UserID) ([]Permission, error) {
+	return f.permissions, nil
+}
+func (f fakeRepo) SetModeratorPermissions(context.Context, common.ChatID, common.UserID, []Permission) error {
+	return nil
+}
+func (f fakeRepo) UserProfile(context.Context, common.UserID) (*UserProfile, error) { return nil, nil }
 
 // An admin bypasses the moderator check entirely.
 func TestCanManage_AdminBypassesModeratorFlag(t *testing.T) {
@@ -85,6 +96,107 @@ func TestRequireManager_ReturnsErrAccessDenied(t *testing.T) {
 	svc := NewAuthorizationService(fakeRepo{moderator: false}, fakeMembership{role: RoleKicked})
 	if err := svc.RequireManager(context.Background(), common.ChatID{Value: -1}, common.UserID{Value: 1}); err != ErrAccessDenied {
 		t.Fatalf("expected ErrAccessDenied, got %v", err)
+	}
+}
+
+// Telegram owner/admin always has every permission, regardless of what (if
+// anything) is recorded for them as a moderator.
+func TestHasPermission_AdminBypassesGrantedPermissions(t *testing.T) {
+	svc := NewAuthorizationService(fakeRepo{moderator: false}, fakeMembership{role: RoleAdministrator})
+	ok, err := svc.HasPermission(context.Background(), common.ChatID{Value: -1}, common.UserID{Value: 1}, PermissionManageEvents)
+	if err != nil || !ok {
+		t.Fatalf("expected admin to have every permission, got ok=%v err=%v", ok, err)
+	}
+}
+
+// A moderator only has the permissions actually granted to them — holding
+// one doesn't imply holding another.
+func TestHasPermission_MemberOnlyHasGrantedPermission(t *testing.T) {
+	svc := NewAuthorizationService(fakeRepo{moderator: true, permissions: []Permission{PermissionViewStats}}, fakeMembership{role: RoleMember})
+	ctx := context.Background()
+	actor := common.UserID{Value: 1}
+	chatID := common.ChatID{Value: -1}
+
+	if ok, err := svc.HasPermission(ctx, chatID, actor, PermissionViewStats); err != nil || !ok {
+		t.Fatalf("expected granted permission to pass, got ok=%v err=%v", ok, err)
+	}
+	if ok, err := svc.HasPermission(ctx, chatID, actor, PermissionManageEvents); err != nil || ok {
+		t.Fatalf("expected ungranted permission to fail, got ok=%v err=%v", ok, err)
+	}
+}
+
+// A member flagged as moderator but currently LEFT/KICKED never passes,
+// mirroring CanManage's rule — the moderator flag alone is not enough.
+func TestHasPermission_DeniedWithoutCurrentMembership(t *testing.T) {
+	svc := NewAuthorizationService(fakeRepo{moderator: true, permissions: []Permission{PermissionViewStats}}, fakeMembership{role: RoleLeft})
+	ok, err := svc.HasPermission(context.Background(), common.ChatID{Value: -1}, common.UserID{Value: 1}, PermissionViewStats)
+	if err != nil || ok {
+		t.Fatalf("expected LEFT member to be denied despite the granted permission, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestRequirePermission_ReturnsErrAccessDenied(t *testing.T) {
+	svc := NewAuthorizationService(fakeRepo{moderator: true, permissions: []Permission{PermissionViewStats}}, fakeMembership{role: RoleMember})
+	err := svc.RequirePermission(context.Background(), common.ChatID{Value: -1}, common.UserID{Value: 1}, PermissionManageMatches)
+	if err != ErrAccessDenied {
+		t.Fatalf("expected ErrAccessDenied, got %v", err)
+	}
+}
+
+func TestIsMember_TrueForAnyRoleExceptLeftOrKicked(t *testing.T) {
+	svc := NewAuthorizationService(fakeRepo{}, fakeMembership{role: RoleMember})
+	ok, err := svc.IsMember(context.Background(), common.ChatID{Value: -1}, common.UserID{Value: 1})
+	if err != nil || !ok {
+		t.Fatalf("expected plain member to count as a member, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestIsMember_FalseForLeftAndKicked(t *testing.T) {
+	for _, role := range []MemberRole{RoleLeft, RoleKicked} {
+		svc := NewAuthorizationService(fakeRepo{}, fakeMembership{role: role})
+		ok, err := svc.IsMember(context.Background(), common.ChatID{Value: -1}, common.UserID{Value: 1})
+		if err != nil || ok {
+			t.Fatalf("role %s: expected not-a-member, got ok=%v err=%v", role, ok, err)
+		}
+	}
+}
+
+func TestPresets_MatchAllPermissionsWhereExpected(t *testing.T) {
+	if len(PresetFullAccess()) != len(AllPermissions()) {
+		t.Fatalf("expected PresetFullAccess to grant every known permission")
+	}
+	if !HasPermission(PresetContent(), PermissionManageEvents) || !HasPermission(PresetContent(), PermissionManageMatches) {
+		t.Fatalf("expected PresetContent to grant manage_events and manage_matches")
+	}
+	if HasPermission(PresetContent(), PermissionViewStats) {
+		t.Fatalf("expected PresetContent not to grant view_stats")
+	}
+	if got := PresetStatsOnly(); len(got) != 1 || got[0] != PermissionViewStats {
+		t.Fatalf("expected PresetStatsOnly to grant exactly view_stats, got %v", got)
+	}
+}
+
+func TestInvitationStatus(t *testing.T) {
+	now := time.Now()
+	used := now.Add(-time.Minute)
+	revoked := now.Add(-time.Minute)
+
+	cases := []struct {
+		name string
+		inv  ModeratorInvitation
+		want InvitationStatus
+	}{
+		{"pending", ModeratorInvitation{ExpiresAt: now.Add(time.Hour)}, InvitationPending},
+		{"expired", ModeratorInvitation{ExpiresAt: now.Add(-time.Hour)}, InvitationExpired},
+		{"used", ModeratorInvitation{ExpiresAt: now.Add(time.Hour), UsedAt: &used}, InvitationUsed},
+		{"revoked", ModeratorInvitation{ExpiresAt: now.Add(time.Hour), RevokedAt: &revoked}, InvitationRevoked},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.inv.Status(now); got != c.want {
+				t.Fatalf("Status() = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

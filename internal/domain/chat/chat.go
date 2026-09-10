@@ -68,6 +68,11 @@ type Moderator struct {
 	AppointedBy common.UserID
 	Username    string
 	DisplayName string
+	// Permissions granted at appointment time. A nil/empty slice means the
+	// moderator has no granted permissions yet (a state that only happens
+	// transiently — every UI path that appoints a moderator picks a preset
+	// or manual set before saving).
+	Permissions []Permission
 }
 
 type ModeratorInfo struct {
@@ -75,6 +80,57 @@ type ModeratorInfo struct {
 	Username    string
 	DisplayName string
 	AppointedBy common.UserID
+	Permissions []Permission
+}
+
+// Permission is one granular capability a moderator can be granted,
+// independent of the others — a moderator with only ViewStats cannot touch
+// events, and vice versa. Telegram owner/admin bypass this entirely (see
+// AuthorizationService.HasPermission).
+type Permission string
+
+const (
+	PermissionManageEvents        Permission = "manage_events"
+	PermissionManageMatches       Permission = "manage_matches"
+	PermissionViewStats           Permission = "view_stats"
+	PermissionManageGroupSettings Permission = "manage_group_settings"
+)
+
+// AllPermissions lists every known permission, in the fixed order used to
+// render toggle screens and to encode/decode the manual-selection bitmask
+// (see the telegram adapter's permission wizard).
+func AllPermissions() []Permission {
+	return []Permission{PermissionManageEvents, PermissionManageMatches, PermissionViewStats, PermissionManageGroupSettings}
+}
+
+// ValidPermission reports whether p is one of the known permissions —
+// guards against persisting or matching against a typo'd or stale slug.
+func ValidPermission(p Permission) bool {
+	for _, known := range AllPermissions() {
+		if p == known {
+			return true
+		}
+	}
+	return false
+}
+
+// PresetFullAccess/PresetContent/PresetStatsOnly are the three canned
+// permission sets offered on the assignment/edit screens, alongside a
+// fourth "configure manually" option that starts from an empty set.
+func PresetFullAccess() []Permission { return AllPermissions() }
+func PresetContent() []Permission {
+	return []Permission{PermissionManageEvents, PermissionManageMatches}
+}
+func PresetStatsOnly() []Permission { return []Permission{PermissionViewStats} }
+
+// HasPermission reports whether perms includes p.
+func HasPermission(perms []Permission, p Permission) bool {
+	for _, has := range perms {
+		if has == p {
+			return true
+		}
+	}
+	return false
 }
 
 // ActiveChatLister is the narrow view scheduled chat-wide reports need:
@@ -117,6 +173,19 @@ type Repository interface {
 	AddModerator(ctx context.Context, moderator Moderator) error
 	RemoveModerator(ctx context.Context, chatID common.ChatID, userID common.UserID) error
 	ListModerators(ctx context.Context, chatID common.ChatID) ([]ModeratorInfo, error)
+	// ModeratorPermissions returns the permissions granted to userID in
+	// chatID, or nil if they aren't a moderator there at all — the read
+	// side AuthorizationService.HasPermission checks on every gated action.
+	ModeratorPermissions(ctx context.Context, chatID common.ChatID, userID common.UserID) ([]Permission, error)
+	// SetModeratorPermissions replaces the full permission set for an
+	// already-appointed moderator. Calling it for someone who isn't a
+	// moderator is a no-op.
+	SetModeratorPermissions(ctx context.Context, chatID common.ChatID, userID common.UserID, permissions []Permission) error
+	// UserProfile resolves a display name/username pair for userID from the
+	// shared telegram_user table, used to label assignment candidates and
+	// invitation acceptors without a full ModeratorInfo. Returns nil if the
+	// bot has never seen this user.
+	UserProfile(ctx context.Context, userID common.UserID) (*UserProfile, error)
 
 	EventTopic(ctx context.Context, chatID common.ChatID, eventID common.EventID) (*int64, error)
 	SaveEventTopic(ctx context.Context, topic EventTopic) error
@@ -163,6 +232,14 @@ type Repository interface {
 	// SetNickname stores the chosen name; an empty string clears it back
 	// to the Telegram-sourced default.
 	SetNickname(ctx context.Context, userID common.UserID, nickname string) error
+}
+
+// UserProfile is the minimal, best-effort identity the bot has cached for a
+// Telegram user from prior interactions.
+type UserProfile struct {
+	UserID      common.UserID
+	Username    string
+	DisplayName string
 }
 
 // NotificationPrefs is one person's own opt-ins for the private nudges
@@ -317,4 +394,51 @@ func (s *AuthorizationService) RequireTelegramAdmin(ctx context.Context, chatID 
 		return ErrAccessDenied
 	}
 	return nil
+}
+
+// HasPermission is CanManage's granular sibling: Telegram owner/admin always
+// pass, unconditionally; a plain MEMBER passes only if flagged as a
+// moderator AND holding the specific permission asked about. RESTRICTED,
+// LEFT and KICKED never pass, matching CanManage.
+func (s *AuthorizationService) HasPermission(ctx context.Context, chatID common.ChatID, userID common.UserID, permission Permission) (bool, error) {
+	role, err := s.telegram.Role(ctx, chatID, userID)
+	if err != nil {
+		return false, err
+	}
+	if role == RoleOwner || role == RoleAdministrator {
+		return true, nil
+	}
+	if role != RoleMember {
+		return false, nil
+	}
+	perms, err := s.chats.ModeratorPermissions(ctx, chatID, userID)
+	if err != nil {
+		return false, err
+	}
+	return HasPermission(perms, permission), nil
+}
+
+// RequirePermission is HasPermission's error-returning form, mirroring
+// RequireManager.
+func (s *AuthorizationService) RequirePermission(ctx context.Context, chatID common.ChatID, userID common.UserID, permission Permission) error {
+	ok, err := s.HasPermission(ctx, chatID, userID, permission)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrAccessDenied
+	}
+	return nil
+}
+
+// IsMember reports whether userID currently belongs to chatID at all
+// (any role except LEFT/KICKED) — the membership check the moderator
+// invitation flow runs before granting access, independent of whether the
+// user is already trusted with anything.
+func (s *AuthorizationService) IsMember(ctx context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {
+	role, err := s.telegram.Role(ctx, chatID, userID)
+	if err != nil {
+		return false, err
+	}
+	return role != "" && role != RoleLeft && role != RoleKicked, nil
 }
