@@ -1468,3 +1468,177 @@ func TestScoringRepository_LeaderboardPrefersTheChosenNickname(t *testing.T) {
 		t.Fatalf("after clearing the nickname, DisplayName = %+v, want the latest Telegram name", standings)
 	}
 }
+
+// TestChatRepository_EventTopicLifecycle exercises the event_topic table —
+// including its FK on tournament_event, which only a real Postgres (not the
+// fakes the telegram package's unit tests use) can enforce or violate.
+func TestChatRepository_EventTopicLifecycle(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+
+	chatID := common.ChatID{Value: -781}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameCS2, Name: "Topic Test Event", ExternalID: "topic-event-1",
+		Status: competition.EventRunning, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+
+	if topicID, err := chats.EventTopic(ctx, chatID, event.ID); err != nil || topicID != nil {
+		t.Fatalf("expected no topic bound yet, got %v, err=%v", topicID, err)
+	}
+
+	if err := chats.SaveEventTopic(ctx, chat.EventTopic{ChatID: chatID, EventID: event.ID, TopicID: 42}); err != nil {
+		t.Fatal(err)
+	}
+	topicID, err := chats.EventTopic(ctx, chatID, event.ID)
+	if err != nil || topicID == nil || *topicID != 42 {
+		t.Fatalf("EventTopic() = %v, %v, want 42", topicID, err)
+	}
+
+	// Re-binding the same (chat, event) pair to a different topic replaces
+	// it rather than erroring or creating a second row.
+	if err := chats.SaveEventTopic(ctx, chat.EventTopic{ChatID: chatID, EventID: event.ID, TopicID: 99}); err != nil {
+		t.Fatal(err)
+	}
+	topicID, err = chats.EventTopic(ctx, chatID, event.ID)
+	if err != nil || topicID == nil || *topicID != 99 {
+		t.Fatalf("EventTopic() after rebind = %v, %v, want 99", topicID, err)
+	}
+
+	if err := chats.ClearEventTopic(ctx, chatID, event.ID); err != nil {
+		t.Fatal(err)
+	}
+	if topicID, err := chats.EventTopic(ctx, chatID, event.ID); err != nil || topicID != nil {
+		t.Fatalf("expected the binding to be cleared, got %v, err=%v", topicID, err)
+	}
+}
+
+// TestPredictionRepository_VotesAndRemoveVote covers the two prediction
+// repository methods no existing integration test touches: reading back a
+// poll's raw votes, and RemoveVote (the "cancel my prediction" feature) —
+// including that it only removes the intended (poll, user) pair.
+func TestPredictionRepository_VotesAndRemoveVote(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	chatID := common.ChatID{Value: -782}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Vote Test Event", ExternalID: "vote-event-1", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	firstTeam := competition.Team{ID: common.NewTeamID(), Name: "Spirit", ExternalID: "vote-team-1"}
+	secondTeam := competition.Team{ID: common.NewTeamID(), Name: "NAVI", ExternalID: "vote-team-2"}
+	match := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "vote-match-1",
+		FirstTeam: &firstTeam, SecondTeam: &secondTeam, ScheduledAt: &now, Status: competition.MatchNotStarted, Format: format,
+	}
+	if _, err := catalog.SaveMatch(ctx, match); err != nil {
+		t.Fatal(err)
+	}
+	options := make([]prediction.Option, 0)
+	for i, s := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: s})
+	}
+	poll := prediction.Poll{ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID, Options: options, Status: prediction.PollOpen, ClosesAt: now}
+	if _, err := predictions.SavePoll(ctx, poll); err != nil {
+		t.Fatal(err)
+	}
+
+	voterA, voterB := common.UserID{Value: 1}, common.UserID{Value: 2}
+	usernameA := "alex"
+	if err := predictions.SaveVote(ctx, prediction.Vote{PollID: poll.ID, UserID: voterA, OptionIndex: 0, Username: &usernameA, DisplayName: "Alex", VotedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := predictions.SaveVote(ctx, prediction.Vote{PollID: poll.ID, UserID: voterB, OptionIndex: 1, DisplayName: "Bo", VotedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	votes, err := predictions.Votes(ctx, poll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(votes) != 2 {
+		t.Fatalf("Votes() = %+v, want 2 votes", votes)
+	}
+
+	if err := predictions.RemoveVote(ctx, poll.ID, voterA); err != nil {
+		t.Fatal(err)
+	}
+	votes, err = predictions.Votes(ctx, poll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(votes) != 1 || votes[0].UserID != voterB {
+		t.Fatalf("Votes() after removing voterA = %+v, want only voterB left", votes)
+	}
+
+	// Removing an already-removed (or never-existing) vote is a no-op, not
+	// an error.
+	if err := predictions.RemoveVote(ctx, poll.ID, voterA); err != nil {
+		t.Fatalf("expected removing an absent vote to be a no-op, got %v", err)
+	}
+}
+
+// TestScheduledReportRepository_ClaimIsExclusiveThenIdempotent mirrors
+// TestClusterLock_MutualExclusion for the digest idempotency store: Claim
+// must be the exclusive "was this the first claim" signal Postgres's own
+// ON CONFLICT DO NOTHING guarantees, not something a fake could get subtly
+// wrong (e.g. by not actually being atomic under concurrent callers).
+func TestScheduledReportRepository_ClaimIsExclusiveThenIdempotent(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	reports := pg.NewScheduledReportRepository(pool)
+
+	chatID := common.ChatID{Value: -783}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if claimed, err := reports.Claimed(ctx, chatID, "monthly", "2026-09"); err != nil || claimed {
+		t.Fatalf("expected unclaimed initially, got %v, err=%v", claimed, err)
+	}
+
+	const attempts = 8
+	results := make(chan bool, attempts)
+	for i := 0; i < attempts; i++ {
+		go func() {
+			ok, err := reports.Claim(ctx, chatID, "monthly", "2026-09")
+			if err != nil {
+				t.Error(err)
+				results <- false
+				return
+			}
+			results <- ok
+		}()
+	}
+	successes := 0
+	for i := 0; i < attempts; i++ {
+		if <-results {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly one of %d concurrent Claim calls to succeed, got %d", attempts, successes)
+	}
+
+	if claimed, err := reports.Claimed(ctx, chatID, "monthly", "2026-09"); err != nil || !claimed {
+		t.Fatalf("expected Claimed to report true after a successful Claim, got %v, err=%v", claimed, err)
+	}
+	// A different report_type/period_key for the same chat is independent.
+	if claimed, err := reports.Claimed(ctx, chatID, "annual", "2026"); err != nil || claimed {
+		t.Fatalf("expected a different report type/period to remain unclaimed, got %v, err=%v", claimed, err)
+	}
+}

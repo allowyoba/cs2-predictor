@@ -679,6 +679,168 @@ func TestRenderLeaderboard_PaginatesAndKeepsViewerVisible(t *testing.T) {
 	}
 }
 
+// TestStatsPageCallbacks_RouteThroughRealDispatch covers routeStatsPage and
+// its four per-kind helpers (routeStatsPageAllTime/Year/Month/Event) via
+// handleCallback with real callback data — every earlier leaderboard test
+// called renderLeaderboard directly, bypassing the actual "stats:p:..."
+// parsing these functions do.
+func TestStatsPageCallbacks_RouteThroughRealDispatch(t *testing.T) {
+	standings := []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "Alex", Rank: 1, Points: 10}}
+	eventID := common.NewEventID()
+
+	cases := []struct {
+		name string
+		data string
+	}{
+		{"all-time", "stats:p:a:0"},
+		{"year", "stats:p:y:2026:0:r"},
+		{"year-back-to-years-list", "stats:p:y:2026:0:y"},
+		{"month", "stats:p:m:202601:0:r"},
+		{"month-back-to-months-list", "stats:p:m:202601:0:m"},
+		{"event", "stats:p:e:" + strings.ReplaceAll(eventID.Value.String(), "-", "") + ":0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, calls := newRecordingServer(t)
+			defer srv.Close()
+			handler, chats := newTestHandler(t, srv)
+			chatID := common.ChatID{Value: -1}
+			_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+			handler.Scoring = &dataScoring{leaderboard: standings}
+
+			data := tc.data
+			cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Alex"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+			if err := handler.handleCallback(context.Background(), cb); err != nil {
+				t.Fatal(err)
+			}
+			if len(*calls) == 0 {
+				t.Fatal("expected a rendered leaderboard")
+			}
+			text := lastText(*calls)
+			if !strings.Contains(text, "Alex") {
+				t.Fatalf("expected the leaderboard to render, got %q", text)
+			}
+		})
+	}
+}
+
+// TestStatsPageCallback_RejectsMalformedPayloads checks the validation
+// paths routeStatsPage's helpers each carry (wrong field count, bad
+// numbers) actually reject rather than panic on a malformed callback.
+func TestStatsPageCallback_RejectsMalformedPayloads(t *testing.T) {
+	for _, data := range []string{
+		"stats:p:a",      // missing page
+		"stats:p:y:2026", // missing page/back
+		"stats:p:m:notyyyymm:0:r",
+		"stats:p:e:not-a-uuid:0",
+		"stats:p:x:0",
+	} {
+		t.Run(data, func(t *testing.T) {
+			srv, calls := newRecordingServer(t)
+			defer srv.Close()
+			handler, chats := newTestHandler(t, srv)
+			chatID := common.ChatID{Value: -1}
+			_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+
+			d := data
+			cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Alex"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &d}
+			if err := handler.handleCallback(context.Background(), cb); err != nil {
+				t.Fatal(err)
+			}
+			// A validation error is caught by handleCommandError and turned
+			// into a user-facing reply rather than propagating — just check
+			// nothing panicked and no leaderboard was rendered.
+			for _, c := range *calls {
+				if c["__method"] == "editMessageText" || c["__method"] == "sendMessage" {
+					if text, _ := c["text"].(string); strings.Contains(text, "Alex") {
+						t.Fatalf("expected malformed payload %q to be rejected, got a rendered leaderboard", data)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestStatsYearAndMonthCallbacks_RouteThroughRealDispatch covers
+// routeStatsYear/routeStatsMonth (the "jump to this whole year/month"
+// buttons, distinct from their paginated stats:p: siblings) via real
+// dispatch, including the "back to the years/months list" variants.
+func TestStatsYearAndMonthCallbacks_RouteThroughRealDispatch(t *testing.T) {
+	standings := []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "Alex", Rank: 1, Points: 10}}
+	for _, data := range []string{"stats:year:2026", "stats:year:2026:menu", "stats:month:2026-01", "stats:month:2026-01:months:2026"} {
+		t.Run(data, func(t *testing.T) {
+			srv, calls := newRecordingServer(t)
+			defer srv.Close()
+			handler, chats := newTestHandler(t, srv)
+			chatID := common.ChatID{Value: -1}
+			_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+			handler.Scoring = &dataScoring{leaderboard: standings}
+
+			d := data
+			cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Alex"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &d}
+			if err := handler.handleCallback(context.Background(), cb); err != nil {
+				t.Fatal(err)
+			}
+			text := lastText(*calls)
+			if !strings.Contains(text, "Alex") {
+				t.Fatalf("expected the leaderboard to render for %q, got %q", data, text)
+			}
+		})
+	}
+}
+
+// TestEventsBrowseCallback_RoutesTopAndAllWithPagination covers
+// routeEventsBrowse via real dispatch — every existing browse-related test
+// exercised /events top/all as a text command, never the "browse the
+// catalog" pagination buttons this route serves.
+func TestEventsBrowseCallback_RoutesTopAndAllWithPagination(t *testing.T) {
+	events := make([]competition.Event, 10)
+	for i := range events {
+		events[i] = competition.Event{ID: common.NewEventID(), Name: fmt.Sprintf("Tournament %d", i+1), Tier: competition.TierA}
+	}
+	catalog := &searchCatalog{results: events}
+
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Catalog = catalog
+	handler.Subscriptions = &dataSubs{}
+
+	data := "events:browse:top:0"
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	if !catalog.gotTopTierOnly {
+		t.Fatal("expected events:browse:top: to search with topTierOnly=true")
+	}
+	var labels []string
+	for _, b := range lastEditedButtons(t, *calls) {
+		if s, ok := b["text"].(string); ok {
+			labels = append(labels, s)
+		}
+	}
+	if !slices.ContainsFunc(labels, func(l string) bool { return strings.Contains(l, "Tournament 1") }) {
+		t.Fatalf("expected the first page of results as buttons, got %v", labels)
+	}
+	if !slices.Contains(labels, "›") {
+		t.Fatalf("expected a next-page button for 10 results, got %v", labels)
+	}
+
+	*calls = nil
+	data = "events:browse:all:0"
+	cb2 := &CallbackQuery{ID: "cb2", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb2); err != nil {
+		t.Fatal(err)
+	}
+	if catalog.gotTopTierOnly {
+		t.Fatal("expected events:browse:all: to search with topTierOnly=false")
+	}
+}
+
 func TestModeratorRemove_RequiresConfirmationBeforeRemoving(t *testing.T) {
 	server, calls := newRecordingServer(t)
 	defer server.Close()
