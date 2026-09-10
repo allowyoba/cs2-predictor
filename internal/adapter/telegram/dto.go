@@ -3,10 +3,29 @@ package telegram
 // Update DTOs — the subset of Telegram's webhook update JSON this bot uses.
 
 type Update struct {
-	UpdateID      int64          `json:"update_id"`
-	Message       *Message       `json:"message"`
-	CallbackQuery *CallbackQuery `json:"callback_query"`
-	PollAnswer    *PollAnswer    `json:"poll_answer"`
+	UpdateID      int64              `json:"update_id"`
+	Message       *Message           `json:"message"`
+	CallbackQuery *CallbackQuery     `json:"callback_query"`
+	PollAnswer    *PollAnswer        `json:"poll_answer"`
+	MyChatMember  *ChatMemberUpdated `json:"my_chat_member"`
+}
+
+// ChatMemberUpdated is "my_chat_member": the bot's own membership status
+// changed in a chat — added, removed (kicked/left), or promoted/demoted.
+// Telegram's own doc for this field is explicit that it's always about the
+// bot itself ("The bot's chat member status was updated in a chat"), as
+// opposed to the separate "chat_member" update (about arbitrary members,
+// not subscribed to here) — so no identity check against getMe is needed.
+type ChatMemberUpdated struct {
+	Chat          Chat       `json:"chat"`
+	NewChatMember ChatMember `json:"new_chat_member"`
+}
+
+// ChatMember here is only the one field this bot needs from it: Status is
+// one of "creator", "administrator", "member", "restricted", "left",
+// "kicked".
+type ChatMember struct {
+	Status string `json:"status"`
 }
 
 type Message struct {

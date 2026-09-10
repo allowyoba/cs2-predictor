@@ -292,7 +292,39 @@ func (h *UpdateHandler) dispatch(ctx context.Context, update Update) error {
 			return err
 		}
 	}
+	if update.MyChatMember != nil {
+		if err := h.handleMyChatMember(ctx, update.MyChatMember); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// handleMyChatMember reacts to the bot's own membership changing in a chat.
+// Removed (kicked, or an admin used "leave group" on the bot's behalf)
+// marks the chat inactive — the same flag ListActive/ManagedChats already
+// filter on — so the bot stops listing it as manageable and stops trying
+// to post into a chat it's no longer in; re-added flips it back to active.
+// Without this, a chat the bot was removed from stayed listed as active
+// forever, since nothing else in this codebase ever clears the flag.
+func (h *UpdateHandler) handleMyChatMember(ctx context.Context, update *ChatMemberUpdated) error {
+	settings, err := h.Chats.Find(ctx, common.ChatID{Value: update.Chat.ID})
+	if err != nil {
+		return err
+	}
+	if settings == nil {
+		// A chat the bot never exchanged a message in (e.g. added and
+		// removed before anyone typed anything) has nothing to update.
+		return nil
+	}
+	switch update.NewChatMember.Status {
+	case "left", "kicked":
+		settings.Active = false
+	default:
+		settings.Active = true
+	}
+	_, err = h.Chats.Save(ctx, *settings)
+	return err
 }
 
 //nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
