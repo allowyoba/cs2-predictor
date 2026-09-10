@@ -358,6 +358,8 @@ func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 			cmdErr = h.changeModerator(ctx, msg, settings, true)
 		case strings.HasPrefix(text, "/moderator remove"):
 			cmdErr = h.changeModerator(ctx, msg, settings, false)
+		case strings.HasPrefix(text, "/help"):
+			cmdErr = h.helpView(ctx, sendTarget(chatID, msg.MessageThreadID), settings.Locale, "menu:main")
 		}
 	}
 	return h.handleCommandError(ctx, settings, msg.MessageThreadID, text, cmdErr)
@@ -394,6 +396,8 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"), strings.HasPrefix(text, "/stats"):
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
+	case strings.HasPrefix(text, "/help"):
+		return h.helpView(ctx, sendTarget(chatID, nil), locale, "pstats:menu")
 	case !strings.HasPrefix(text, "/") && isRenameReply(msg, locale, h.Texts):
 		// User-scoped, not chat-scoped — unlike the events-search reply
 		// below, this must work for every DM, not only someone with an
