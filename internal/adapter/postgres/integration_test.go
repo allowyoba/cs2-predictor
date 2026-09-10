@@ -1317,6 +1317,136 @@ func TestScoringRepository_UserPredictionsReportsTheTeamBackedAndWhetherItWon(t 
 	}
 }
 
+// UserBets backs the "my bets" DM screen: it must report the exact
+// predicted scoreline (not just who was picked to win), the exact actual
+// scoreline, the points a settled award earned, and — the point of the
+// chatID filter — narrow to one chat without touching the other.
+func TestScoringRepository_UserBetsReportsScorelinesAndFiltersByChat(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	chatA := common.ChatID{Value: -200781}
+	chatB := common.ChatID{Value: -200782}
+	for _, c := range []common.ChatID{chatA, chatB} {
+		if _, err := chats.Save(ctx, chat.Settings{ChatID: c, Title: fmt.Sprintf("Bets chat %d", c.Value), Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameCS2, Name: "Bets Cup", ExternalID: "bets-event",
+		Status: competition.EventRunning, StartsAt: &now, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	options := make([]prediction.Option, 0)
+	for i, s := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: s})
+	}
+	spirit := competition.Team{ID: common.NewTeamID(), Name: "Spirit", ExternalID: "bets-team-1"}
+	navi := competition.Team{ID: common.NewTeamID(), Name: "NAVI", ExternalID: "bets-team-2"}
+	voter := common.UserID{Value: 78}
+
+	seedBet := func(c common.ChatID, external string, messageID int64, playedAt time.Time, actual competition.MatchScore, predictedOption int, points int) common.PollID {
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: external,
+			FirstTeam: &spirit, SecondTeam: &navi,
+			ScheduledAt: &playedAt, ActualStartedAt: &playedAt, Status: competition.MatchFinished,
+			Format: format, Score: &actual,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := "bets-poll-" + external
+		poll := prediction.Poll{
+			ID: common.NewPollID(), ChatID: c, MatchID: match.ID,
+			TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: playedAt,
+		}
+		saved, err := predictions.SavePoll(ctx, poll)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{
+			PollID: saved.ID, UserID: voter, OptionIndex: predictedOption, DisplayName: "Alex", VotedAt: playedAt.Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if points > 0 {
+			if err := scoringRepo.ReplaceAwards(ctx, saved.ID, []scoring.Award{{
+				ChatID: c, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: voter,
+				Points: points, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return saved.ID
+	}
+
+	// Chat A: predicted 2:0, actual 2:0 — an exact, awarded hit.
+	seedBet(chatA, "bets-match-a", 31, now.Add(-time.Hour), competition.MatchScore{First: 2, Second: 0}, 0, 3)
+	// Chat B: predicted 2:1, actual 0:2 — a miss, no award.
+	seedBet(chatB, "bets-match-b", 32, now.Add(-2*time.Hour), competition.MatchScore{First: 0, Second: 2}, optionIndexFor(options, competition.MatchScore{First: 2, Second: 1}), 0)
+
+	all, err := scoringRepo.UserBets(ctx, voter, nil, scoring.UserBetsMaxRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("got %d bets across both chats, want 2: %+v", len(all), all)
+	}
+	if !all[0].PlayedAt.After(all[1].PlayedAt) {
+		t.Fatalf("bets are not newest-first: %+v", all)
+	}
+
+	onlyA, err := scoringRepo.UserBets(ctx, voter, &chatA, scoring.UserBetsMaxRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onlyA) != 1 || onlyA[0].ChatID != chatA {
+		t.Fatalf("chat filter leaked or dropped rows, got %+v", onlyA)
+	}
+	bet := onlyA[0]
+	if bet.PredictedScore != (competition.MatchScore{First: 2, Second: 0}) || bet.ActualScore != (competition.MatchScore{First: 2, Second: 0}) {
+		t.Fatalf("scorelines = predicted %v actual %v, want 2:0/2:0", bet.PredictedScore, bet.ActualScore)
+	}
+	if !bet.Correct || bet.Points != 3 {
+		t.Fatalf("correct/points = %v/%d, want true/3", bet.Correct, bet.Points)
+	}
+	if bet.FirstTeamName != "Spirit" || bet.SecondTeamName != "NAVI" {
+		t.Fatalf("team names = %q/%q, want Spirit/NAVI", bet.FirstTeamName, bet.SecondTeamName)
+	}
+
+	onlyB, err := scoringRepo.UserBets(ctx, voter, &chatB, scoring.UserBetsMaxRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onlyB) != 1 {
+		t.Fatalf("got %d bets for chat B, want 1: %+v", len(onlyB), onlyB)
+	}
+	if onlyB[0].Correct || onlyB[0].Points != 0 {
+		t.Fatalf("chat B's bet correct/points = %v/%d, want false/0", onlyB[0].Correct, onlyB[0].Points)
+	}
+}
+
+// optionIndexFor finds the poll option index matching score s, so the test
+// can vote for a specific predicted scoreline by name instead of a bare
+// index into format.PossibleScores()'s own ordering.
+func optionIndexFor(options []prediction.Option, s competition.MatchScore) int {
+	for _, o := range options {
+		if o.Score == s {
+			return o.Index
+		}
+	}
+	panic(fmt.Sprintf("no option for score %v", s))
+}
+
 // Both nudges are gated on the same two conditions, and getting either
 // wrong means messaging someone who never asked or repeatedly failing to
 // reach someone who left.

@@ -204,6 +204,25 @@ type personalDataScoring struct {
 	// records what the screen asked for.
 	predictions     []scoring.UserPrediction
 	predictionLimit int
+	// bets backs the per-bet history port; betsChatID records the chat
+	// filter (nil for "every chat") the screen most recently asked for.
+	bets       []scoring.UserBet
+	betsChatID *common.ChatID
+}
+
+func (s *personalDataScoring) UserBets(_ context.Context, userID common.UserID, chatID *common.ChatID, _ int) ([]scoring.UserBet, error) {
+	s.userID = userID
+	s.betsChatID = chatID
+	if chatID == nil {
+		return s.bets, nil
+	}
+	var filtered []scoring.UserBet
+	for _, b := range s.bets {
+		if b.ChatID == *chatID {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *personalDataScoring) UserPredictions(_ context.Context, userID common.UserID, limit int) ([]scoring.UserPrediction, error) {

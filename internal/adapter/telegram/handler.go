@@ -447,6 +447,8 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"), strings.HasPrefix(text, "/stats"):
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
+	case strings.HasPrefix(text, "/bets"):
+		return h.privateBetsMenu(ctx, sendTarget(chatID, nil), userID, locale, nil, 0, 0)
 	case strings.HasPrefix(text, "/help"):
 		return h.helpView(ctx, sendTarget(chatID, nil), locale, "pstats:menu")
 	case !strings.HasPrefix(text, "/") && isRenameReply(msg, locale, h.Texts):
