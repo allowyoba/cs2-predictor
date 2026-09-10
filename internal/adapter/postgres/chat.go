@@ -109,13 +109,94 @@ func (r *ChatRepository) AddModerator(ctx context.Context, m chat.Moderator) err
 		`INSERT INTO chat_moderator(chat_id, user_id, appointed_by, appointed_at) VALUES ($1, $2, $3, now())
 		 ON CONFLICT (chat_id, user_id) DO UPDATE SET appointed_by = excluded.appointed_by, appointed_at = now()`,
 		m.ChatID.Value, m.UserID.Value, m.AppointedBy.Value)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.SetModeratorPermissions(ctx, m.ChatID, m.UserID, m.Permissions)
 }
 
 func (r *ChatRepository) RemoveModerator(ctx context.Context, chatID common.ChatID, userID common.UserID) error {
 	_, err := executor(ctx, r.pool).Exec(ctx,
 		`DELETE FROM chat_moderator WHERE chat_id = $1 AND user_id = $2`, chatID.Value, userID.Value)
 	return err
+}
+
+// toPermissions converts the raw permission slugs Postgres returns into
+// domain values, silently dropping anything that isn't currently a known
+// permission (a slug from a since-removed permission, say) rather than
+// failing the whole read.
+func toPermissions(raw []string) []chat.Permission {
+	var out []chat.Permission
+	for _, s := range raw {
+		p := chat.Permission(s)
+		if chat.ValidPermission(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (r *ChatRepository) ModeratorPermissions(ctx context.Context, chatID common.ChatID, userID common.UserID) ([]chat.Permission, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT permission FROM chat_moderator_permission WHERE chat_id = $1 AND user_id = $2`,
+		chatID.Value, userID.Value)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var raw []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		raw = append(raw, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return toPermissions(raw), nil
+}
+
+// SetModeratorPermissions replaces the full permission set inside one
+// transaction — delete-then-insert rather than a diff, since the set is
+// always small (at most four permissions) and the wizard always submits the
+// complete target set anyway.
+func (r *ChatRepository) SetModeratorPermissions(ctx context.Context, chatID common.ChatID, userID common.UserID, permissions []chat.Permission) error {
+	return RunInTx(ctx, r.pool, func(ctx context.Context) error {
+		if _, err := executor(ctx, r.pool).Exec(ctx,
+			`DELETE FROM chat_moderator_permission WHERE chat_id = $1 AND user_id = $2`,
+			chatID.Value, userID.Value); err != nil {
+			return err
+		}
+		for _, p := range permissions {
+			if _, err := executor(ctx, r.pool).Exec(ctx,
+				`INSERT INTO chat_moderator_permission(chat_id, user_id, permission) VALUES ($1, $2, $3)
+				 ON CONFLICT DO NOTHING`,
+				chatID.Value, userID.Value, string(p)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *ChatRepository) UserProfile(ctx context.Context, userID common.UserID) (*chat.UserProfile, error) {
+	var profile chat.UserProfile
+	var username, displayName string
+	err := executor(ctx, r.pool).QueryRow(ctx,
+		`SELECT COALESCE(username, ''), display_name FROM telegram_user WHERE id = $1`, userID.Value).
+		Scan(&username, &displayName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	profile.UserID = userID
+	profile.Username = username
+	profile.DisplayName = displayName
+	return &profile, nil
 }
 
 func (r *ChatRepository) EventTopic(ctx context.Context, chatID common.ChatID, eventID common.EventID) (*int64, error) {
@@ -377,10 +458,13 @@ func (r *ChatRepository) ClearDMSession(ctx context.Context, userID common.UserI
 
 func (r *ChatRepository) ListModerators(ctx context.Context, chatID common.ChatID) ([]chat.ModeratorInfo, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx, `
-		SELECT m.user_id, COALESCE(u.username, ''), u.display_name, m.appointed_by
+		SELECT m.user_id, COALESCE(u.username, ''), u.display_name, m.appointed_by,
+		       COALESCE(array_agg(p.permission) FILTER (WHERE p.permission IS NOT NULL), '{}')
 		  FROM chat_moderator m
 		  JOIN telegram_user u ON u.id = m.user_id
+		  LEFT JOIN chat_moderator_permission p ON p.chat_id = m.chat_id AND p.user_id = m.user_id
 		 WHERE m.chat_id = $1
+		 GROUP BY m.user_id, u.username, u.display_name, m.appointed_by
 		 ORDER BY lower(u.display_name), m.user_id`, chatID.Value)
 	if err != nil {
 		return nil, err
@@ -390,11 +474,13 @@ func (r *ChatRepository) ListModerators(ctx context.Context, chatID common.ChatI
 	for rows.Next() {
 		var item chat.ModeratorInfo
 		var uid, appointed int64
-		if err := rows.Scan(&uid, &item.Username, &item.DisplayName, &appointed); err != nil {
+		var perms []string
+		if err := rows.Scan(&uid, &item.Username, &item.DisplayName, &appointed, &perms); err != nil {
 			return nil, err
 		}
 		item.UserID = common.UserID{Value: uid}
 		item.AppointedBy = common.UserID{Value: appointed}
+		item.Permissions = toPermissions(perms)
 		out = append(out, item)
 	}
 	return out, rows.Err()

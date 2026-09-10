@@ -20,7 +20,8 @@ import (
 // to exercise prediction.Service.Create end-to-end (including the real
 // PollGateway, so a subscribe test observes an actual sendPoll call).
 type inMemoryPredictions struct {
-	polls map[common.PollID]prediction.Poll
+	polls        map[common.PollID]prediction.Poll
+	participants []common.UserID
 }
 
 func newInMemoryPredictions() *inMemoryPredictions {
@@ -68,7 +69,7 @@ func (r *inMemoryPredictions) MarkReminded(context.Context, common.PollID, time.
 	return nil
 }
 func (r *inMemoryPredictions) ChatParticipants(context.Context, common.ChatID, time.Time) ([]common.UserID, error) {
-	return nil, nil
+	return r.participants, nil
 }
 func (r *inMemoryPredictions) RemoveVote(context.Context, common.PollID, common.UserID) error {
 	return nil

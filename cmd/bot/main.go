@@ -94,6 +94,7 @@ func run() error {
 	pendingUnsubscribes := pg.NewPendingUnsubscribeRepository(pool)
 	retentionStore := pg.NewRetentionRepository(pool)
 	adminActions := pg.NewAdminActionRepository(pool)
+	invitations := pg.NewInvitationRepository(pool)
 	runTx := app.TxRunner(func(ctx context.Context, fn func(context.Context) error) error {
 		return pg.RunInTx(ctx, pool, fn)
 	})
@@ -209,7 +210,7 @@ func run() error {
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
 		PendingUnsubscribes: pendingUnsubscribes, Outbox: outbox, RunTx: runTx, Metrics: metrics,
-		AdminActions: adminActions,
+		AdminActions: adminActions, Invitations: invitations,
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 

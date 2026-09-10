@@ -267,42 +267,161 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 	case data == "settings:moderators":
 		return false, h.moderatorsView(ctx, target, settings)
 	case data == "bulk:menu":
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 			return false, err
 		}
 		return false, h.bulkMenu(ctx, cb, target, settings)
 	case strings.HasPrefix(data, "bulk:ask:"):
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 			return false, err
 		}
 		return false, h.bulkConfirm(ctx, cb, target, settings, strings.TrimPrefix(data, "bulk:ask:"))
 	case strings.HasPrefix(data, "bulk:do:"):
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 			return false, err
 		}
 		return false, h.bulkApply(ctx, cb, target, settings, strings.TrimPrefix(data, "bulk:do:"))
 	case data == "settings:timezone":
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 			return false, err
 		}
 		return false, h.timezoneView(ctx, target, settings)
 	case strings.HasPrefix(data, "settings:tz:"):
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 			return false, err
 		}
 		return h.setTimezone(ctx, cb, target, settings, strings.TrimPrefix(data, "settings:tz:"))
 	case data == "settings:history":
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionViewStats); err != nil {
 			return false, err
 		}
 		return false, h.historyView(ctx, target, settings)
 	case data == "moderators:add":
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		// Appointing a moderator is Telegram-admin-only (see spec item 1) —
+		// a moderator must never be able to create other moderators.
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 			return false, err
 		}
-		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("moderators.add_help", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "settings:moderators")}}})
+		return false, h.assignMenuView(ctx, target, settings)
+	case strings.HasPrefix(data, "moderators:pick:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		page, parseErr := strconv.Atoi(strings.TrimPrefix(data, "moderators:pick:"))
+		if parseErr != nil || page < 0 {
+			return false, newValidationError("invalid participant page")
+		}
+		return false, h.participantPickView(ctx, target, settings, page)
+	case strings.HasPrefix(data, "moderators:card:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "moderators:card:"), 36, 64)
+		if parseErr != nil {
+			return false, newValidationError("invalid moderator id")
+		}
+		return false, h.moderatorCardView(ctx, target, settings, common.UserID{Value: id})
+	case strings.HasPrefix(data, "moderators:permstart:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		purpose, subject, _, parseOk := parsePermWizardData(strings.TrimPrefix(data, "moderators:permstart:"))
+		if !parseOk {
+			return false, newValidationError("invalid permission wizard payload")
+		}
+		return false, h.permPresetView(ctx, target, settings, purpose, subject)
+	case strings.HasPrefix(data, "moderators:permpreset:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		purpose, subject, rest, parseOk := parsePermWizardData(strings.TrimPrefix(data, "moderators:permpreset:"))
+		if !parseOk || len(rest) != 1 {
+			return false, newValidationError("invalid permission wizard payload")
+		}
+		var perms []chat.Permission
+		switch rest[0] {
+		case "full":
+			perms = chat.PresetFullAccess()
+		case "content":
+			perms = chat.PresetContent()
+		case "stats":
+			perms = chat.PresetStatsOnly()
+		case "manual":
+			return false, h.permToggleView(ctx, target, settings, purpose, subject, 0)
+		default:
+			return false, newValidationError("invalid permission preset")
+		}
+		return false, h.permConfirmView(ctx, target, settings, purpose, subject, permMask(perms))
+	case strings.HasPrefix(data, "moderators:permtoggle:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		purpose, subject, rest, parseOk := parsePermWizardData(strings.TrimPrefix(data, "moderators:permtoggle:"))
+		mask, maskOk := 0, false
+		if len(rest) == 1 {
+			mask, maskOk = parsePermMask(rest[0])
+		}
+		if !parseOk || !maskOk {
+			return false, newValidationError("invalid permission wizard payload")
+		}
+		return false, h.permToggleView(ctx, target, settings, purpose, subject, mask)
+	case strings.HasPrefix(data, "moderators:permconfirm:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		purpose, subject, rest, parseOk := parsePermWizardData(strings.TrimPrefix(data, "moderators:permconfirm:"))
+		mask, maskOk := 0, false
+		if len(rest) == 1 {
+			mask, maskOk = parsePermMask(rest[0])
+		}
+		if !parseOk || !maskOk {
+			return false, newValidationError("invalid permission wizard payload")
+		}
+		return false, h.permConfirmView(ctx, target, settings, purpose, subject, mask)
+	case strings.HasPrefix(data, "moderators:permapply:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		purpose, subject, rest, parseOk := parsePermWizardData(strings.TrimPrefix(data, "moderators:permapply:"))
+		mask, maskOk := 0, false
+		if len(rest) == 1 {
+			mask, maskOk = parsePermMask(rest[0])
+		}
+		if !parseOk || !maskOk {
+			return false, newValidationError("invalid permission wizard payload")
+		}
+		perms := permsFromMask(mask)
+		switch purpose {
+		case permPurposeEditModerator:
+			return h.applyEditPermissions(ctx, cb, target, settings, subject, perms)
+		case permPurposeAssignNew:
+			return h.applyAssignNew(ctx, cb, target, settings, subject, perms)
+		default:
+			return h.createInvitation(ctx, cb, target, settings, perms)
+		}
+	case strings.HasPrefix(data, "moderators:invite:revoke:ask:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		return false, h.invitationRevokeAskView(ctx, target, settings, strings.TrimPrefix(data, "moderators:invite:revoke:ask:"))
+	case strings.HasPrefix(data, "moderators:invite:revoke:do:"):
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		if h.Invitations == nil {
+			return false, newValidationError("invitations are not configured")
+		}
+		token := strings.TrimPrefix(data, "moderators:invite:revoke:do:")
+		if err := h.Invitations.RevokeInvitation(ctx, token); err != nil {
+			return false, err
+		}
+		h.logAdminAction(ctx, settings.ChatID, &cb.From, "invitation_revoked", "")
+		if err := h.toast(ctx, cb.ID, h.Texts.Get("moderators.invite_revoked", settings.Locale)); err != nil {
+			return false, err
+		}
+		return true, h.moderatorsView(ctx, target, settings)
 	case strings.HasPrefix(data, "moderators:remove:ask:"):
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 			return false, err
 		}
 		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "moderators:remove:ask:"), 36, 64)
@@ -317,7 +436,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		}}
 		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("moderators.remove_question", settings.Locale, bold(escapeHTML(name)))), kb)
 	case strings.HasPrefix(data, "moderators:remove:do:"):
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requireTelegramAdmin(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
 			return false, err
 		}
 		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "moderators:remove:do:"), 36, 64)
@@ -335,7 +454,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		}
 		return true, h.moderatorsView(ctx, target, settings)
 	case data == "settings:locale":
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 			return false, err
 		}
 		newLocale := common.LocaleEN
@@ -356,7 +475,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		}
 		return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 	case data == "settings:top_tier":
-		if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}); err != nil {
+		if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: cb.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 			return false, err
 		}
 		settings.DefaultTopTierOnly = !settings.DefaultTopTierOnly
@@ -517,6 +636,10 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		answered, err = h.confirmUnsubscribe(ctx, cb, strings.TrimPrefix(data, "unsubok:"))
 	case strings.HasPrefix(data, "unsubreject:"):
 		answered, err = h.rejectUnsubscribe(ctx, cb, strings.TrimPrefix(data, "unsubreject:"))
+	case strings.HasPrefix(data, "invite:accept:"):
+		err = h.acceptInvitation(ctx, cb, target, userID, locale, strings.TrimPrefix(data, "invite:accept:"))
+	case strings.HasPrefix(data, "invite:decline:"):
+		err = h.respond(ctx, target, h.Texts.Get("invite.declined", locale), nil)
 	default:
 		delegated, delegatedAnswered, delegateErr := h.tryDelegateToManagedChat(ctx, cb, userID, data)
 		if delegated {

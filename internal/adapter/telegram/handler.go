@@ -91,6 +91,10 @@ type UpdateHandler struct {
 	// they never witnessed happening (administration lives in DMs now).
 	// Nil disables the history screen entirely.
 	AdminActions chat.AdminActionLog
+	// Invitations backs the one-time moderator invitation links (see
+	// moderator_invitations.go). Nil disables the "🔗 Создать приглашение"
+	// assignment method.
+	Invitations chat.ModeratorInvitationRepository
 	// BotUsername (without the leading "@") is resolved once at startup via
 	// getMe, and builds the t.me/<username>?start=... deep links that hand
 	// a group's admin panel off to a DM. Left empty, deep-link buttons
@@ -106,6 +110,20 @@ type UpdateHandler struct {
 func (h *UpdateHandler) requireManager(ctx context.Context, chatID common.ChatID, userID common.UserID) error {
 	if err := h.Authorization.RequireManager(ctx, chatID, userID); err != nil {
 		h.recordAdminAction("require_manager", "denied")
+		return err
+	}
+	h.recordManaged(ctx, chatID, userID)
+	return nil
+}
+
+// requirePermission is requireManager's granular sibling: Telegram
+// owner/admin always pass; a moderator passes only with the specific
+// permission asked for. Used for the settings surfaces that map cleanly
+// onto one of the four granted permissions (manage_group_settings,
+// view_stats) — see chat.Permission's doc comment for the full mapping.
+func (h *UpdateHandler) requirePermission(ctx context.Context, chatID common.ChatID, userID common.UserID, permission chat.Permission) error {
+	if err := h.Authorization.RequirePermission(ctx, chatID, userID, permission); err != nil {
+		h.recordAdminAction("require_permission", "denied")
 		return err
 	}
 	h.recordManaged(ctx, chatID, userID)
@@ -370,6 +388,9 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		if eventChatID, eventID, ok := parsePersonalStatsDeepLink(text); ok {
 			return h.openPersonalEventStats(ctx, sendTarget(chatID, nil), userID, locale, eventChatID, eventID)
 		}
+		if token, ok := parseInvitationDeepLink(text); ok {
+			return h.openInvitationAccept(ctx, sendTarget(chatID, nil), userID, locale, token)
+		}
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"), strings.HasPrefix(text, "/stats"):
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
@@ -616,7 +637,7 @@ func (h *UpdateHandler) changeTimezone(ctx context.Context, msg *Message, settin
 	if msg.From == nil {
 		return newValidationError("message.from is required")
 	}
-	if err := h.requireManager(ctx, settings.ChatID, common.UserID{Value: msg.From.ID}); err != nil {
+	if err := h.requirePermission(ctx, settings.ChatID, common.UserID{Value: msg.From.ID}, chat.PermissionManageGroupSettings); err != nil {
 		return err
 	}
 	replyChatID := common.ChatID{Value: msg.Chat.ID}
@@ -669,7 +690,11 @@ func (h *UpdateHandler) changeModerator(ctx context.Context, msg *Message, setti
 	}
 	var err error
 	if add {
-		err = h.Chats.AddModerator(ctx, chat.Moderator{ChatID: settings.ChatID, UserID: target, AppointedBy: actor, Username: username, DisplayName: targetUser.DisplayName()})
+		// The reply-command appointment path predates granular permissions
+		// and has no wizard to pick them from — it grants full access, same
+		// as every moderator appointed before this feature existed. The
+		// admin can narrow it afterward from the moderator's card in DM.
+		err = h.Chats.AddModerator(ctx, chat.Moderator{ChatID: settings.ChatID, UserID: target, AppointedBy: actor, Username: username, DisplayName: targetUser.DisplayName(), Permissions: chat.PresetFullAccess()})
 	} else {
 		err = h.Chats.RemoveModerator(ctx, settings.ChatID, target)
 	}

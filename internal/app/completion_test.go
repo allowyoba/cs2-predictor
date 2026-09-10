@@ -84,6 +84,15 @@ func (fakeChatsForCompletion) EventTopic(context.Context, common.ChatID, common.
 	return nil, nil
 }
 func (fakeChatsForCompletion) SaveEventTopic(context.Context, chat.EventTopic) error { return nil }
+func (fakeChatsForCompletion) ModeratorPermissions(context.Context, common.ChatID, common.UserID) ([]chat.Permission, error) {
+	return nil, nil
+}
+func (fakeChatsForCompletion) SetModeratorPermissions(context.Context, common.ChatID, common.UserID, []chat.Permission) error {
+	return nil
+}
+func (fakeChatsForCompletion) UserProfile(context.Context, common.UserID) (*chat.UserProfile, error) {
+	return nil, nil
+}
 func (fakeChatsForCompletion) ClearEventTopic(context.Context, common.ChatID, common.EventID) error {
 	return nil
 }

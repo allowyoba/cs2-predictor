@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -162,4 +163,116 @@ func cbModeratorRemoveDo(userID common.UserID) string {
 
 func cbManageOpen(chatID common.ChatID) string {
 	return "manage:open:" + strconv.FormatInt(chatID.Value, 36)
+}
+
+func cbModeratorCard(userID common.UserID) string {
+	return "moderators:card:" + strconv.FormatInt(userID.Value, 36)
+}
+
+// --- permission wizard payloads ---
+//
+// The same preset -> (optional manual toggle) -> confirm -> apply flow is
+// shared by three purposes: editing an existing moderator's permissions
+// ("e"), granting a brand-new moderator picked from the participant list
+// ("a"), and building a fresh invitation link ("i", which has no target
+// user yet — the acceptor supplies one at accept time). subject carries the
+// target user id in base36 for "e"/"a", and is empty for "i". mask is the
+// AllPermissions() bitmask (0-15), rendered as a single hex digit.
+
+type permWizardPurpose string
+
+const (
+	permPurposeEditModerator permWizardPurpose = "e"
+	permPurposeAssignNew     permWizardPurpose = "a"
+	permPurposeInvitation    permWizardPurpose = "i"
+)
+
+func permMask(perms []chat.Permission) int {
+	mask := 0
+	for i, p := range chat.AllPermissions() {
+		if chat.HasPermission(perms, p) {
+			mask |= 1 << i
+		}
+	}
+	return mask
+}
+
+func permsFromMask(mask int) []chat.Permission {
+	var out []chat.Permission
+	for i, p := range chat.AllPermissions() {
+		if mask&(1<<i) != 0 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func permWizardSubject(purpose permWizardPurpose, subject common.UserID) string {
+	if purpose == permPurposeInvitation {
+		return ""
+	}
+	return strconv.FormatInt(subject.Value, 36)
+}
+
+func cbPermStart(purpose permWizardPurpose, subject string) string {
+	return "moderators:permstart:" + string(purpose) + ":" + subject
+}
+
+func cbPermPreset(purpose permWizardPurpose, subject, preset string) string {
+	return "moderators:permpreset:" + string(purpose) + ":" + subject + ":" + preset
+}
+
+func cbPermToggle(purpose permWizardPurpose, subject string, mask int) string {
+	return "moderators:permtoggle:" + string(purpose) + ":" + subject + ":" + strconv.FormatInt(int64(mask), 16)
+}
+
+func cbPermConfirm(purpose permWizardPurpose, subject string, mask int) string {
+	return "moderators:permconfirm:" + string(purpose) + ":" + subject + ":" + strconv.FormatInt(int64(mask), 16)
+}
+
+func cbPermApply(purpose permWizardPurpose, subject string, mask int) string {
+	return "moderators:permapply:" + string(purpose) + ":" + subject + ":" + strconv.FormatInt(int64(mask), 16)
+}
+
+// parsePermWizardData splits a "<purpose>:<subject>:<rest...>" payload (the
+// part after one of the moderators:perm* prefixes above) into its purpose,
+// subject (empty for an invitation) and remaining fields.
+func parsePermWizardData(data string) (purpose permWizardPurpose, subject string, rest []string, ok bool) {
+	parts := strings.Split(data, ":")
+	if len(parts) < 2 {
+		return "", "", nil, false
+	}
+	p := permWizardPurpose(parts[0])
+	if p != permPurposeEditModerator && p != permPurposeAssignNew && p != permPurposeInvitation {
+		return "", "", nil, false
+	}
+	return p, parts[1], parts[2:], true
+}
+
+func parsePermMask(raw string) (int, bool) {
+	v, err := strconv.ParseInt(raw, 16, 64)
+	if err != nil || v < 0 || v > 15 {
+		return 0, false
+	}
+	return int(v), true
+}
+
+func cbModeratorPick(page int) string {
+	return "moderators:pick:" + strconv.Itoa(page)
+}
+
+func cbInvitationRevokeAsk(token string) string {
+	return "moderators:invite:revoke:ask:" + token
+}
+
+func cbInvitationRevokeDo(token string) string {
+	return "moderators:invite:revoke:do:" + token
+}
+
+func cbInvitationAccept(token string) string {
+	return "invite:accept:" + token
+}
+
+func cbInvitationDecline(token string) string {
+	return "invite:decline:" + token
 }
