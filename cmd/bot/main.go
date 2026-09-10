@@ -217,6 +217,7 @@ func run() error {
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
 		PendingUnsubscribes: pendingUnsubscribes, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations,
+		InboundLimiter: telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 

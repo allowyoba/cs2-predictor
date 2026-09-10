@@ -95,6 +95,11 @@ type UpdateHandler struct {
 	// moderator_invitations.go). Nil disables the "🔗 Создать приглашение"
 	// assignment method.
 	Invitations chat.ModeratorInvitationRepository
+	// InboundLimiter caps how often a single Telegram user may trigger the
+	// bot to do any work at all — a lightweight defense against one account
+	// flooding the bot with commands or callback taps. Nil disables
+	// throttling entirely (every test today).
+	InboundLimiter *InboundLimiter
 	// BotUsername (without the leading "@") is resolved once at startup via
 	// getMe, and builds the t.me/<username>?start=... deep links that hand
 	// a group's admin panel off to a DM. Left empty, deep-link buttons
@@ -252,6 +257,12 @@ func (h *UpdateHandler) Handle(ctx context.Context, update Update) error {
 	}
 	if !claimed {
 		log.Debug("duplicate telegram update, skipping")
+		return nil
+	}
+
+	if actor, ok := updateActor(update); ok && !h.InboundLimiter.Allow(actor) {
+		log.Debug("inbound rate limit exceeded, dropping update", "userId", actor)
+		h.recordAdminAction("inbound_rate_limit", "dropped")
 		return nil
 	}
 
