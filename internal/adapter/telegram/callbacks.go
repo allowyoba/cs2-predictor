@@ -178,6 +178,38 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 			break
 		}
 		err = h.renderPrivateChatStats(ctx, target, userID, common.ChatID{Value: chatID}, locale, page)
+	// The "c:" (chat-scoped) form must be checked before the bare
+	// "pstats:bets:" prefix below, since it also matches that prefix.
+	case strings.HasPrefix(data, "pstats:bets:c:"):
+		parts := strings.Split(data, ":")
+		if len(parts) != 6 {
+			err = newValidationError("invalid personal bets callback")
+			break
+		}
+		chatID, parseErr := strconv.ParseInt(parts[3], 10, 64)
+		if parseErr != nil {
+			err = newValidationError("invalid personal bets chat id")
+			break
+		}
+		listPage, parseErr := strconv.Atoi(parts[4])
+		if parseErr != nil || listPage < 0 {
+			err = newValidationError("invalid personal bets list page")
+			break
+		}
+		page, parseErr := strconv.Atoi(parts[5])
+		if parseErr != nil || page < 0 {
+			err = newValidationError("invalid personal bets page")
+			break
+		}
+		cid := common.ChatID{Value: chatID}
+		err = h.privateBetsMenu(ctx, target, userID, locale, &cid, page, listPage)
+	case strings.HasPrefix(data, "pstats:bets:"):
+		page, parseErr := strconv.Atoi(strings.TrimPrefix(data, "pstats:bets:"))
+		if parseErr != nil || page < 0 {
+			err = newValidationError("invalid personal bets page")
+		} else {
+			err = h.privateBetsMenu(ctx, target, userID, locale, nil, page, 0)
+		}
 	case data == "pstats:locale":
 		next := common.LocaleEN
 		if locale == common.LocaleEN {

@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
@@ -360,6 +361,67 @@ SELECT p.played_at,
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// UserBets returns one person's most recent settled bets — full match
+// context plus the predicted and actual scorelines — newest first, at most
+// limit of them. chatID narrows the result to one chat when non-nil, or
+// every chat they've played in when nil. Unlike UserPredictions, this reads
+// the poll option's own scoreline directly (poll_option.first_score/
+// second_score) rather than deriving only a winner, since the screen this
+// backs shows the exact bet placed, not just whether it read the winner
+// right.
+func (r *ScoringRepository) UserBets(ctx context.Context, userID common.UserID, chatID *common.ChatID, limit int) ([]scoring.UserBet, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var chatFilter any
+	if chatID != nil {
+		chatFilter = chatID.Value
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx, `
+		SELECT COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
+		       c.id, c.title,
+		       COALESCE(t1.name, ''), COALESCE(t2.name, ''),
+		       po.first_score, po.second_score,
+		       m.first_score, m.second_score,
+		       COALESCE(a.points, 0)
+		  FROM prediction_vote v
+		  JOIN match_poll p ON p.id = v.poll_id
+		  JOIN telegram_chat c ON c.id = p.chat_id
+		  JOIN poll_option po ON po.poll_id = v.poll_id AND po.option_index = v.option_index
+		  JOIN esport_match m ON m.id = p.match_id
+		  LEFT JOIN match_team mt1 ON mt1.match_id = m.id AND mt1.position = 1
+		  LEFT JOIN match_team mt2 ON mt2.match_id = m.id AND mt2.position = 2
+		  LEFT JOIN team t1 ON t1.id = mt1.team_id
+		  LEFT JOIN team t2 ON t2.id = mt2.team_id
+		  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
+		 WHERE v.user_id = $1
+		   AND m.status = 'FINISHED'
+		   AND m.first_score IS NOT NULL
+		   AND m.second_score IS NOT NULL
+		   AND ($2::bigint IS NULL OR c.id = $2)
+		 ORDER BY played_at DESC
+		 LIMIT $3`, userID.Value, chatFilter, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []scoring.UserBet
+	for rows.Next() {
+		var b scoring.UserBet
+		var predictedFirst, predictedSecond, actualFirst, actualSecond int
+		if err := rows.Scan(&b.PlayedAt, &b.ChatID.Value, &b.ChatTitle, &b.FirstTeamName, &b.SecondTeamName,
+			&predictedFirst, &predictedSecond, &actualFirst, &actualSecond, &b.Points); err != nil {
+			return nil, err
+		}
+		b.PredictedScore = competition.MatchScore{First: predictedFirst, Second: predictedSecond}
+		b.ActualScore = competition.MatchScore{First: actualFirst, Second: actualSecond}
+		b.Correct = b.PredictedScore.Outcome() == b.ActualScore.Outcome()
+		out = append(out, b)
 	}
 	return out, rows.Err()
 }

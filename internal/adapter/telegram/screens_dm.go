@@ -87,6 +87,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 	}
 	if len(available) == 0 {
 		kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
+			{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
 			{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
 			{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 			{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
@@ -101,6 +102,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(latestMonthLabel, fmt.Sprintf("pstats:month:%04d-%02d", latest.Year, latest.Month)), button(strconv.Itoa(latest.Year), fmt.Sprintf("pstats:year:%d", latest.Year))},
 		{button(h.Texts.Get("stats.all_time", locale), "pstats:all"), button(h.Texts.Get("insights.title", locale), "pstats:insights")},
 		{button(h.Texts.Get("private.chats", locale), "pstats:chats:0"), button(h.Texts.Get("stats.other_period", locale), "pstats:years")},
+		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
 		{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
 		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
@@ -266,7 +268,10 @@ func (h *UpdateHandler) renderPrivateChatStats(ctx context.Context, target reply
 	text += "\n\n" + h.Texts.Get("private.points", locale, selected.Points)
 	text += "\n" + h.Texts.Get("private.activity", locale, selected.Predictions, selected.Tournaments)
 	text += "\n" + h.Texts.Get("private.accuracy", locale, selected.AccuracyPercent())
-	rows := [][]InlineButton{{h.backButton(locale, fmt.Sprintf("pstats:chats:%d", page))}}
+	rows := [][]InlineButton{
+		{button(h.Texts.Get("private.chat_bets", locale), betsCallback(&chatID, page, 0))},
+		{h.backButton(locale, fmt.Sprintf("pstats:chats:%d", page))},
+	}
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 }
 
