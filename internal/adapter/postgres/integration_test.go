@@ -1642,3 +1642,108 @@ func TestScheduledReportRepository_ClaimIsExclusiveThenIdempotent(t *testing.T) 
 		t.Fatalf("expected a different report type/period to remain unclaimed, got %v, err=%v", claimed, err)
 	}
 }
+
+// TestChatRepository_MigrateChatIDCascadesEverywhere is the regression test
+// for Telegram's basic-group -> supergroup migration: MigrateChatID must
+// rename the chat's id everywhere in one shot — including through the
+// chat_moderator -> chat_moderator_permission transitive foreign key —
+// which only a real Postgres (enforcing the actual ON UPDATE CASCADE
+// constraints from migration 0025) can verify; a fake repository would
+// just simulate "it worked" without ever exercising the constraints.
+func TestChatRepository_MigrateChatIDCascadesEverywhere(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+
+	oldID := common.ChatID{Value: -100900001}
+	newID := common.ChatID{Value: -100900002}
+	manager := common.UserID{Value: 1}
+	moderator := common.UserID{Value: 2}
+
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: oldID, Title: "Migrating Group", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.RecordManaged(ctx, oldID, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.AddModerator(ctx, chat.Moderator{ChatID: oldID, UserID: moderator, AppointedBy: manager, Permissions: chat.PresetContent()}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Migration Test Event", ExternalID: "migrate-event-1", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SaveEventTopic(ctx, chat.EventTopic{ChatID: oldID, EventID: event.ID, TopicID: 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := chats.MigrateChatID(ctx, oldID, newID); err != nil {
+		t.Fatal(err)
+	}
+
+	if settings, err := chats.Find(ctx, oldID); err != nil || settings != nil {
+		t.Fatalf("expected the old id to no longer exist, got %+v, err=%v", settings, err)
+	}
+	settings, err := chats.Find(ctx, newID)
+	if err != nil || settings == nil || settings.Title != "Migrating Group" {
+		t.Fatalf("expected the new id to hold the migrated chat, got %+v, err=%v", settings, err)
+	}
+
+	managed, err := chats.ManagedChats(ctx, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(managed) != 1 || managed[0].ChatID != newID {
+		t.Fatalf("expected exactly one managed chat under the new id, got %+v", managed)
+	}
+
+	isMod, err := chats.IsModerator(ctx, newID, moderator)
+	if err != nil || !isMod {
+		t.Fatalf("expected the moderator row to have followed the migration, isMod=%v err=%v", isMod, err)
+	}
+	perms, err := chats.ModeratorPermissions(ctx, newID, moderator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chat.HasPermission(perms, chat.PermissionManageEvents) || !chat.HasPermission(perms, chat.PermissionManageMatches) {
+		// This is the transitive hop: chat_moderator_permission references
+		// chat_moderator, not telegram_chat, so it only survives if THAT
+		// foreign key also cascades.
+		t.Fatalf("expected the moderator's permissions to have survived via the transitive cascade, got %v", perms)
+	}
+
+	topicID, err := chats.EventTopic(ctx, newID, event.ID)
+	if err != nil || topicID == nil || *topicID != 7 {
+		t.Fatalf("expected the event topic binding to have followed the migration, got %v, err=%v", topicID, err)
+	}
+}
+
+// TestChatRepository_MigrateChatIDDeletesOldRowWhenNewIDAlreadyExists covers
+// the race where the bot was somehow already contacted under the new id
+// before the migration service message arrived: the new id's row is
+// already the source of truth, so the old id's orphaned row is dropped
+// rather than the migration failing on a duplicate key.
+func TestChatRepository_MigrateChatIDDeletesOldRowWhenNewIDAlreadyExists(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+
+	oldID := common.ChatID{Value: -100900003}
+	newID := common.ChatID{Value: -100900004}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: oldID, Title: "Old", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: newID, Title: "Already Migrated", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := chats.MigrateChatID(ctx, oldID, newID); err != nil {
+		t.Fatal(err)
+	}
+	if settings, err := chats.Find(ctx, oldID); err != nil || settings != nil {
+		t.Fatalf("expected the old id's row to be deleted, got %+v, err=%v", settings, err)
+	}
+	settings, err := chats.Find(ctx, newID)
+	if err != nil || settings == nil || settings.Title != "Already Migrated" {
+		t.Fatalf("expected the new id's existing row to be left untouched, got %+v, err=%v", settings, err)
+	}
+}

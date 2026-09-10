@@ -74,6 +74,31 @@ func (r *ChatRepository) Save(ctx context.Context, s chat.Settings) (chat.Settin
 	return s, err
 }
 
+// MigrateChatID renames a chat's primary key everywhere at once via the ON
+// UPDATE CASCADE foreign keys added in migration 0025. If newID already has
+// its own row — a race where the bot was somehow contacted under the new
+// id before the migration service message arrived — that row is already
+// the source of truth, so oldID's (now-orphaned) row is deleted instead of
+// overwriting it.
+func (r *ChatRepository) MigrateChatID(ctx context.Context, oldID, newID common.ChatID) error {
+	if oldID == newID {
+		return nil
+	}
+	return RunInTx(ctx, r.pool, func(ctx context.Context) error {
+		ex := executor(ctx, r.pool)
+		var newExists bool
+		if err := ex.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM telegram_chat WHERE id = $1)`, newID.Value).Scan(&newExists); err != nil {
+			return err
+		}
+		if newExists {
+			_, err := ex.Exec(ctx, `DELETE FROM telegram_chat WHERE id = $1`, oldID.Value)
+			return err
+		}
+		_, err := ex.Exec(ctx, `UPDATE telegram_chat SET id = $2 WHERE id = $1`, oldID.Value, newID.Value)
+		return err
+	})
+}
+
 func (r *ChatRepository) IsModerator(ctx context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {
 	var exists bool
 	err := executor(ctx, r.pool).QueryRow(ctx,

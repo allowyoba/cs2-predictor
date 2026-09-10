@@ -16,6 +16,12 @@ type Message struct {
 	Text            *string  `json:"text"`
 	MessageThreadID *int64   `json:"message_thread_id"`
 	ReplyToMessage  *Message `json:"reply_to_message"`
+	// MigrateToChatID is set on the service message Telegram sends to a
+	// basic group the moment it's upgraded to a supergroup — the group's
+	// permanent new id. See handleMessage's handling of it: without this,
+	// the bot would start a second, parallel history under the new id
+	// instead of continuing the same chat's.
+	MigrateToChatID *int64 `json:"migrate_to_chat_id"`
 }
 
 type Chat struct {
