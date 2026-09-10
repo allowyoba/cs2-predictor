@@ -420,6 +420,221 @@ func TestChatRepository_ModeratorLifecycle(t *testing.T) {
 	}
 }
 
+// TestChatRepository_ModeratorPermissionsRoundTrip exercises the
+// chat_moderator_permission table against a real Postgres: AddModerator's
+// initial grant, ListModerators/ModeratorPermissions reading it back,
+// SetModeratorPermissions replacing (not merging) the set, and — the one
+// behavior no fake-backed unit test can verify — RemoveModerator's
+// ON DELETE CASCADE actually clearing the permission rows with it rather
+// than leaving them orphaned.
+func TestChatRepository_ModeratorPermissionsRoundTrip(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+
+	chatID := common.ChatID{Value: -778}
+	actor, target := common.UserID{Value: 1}, common.UserID{Value: 2}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := chats.AddModerator(ctx, chat.Moderator{
+		ChatID: chatID, UserID: target, AppointedBy: actor,
+		Username: "mod", DisplayName: "Mod", Permissions: chat.PresetStatsOnly(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	perms, err := chats.ModeratorPermissions(ctx, chatID, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(perms) != 1 || perms[0] != chat.PermissionViewStats {
+		t.Fatalf("ModeratorPermissions = %v, want exactly [view_stats]", perms)
+	}
+
+	mods, err := chats.ListModerators(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mods) != 1 || len(mods[0].Permissions) != 1 || mods[0].Permissions[0] != chat.PermissionViewStats {
+		t.Fatalf("ListModerators = %+v, want exactly one moderator with [view_stats]", mods)
+	}
+
+	// SetModeratorPermissions replaces the set — content preset has no
+	// overlap with the stats-only preset it started from, so a merge bug
+	// (INSERT without clearing first) would leave view_stats behind too.
+	if err := chats.SetModeratorPermissions(ctx, chatID, target, chat.PresetContent()); err != nil {
+		t.Fatal(err)
+	}
+	perms, err = chats.ModeratorPermissions(ctx, chatID, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chat.HasPermission(perms, chat.PermissionManageEvents) || !chat.HasPermission(perms, chat.PermissionManageMatches) || chat.HasPermission(perms, chat.PermissionViewStats) {
+		t.Fatalf("ModeratorPermissions after replace = %v, want exactly the content preset", perms)
+	}
+
+	// Clearing the set entirely (the "0 permissions" state a fresh
+	// appointment can transiently be in) must round-trip to empty, not nil
+	// vs. empty ambiguity or a leftover row.
+	if err := chats.SetModeratorPermissions(ctx, chatID, target, nil); err != nil {
+		t.Fatal(err)
+	}
+	if perms, err := chats.ModeratorPermissions(ctx, chatID, target); err != nil || len(perms) != 0 {
+		t.Fatalf("ModeratorPermissions after clearing = %v, err=%v, want empty", perms, err)
+	}
+
+	if err := chats.SetModeratorPermissions(ctx, chatID, target, chat.PresetFullAccess()); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.RemoveModerator(ctx, chatID, target); err != nil {
+		t.Fatal(err)
+	}
+	if perms, err := chats.ModeratorPermissions(ctx, chatID, target); err != nil || len(perms) != 0 {
+		t.Fatalf("expected ON DELETE CASCADE to clear permission rows with the moderator, got %v, err=%v", perms, err)
+	}
+}
+
+// TestChatRepository_UserProfile checks the one read UserProfile has —
+// nothing known yet returns nil, and AddModerator's telegram_user upsert
+// (via ensureUser) makes the profile resolvable afterward.
+func TestChatRepository_UserProfile(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+
+	unknown := common.UserID{Value: 999999}
+	if profile, err := chats.UserProfile(ctx, unknown); err != nil || profile != nil {
+		t.Fatalf("expected nil profile for an unknown user, got %+v, err=%v", profile, err)
+	}
+
+	chatID := common.ChatID{Value: -779}
+	actor, target := common.UserID{Value: 1}, common.UserID{Value: 2}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.AddModerator(ctx, chat.Moderator{ChatID: chatID, UserID: target, AppointedBy: actor, Username: "newmod", DisplayName: "New Mod"}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile, err := chats.UserProfile(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile == nil || profile.Username != "newmod" || profile.DisplayName != "New Mod" {
+		t.Fatalf("UserProfile = %+v, want username=newmod displayName=\"New Mod\"", profile)
+	}
+}
+
+// TestInvitationRepository_CreateAcceptAndRevokeLifecycle exercises
+// moderator_invitation against a real Postgres, including the one property
+// a fake can only simulate rather than prove: UseInvitation's
+// compare-and-swap WHERE clause actually enforces one-time use under the
+// database's own concurrency guarantees, not just in application code.
+func TestInvitationRepository_CreateAcceptAndRevokeLifecycle(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	invitations := pg.NewInvitationRepository(pool)
+
+	chatID := common.ChatID{Value: -780}
+	creator := common.UserID{Value: 1}
+	acceptor := common.UserID{Value: 2}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if inv, err := invitations.Invitation(ctx, "does-not-exist"); err != nil || inv != nil {
+		t.Fatalf("expected nil for an unknown token, got %+v, err=%v", inv, err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	inv := chat.ModeratorInvitation{
+		Token: "test-token-1", ChatID: chatID, Permissions: chat.PresetContent(),
+		CreatedBy: creator, CreatedAt: now, ExpiresAt: now.Add(72 * time.Hour),
+	}
+	if err := invitations.CreateInvitation(ctx, inv); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := invitations.Invitation(ctx, inv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ChatID != chatID || got.CreatedBy != creator || got.UsedAt != nil || got.RevokedAt != nil {
+		t.Fatalf("Invitation() = %+v, want a fresh, unused, unrevoked invitation", got)
+	}
+	if !chat.HasPermission(got.Permissions, chat.PermissionManageEvents) || !chat.HasPermission(got.Permissions, chat.PermissionManageMatches) {
+		t.Fatalf("Invitation().Permissions = %v, want the content preset", got.Permissions)
+	}
+	if got.Status(now) != chat.InvitationPending {
+		t.Fatalf("Status() = %v, want pending", got.Status(now))
+	}
+
+	ok, err := invitations.UseInvitation(ctx, inv.Token, acceptor, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected the first UseInvitation to succeed")
+	}
+	used, err := invitations.Invitation(ctx, inv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used.UsedAt == nil || used.UsedBy == nil || *used.UsedBy != acceptor {
+		t.Fatalf("expected the invitation to record its acceptor, got %+v", used)
+	}
+
+	// The one-time-use guarantee: a second accept must not succeed, and
+	// must not overwrite who actually claimed it.
+	ok, err = invitations.UseInvitation(ctx, inv.Token, common.UserID{Value: 3}, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected a second UseInvitation on an already-used token to fail")
+	}
+	stillUsedByFirst, err := invitations.Invitation(ctx, inv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillUsedByFirst.UsedBy == nil || *stillUsedByFirst.UsedBy != acceptor {
+		t.Fatalf("expected UsedBy to remain the first acceptor, got %+v", stillUsedByFirst.UsedBy)
+	}
+
+	// A separate, never-used invitation: revoke makes it permanently
+	// unusable, and revoking it twice is a harmless no-op.
+	inv2 := chat.ModeratorInvitation{
+		Token: "test-token-2", ChatID: chatID, Permissions: chat.PresetStatsOnly(),
+		CreatedBy: creator, CreatedAt: now, ExpiresAt: now.Add(72 * time.Hour),
+	}
+	if err := invitations.CreateInvitation(ctx, inv2); err != nil {
+		t.Fatal(err)
+	}
+	if err := invitations.RevokeInvitation(ctx, inv2.Token); err != nil {
+		t.Fatal(err)
+	}
+	if err := invitations.RevokeInvitation(ctx, inv2.Token); err != nil {
+		t.Fatalf("expected revoking an already-revoked invitation to be a no-op, got err=%v", err)
+	}
+	revoked, err := invitations.Invitation(ctx, inv2.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked.RevokedAt == nil {
+		t.Fatal("expected RevokedAt to be set")
+	}
+	if revoked.Status(now) != chat.InvitationRevoked {
+		t.Fatalf("Status() = %v, want revoked", revoked.Status(now))
+	}
+	ok, err = invitations.UseInvitation(ctx, inv2.Token, acceptor, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected UseInvitation on a revoked invitation to fail")
+	}
+}
+
 func TestChatRepository_ManagedChatsIndexRoundTrips(t *testing.T) {
 	pool, ctx := newTestPool(t)
 	chats := pg.NewChatRepository(pool)

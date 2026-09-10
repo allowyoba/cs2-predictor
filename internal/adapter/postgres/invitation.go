@@ -44,6 +44,12 @@ func decodePermissions(raw string) []chat.Permission {
 }
 
 func (r *InvitationRepository) CreateInvitation(ctx context.Context, inv chat.ModeratorInvitation) error {
+	// created_by references telegram_user; the creator (a Telegram admin
+	// acting from a group they may never have DMed the bot from before)
+	// isn't guaranteed to have a row there yet.
+	if err := ensureUser(ctx, executor(ctx, r.pool), inv.CreatedBy); err != nil {
+		return err
+	}
 	_, err := executor(ctx, r.pool).Exec(ctx,
 		`INSERT INTO moderator_invitation(token, chat_id, permissions, created_by, created_at, expires_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -80,6 +86,12 @@ func (r *InvitationRepository) Invitation(ctx context.Context, token string) (*c
 // unused and unrevoked matches, so a second accept (or a decline racing an
 // accept) affects zero rows instead of overwriting the first acceptor.
 func (r *InvitationRepository) UseInvitation(ctx context.Context, token string, usedBy common.UserID, usedAt time.Time) (bool, error) {
+	// used_by references telegram_user too; the acceptor may be a brand
+	// new user who has never interacted with the bot before tapping the
+	// invitation link.
+	if err := ensureUser(ctx, executor(ctx, r.pool), usedBy); err != nil {
+		return false, err
+	}
 	tag, err := executor(ctx, r.pool).Exec(ctx,
 		`UPDATE moderator_invitation SET used_at = $2, used_by = $3
 		  WHERE token = $1 AND used_at IS NULL AND revoked_at IS NULL`,
