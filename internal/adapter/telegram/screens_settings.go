@@ -69,6 +69,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
 	"top_tier", "event_topic", "moderator_added", "moderator_removed",
+	"moderator_permissions_changed", "invitation_created", "invitation_revoked", "invitation_accepted",
 }
 
 func historyKindKey(kind string) string { return "history.kind." + kind }
@@ -110,32 +111,5 @@ func actorLabel(action chat.AdminAction) string {
 	return action.ActorID.String()
 }
 
-func (h *UpdateHandler) moderatorsView(ctx context.Context, target replyTarget, settings chat.Settings) error {
-	mods, err := h.Chats.ListModerators(ctx, settings.ChatID)
-	if err != nil {
-		return err
-	}
-	text := h.Texts.Get("moderators.title", settings.Locale)
-	var rows [][]InlineButton
-	if len(mods) == 0 {
-		text += "\n\n" + h.Texts.Get("moderators.empty", settings.Locale)
-	} else {
-		var lines []string
-		for _, mod := range mods {
-			name := strings.TrimSpace(mod.DisplayName)
-			if name == "" {
-				name = "Telegram user " + mod.UserID.String()
-			}
-			handle := ""
-			if mod.Username != "" {
-				handle = " @" + escapeHTML(mod.Username)
-			}
-			lines = append(lines, "• "+bold(escapeHTML(name))+handle)
-			rows = append(rows, []InlineButton{button(h.Texts.Get("moderators.remove", settings.Locale)+" · "+truncate(name, 28), cbModeratorRemove(mod.UserID))})
-		}
-		text += "\n\n" + strings.Join(lines, "\n")
-	}
-	rows = append(rows, []InlineButton{button(h.Texts.Get("moderators.add", settings.Locale), "moderators:add")})
-	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:settings")})
-	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
-}
+// moderatorsView, the moderator card, the permission wizard, participant
+// picking and invitation screens live in screens_moderators.go.

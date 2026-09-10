@@ -36,6 +36,7 @@ func (d *fakeDedup) Release(_ context.Context, id int64) error { delete(d.claime
 type fakeChats struct {
 	settings    map[int64]chat.Settings
 	moderators  map[[2]int64]bool
+	permissions map[[2]int64][]chat.Permission
 	managed     map[[2]int64]bool
 	dmSessions  map[int64]int64
 	locales     map[int64]common.LocaleCode
@@ -47,7 +48,8 @@ type fakeChats struct {
 func newFakeChats() *fakeChats {
 	return &fakeChats{
 		settings: map[int64]chat.Settings{}, moderators: map[[2]int64]bool{},
-		managed: map[[2]int64]bool{}, dmSessions: map[int64]int64{},
+		permissions: map[[2]int64][]chat.Permission{},
+		managed:     map[[2]int64]bool{}, dmSessions: map[int64]int64{},
 		locales: map[int64]common.LocaleCode{}, reachable: map[int64]bool{},
 		notifyPrefs: map[int64]chat.NotificationPrefs{},
 		nicknames:   map[int64]string{},
@@ -126,7 +128,7 @@ func (f *fakeChats) ListModerators(_ context.Context, chatID common.ChatID) ([]c
 	var out []chat.ModeratorInfo
 	for key := range f.moderators {
 		if key[0] == chatID.Value {
-			out = append(out, chat.ModeratorInfo{UserID: common.UserID{Value: key[1]}, DisplayName: "Moderator"})
+			out = append(out, chat.ModeratorInfo{UserID: common.UserID{Value: key[1]}, DisplayName: "Moderator", Permissions: f.permissions[key]})
 		}
 	}
 	return out, nil
@@ -155,12 +157,26 @@ func (f *fakeChats) IsModerator(_ context.Context, chatID common.ChatID, userID 
 	return f.moderators[[2]int64{chatID.Value, userID.Value}], nil
 }
 func (f *fakeChats) AddModerator(_ context.Context, m chat.Moderator) error {
-	f.moderators[[2]int64{m.ChatID.Value, m.UserID.Value}] = true
+	key := [2]int64{m.ChatID.Value, m.UserID.Value}
+	f.moderators[key] = true
+	f.permissions[key] = m.Permissions
 	return nil
 }
 func (f *fakeChats) RemoveModerator(_ context.Context, chatID common.ChatID, userID common.UserID) error {
-	delete(f.moderators, [2]int64{chatID.Value, userID.Value})
+	key := [2]int64{chatID.Value, userID.Value}
+	delete(f.moderators, key)
+	delete(f.permissions, key)
 	return nil
+}
+func (f *fakeChats) ModeratorPermissions(_ context.Context, chatID common.ChatID, userID common.UserID) ([]chat.Permission, error) {
+	return f.permissions[[2]int64{chatID.Value, userID.Value}], nil
+}
+func (f *fakeChats) SetModeratorPermissions(_ context.Context, chatID common.ChatID, userID common.UserID, permissions []chat.Permission) error {
+	f.permissions[[2]int64{chatID.Value, userID.Value}] = permissions
+	return nil
+}
+func (f *fakeChats) UserProfile(_ context.Context, userID common.UserID) (*chat.UserProfile, error) {
+	return nil, nil
 }
 func (f *fakeChats) EventTopic(context.Context, common.ChatID, common.EventID) (*int64, error) {
 	return nil, nil

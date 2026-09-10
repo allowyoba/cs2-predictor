@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -140,6 +141,23 @@ func TestI18n_EveryAdminActionKindHasALabel(t *testing.T) {
 		}
 		if !en[key] {
 			t.Errorf("admin action kind %q has no EN label (%s)", kind, key)
+		}
+	}
+}
+
+// Permission labels are looked up through a composed key too (see
+// permissionLabelKey), invisible to the same static scanner for the same
+// reason history kinds are.
+func TestI18n_EveryPermissionHasALabel(t *testing.T) {
+	ru := bundleKeys(t, filepath.Join("i18n", "messages_ru.properties"))
+	en := bundleKeys(t, filepath.Join("i18n", "messages_en.properties"))
+	for _, p := range chat.AllPermissions() {
+		key := permissionLabelKey(p)
+		if !ru[key] {
+			t.Errorf("permission %q has no RU label (%s)", p, key)
+		}
+		if !en[key] {
+			t.Errorf("permission %q has no EN label (%s)", p, key)
 		}
 	}
 }
