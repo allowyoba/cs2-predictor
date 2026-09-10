@@ -189,6 +189,20 @@ func (f *fakeChats) UserProfile(_ context.Context, userID common.UserID) (*chat.
 func (f *fakeChats) EventTopic(context.Context, common.ChatID, common.EventID) (*int64, error) {
 	return nil, nil
 }
+func (f *fakeChats) MigrateChatID(_ context.Context, oldID, newID common.ChatID) error {
+	if s, ok := f.settings[oldID.Value]; ok {
+		delete(f.settings, oldID.Value)
+		s.ChatID = newID
+		f.settings[newID.Value] = s
+	}
+	for key := range f.managed {
+		if key[0] == oldID.Value {
+			delete(f.managed, key)
+			f.managed[[2]int64{newID.Value, key[1]}] = true
+		}
+	}
+	return nil
+}
 func (f *fakeChats) SaveEventTopic(context.Context, chat.EventTopic) error                { return nil }
 func (f *fakeChats) ClearEventTopic(context.Context, common.ChatID, common.EventID) error { return nil }
 

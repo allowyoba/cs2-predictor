@@ -75,6 +75,14 @@ type ActiveChatLister interface {
 type Repository interface {
 	Find(ctx context.Context, chatID common.ChatID) (*Settings, error)
 	Save(ctx context.Context, settings Settings) (Settings, error)
+	// MigrateChatID renames a chat's id everywhere at once (via ON UPDATE
+	// CASCADE on every foreign key referencing it) — Telegram permanently
+	// renumbers a group's id when it's upgraded to a supergroup, announced
+	// by a "migrate_to_chat_id" service message. Without this, the bot
+	// would create a second, parallel row for the new id instead of
+	// continuing the same chat's history, and the same group would appear
+	// twice in the "chats you manage" list. A no-op if oldID has no row.
+	MigrateChatID(ctx context.Context, oldID, newID common.ChatID) error
 
 	IsModerator(ctx context.Context, chatID common.ChatID, userID common.UserID) (bool, error)
 	AddModerator(ctx context.Context, moderator Moderator) error

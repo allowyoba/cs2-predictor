@@ -300,6 +300,12 @@ func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 	if msg.Chat.Type == "private" {
 		return h.handlePrivateMessage(ctx, msg)
 	}
+	// A pure service message announcing this basic group's permanent
+	// upgrade to a supergroup — nothing else on it to process (no text, no
+	// sender action), so rename the chat's row and stop.
+	if msg.MigrateToChatID != nil {
+		return h.Chats.MigrateChatID(ctx, common.ChatID{Value: msg.Chat.ID}, common.ChatID{Value: *msg.MigrateToChatID})
+	}
 
 	chatID := common.ChatID{Value: msg.Chat.ID}
 	current, err := h.Chats.Find(ctx, chatID)

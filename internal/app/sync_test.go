@@ -106,6 +106,9 @@ func (f *fakeSyncChats) EventTopic(context.Context, common.ChatID, common.EventI
 	return nil, nil
 }
 func (f *fakeSyncChats) SaveEventTopic(context.Context, chat.EventTopic) error { return nil }
+func (f *fakeSyncChats) MigrateChatID(context.Context, common.ChatID, common.ChatID) error {
+	return nil
+}
 func (f *fakeSyncChats) ModeratorPermissions(context.Context, common.ChatID, common.UserID) ([]chat.Permission, error) {
 	return nil, nil
 }
