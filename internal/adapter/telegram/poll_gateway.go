@@ -152,16 +152,20 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 
 	stage := "—"
 	if match.Stage != nil {
-		stage = escapeHTML(*match.Stage)
+		stage = *match.Stage
 	}
 	var when string
 	if match.ScheduledAt != nil {
 		when = match.ScheduledAt.In(loc).Format("02.01 15:04 MST")
 	}
-	firstName := escapeHTML(formatTeamCompact(match.FirstTeam))
-	secondName := escapeHTML(formatTeamCompact(match.SecondTeam))
-	eventName := event.Tier.Badge() + escapeHTML(event.Name)
-	question := g.texts.Get("poll.question", locale, eventName, firstName, secondName, stage, escapeHTML(match.Format.Label()), when)
+	firstName := formatTeamCompact(match.FirstTeam)
+	secondName := formatTeamCompact(match.SecondTeam)
+	eventName := event.Tier.Badge() + event.Name
+	// No HTML escaping here (unlike every other rendered text in this
+	// package): the poll question is sent with no parse_mode at all — see
+	// the payload below — so it's plain text end to end, and escaping would
+	// show literal "&amp;" for a team/tournament name containing "&".
+	question := g.texts.Get("poll.question", locale, eventName, firstName, secondName, stage, match.Format.Label(), when)
 
 	// Balance and every enrichment line are short "insight" lines — grouped
 	// into one paragraph (matching the spec's target layout) rather than
@@ -189,9 +193,13 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	}
 
 	payload := map[string]any{
-		"chat_id":                 poll.ChatID.Value,
+		"chat_id": poll.ChatID.Value,
+		// No question_parse_mode: Telegram's sendPoll only honors custom
+		// emoji entities there (Bot API 7.3+) — nothing this bot would send
+		// needs that, and leaving parse_mode unset avoids any risk of a
+		// stray "<"/">" in a team or tournament name being interpreted as
+		// (invalid, silently-dropped) markup instead of shown as-is.
 		"question":                question,
-		"question_parse_mode":     "HTML",
 		"options":                 options,
 		"is_anonymous":            false,
 		"allows_multiple_answers": false,
@@ -252,6 +260,14 @@ func pollHashtag(value string) string {
 	return "#" + b.String()
 }
 
+// pollSegmentSeparator joins the logical segments of a poll question
+// (header, each insight line, each hashtag). Telegram's poll question does
+// not honor line breaks at all — every "\n", single or double, renders as a
+// single space in every client that has been checked, contrary to an
+// earlier assumption in this file — so structure has to come from a visible
+// separator instead of layout.
+const pollSegmentSeparator = " • "
+
 // composePollQuestion fits header + insight lines + hashtags inside
 // Telegram's poll-question limit. Insight lines are added by priority while
 // they fit and dropped whole from the bottom (VRS points, then H2H, then
@@ -263,27 +279,24 @@ func composePollQuestion(header string, insights []string, eventName string, fir
 	for kept := len(insights); kept >= 0; kept-- {
 		body := header
 		if kept > 0 {
-			// \n\n, not \n: Telegram's poll question collapses a lone
-			// newline into a space when rendered, but keeps a blank-line
-			// break — so every logical line needs one to stay legible.
-			body += "\n\n" + strings.Join(insights[:kept], "\n\n")
+			body += pollSegmentSeparator + strings.Join(insights[:kept], pollSegmentSeparator)
 		}
 		candidate := appendPollHashtags(body, eventName, first, second)
 		// appendPollHashtags truncates as a last resort; only accept a
 		// candidate it did not have to cut.
-		if len([]rune(candidate)) <= telegramPollQuestionLimit && strings.Contains(candidate, lastLineOf(body)) {
+		if len([]rune(candidate)) <= telegramPollQuestionLimit && strings.Contains(candidate, lastSegmentOf(body)) {
 			return candidate, len(insights) - kept
 		}
 	}
 	return appendPollHashtags(header, eventName, first, second), len(insights)
 }
 
-// lastLineOf is composePollQuestion's "was anything cut?" probe: if the
-// final line of the assembled body survived into the result, nothing before
-// it was truncated either.
-func lastLineOf(s string) string {
-	if idx := strings.LastIndex(s, "\n"); idx >= 0 {
-		return s[idx+1:]
+// lastSegmentOf is composePollQuestion's "was anything cut?" probe: if the
+// final segment of the assembled body survived into the result, nothing
+// before it was truncated either.
+func lastSegmentOf(s string) string {
+	if idx := strings.LastIndex(s, pollSegmentSeparator); idx >= 0 {
+		return s[idx+len(pollSegmentSeparator):]
 	}
 	return s
 }
@@ -315,24 +328,16 @@ func appendPollHashtags(question, eventName string, first, second *competition.T
 		return truncate(question, telegramPollQuestionLimit)
 	}
 
-	// Each tag its own <code> span, not one span around the whole line:
-	// tapping a code span copies exactly that span's text, and a reader
-	// wants one tag at a time, not the entire hashtag line. Joined by
-	// \n\n rather than a space for the same reason composePollQuestion's
-	// insight lines are: Telegram's poll question collapses a lone
-	// newline into a space but keeps a blank-line break, so \n\n is what
-	// actually puts each tag on its own line.
-	codedTags := make([]string, len(tags))
-	for i, tag := range tags {
-		codedTags[i] = code(tag)
-	}
-	tagLine := strings.Join(codedTags, "\n\n")
-	const separator = "\n\n" // hashtags read as their own paragraph, not a trailing continuation
-	available := telegramPollQuestionLimit - len([]rune(tagLine)) - len([]rune(separator))
+	// Plain text, not <code> spans: sendPoll's question_parse_mode only
+	// honors custom-emoji entities (Bot API 7.3+) — any <code>/<b>/etc. here
+	// is silently dropped by Telegram, never rendered as monospace, so
+	// wrapping tags in HTML bought nothing but dead code.
+	tagLine := strings.Join(tags, pollSegmentSeparator)
+	available := telegramPollQuestionLimit - len([]rune(tagLine)) - len([]rune(pollSegmentSeparator))
 	if available <= 0 {
 		return truncate(tagLine, telegramPollQuestionLimit)
 	}
-	return truncate(question, available) + separator + tagLine
+	return truncate(question, available) + pollSegmentSeparator + tagLine
 }
 
 func formatBalance(b competition.TeamBalance) string {
