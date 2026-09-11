@@ -30,11 +30,16 @@ type CompetitionSynchronization struct {
 	Predictions     *prediction.Service
 	Settlement      *ResultSettlementService
 	EventCompletion *EventCompletionService
-	Outbox          common.Outbox
-	Lock            common.ClusterLock
-	Clock           common.Clock
-	Metrics         *Metrics
-	Log             *slog.Logger
+	// TeamMatch resolves a team with no cached Valve VRS ranking against
+	// Valve's feed (auto-accepting a near-certain name match, or opening a
+	// review request) — nil disables the whole pipeline, same as any other
+	// optional enrichment dependency here.
+	TeamMatch *TeamMatchService
+	Outbox    common.Outbox
+	Lock      common.ClusterLock
+	Clock     common.Clock
+	Metrics   *Metrics
+	Log       *slog.Logger
 }
 
 func (s *CompetitionSynchronization) guarded(ctx context.Context, name string, action func(ctx context.Context) error) {
@@ -205,9 +210,36 @@ func (s *CompetitionSynchronization) processMatch(ctx context.Context, incoming 
 	if incoming.Status == competition.MatchNotStarted && incoming.ParticipantsKnown() &&
 		incoming.ScheduledAt != nil && incoming.ScheduledAt.After(s.Clock.Now()) &&
 		(previous == nil || !previous.ParticipantsKnown()) {
-		return s.fanOutNewPolls(ctx, incoming)
+		return s.fanOutNewPolls(ctx, incoming, s.ensureTeamsMatched(ctx, incoming))
 	}
 	return nil
+}
+
+// ensureTeamsMatched is the identity-resolution trigger point: a team only
+// ever gets checked against Valve's ranking feed once it actually shows up
+// in a match about to be predicted, not for every team Valve ranks (most of
+// which no subscribed chat will ever see) — see TeamMatchService.EnsureRequest.
+// Called once per match, not once per chat, since the check is identical
+// regardless of which chats end up seeing the resulting poll.
+func (s *CompetitionSynchronization) ensureTeamsMatched(ctx context.Context, m competition.Match) []common.RequestID {
+	if s.TeamMatch == nil {
+		return nil
+	}
+	var pending []common.RequestID
+	for _, team := range [2]*competition.Team{m.FirstTeam, m.SecondTeam} {
+		if team == nil {
+			continue
+		}
+		id, err := s.TeamMatch.EnsureRequest(ctx, *team)
+		if err != nil {
+			s.Log.Error("team match ensure-request failed", "team", team.Name, "error", err)
+			continue
+		}
+		if id != nil {
+			pending = append(pending, *id)
+		}
+	}
+	return pending
 }
 
 // announceBigEvent fans out a "new big event" suggestion, via the
@@ -258,7 +290,7 @@ func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event
 	return nil
 }
 
-func (s *CompetitionSynchronization) fanOutNewPolls(ctx context.Context, incoming competition.Match) error {
+func (s *CompetitionSynchronization) fanOutNewPolls(ctx context.Context, incoming competition.Match, pendingTeamMatches []common.RequestID) error {
 	chatIDs, err := s.Subscriptions.SubscribedChats(ctx, incoming.EventID)
 	if err != nil {
 		return err
@@ -280,8 +312,19 @@ func (s *CompetitionSynchronization) fanOutNewPolls(ctx context.Context, incomin
 		}
 		if _, err := s.Predictions.Create(ctx, incoming, chatID, topic); err != nil {
 			s.Log.Error("poll creation failed", "chatId", chatID.Value, "matchId", incoming.ID.Value, "error", err)
-		} else {
-			s.Metrics.PredictionPolls.WithLabelValues("created").Inc()
+			continue
+		}
+		s.Metrics.PredictionPolls.WithLabelValues("created").Inc()
+
+		// This chat's own voters are a natural, contextual crowd to ask
+		// about a team whose Valve VRS identity is still unresolved — they
+		// are about to see (or already play in) matches for exactly this
+		// team. Best effort: a failure here must not affect the poll that
+		// was already successfully created above.
+		for _, reqID := range pendingTeamMatches {
+			if err := s.TeamMatch.AskChatHelpers(ctx, reqID, chatID, settings.Locale); err != nil {
+				s.Log.Error("team match ask helpers failed", "chatId", chatID.Value, "requestId", reqID.String(), "error", err)
+			}
 		}
 	}
 	return nil

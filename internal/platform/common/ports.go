@@ -166,6 +166,29 @@ type BigEventDiscoveredNotification struct {
 	Tier      string `json:"tier"`
 }
 
+// TeamMatchAskNotification is the payload for the "telegram.team-match-ask"
+// outbox event type: one crowd-review question sent to one helper's DM. See
+// app.TeamMatchService for the pipeline this feeds — the helper's answer
+// only ever nudges a candidate's score, never confirms a mapping by itself.
+type TeamMatchAskNotification struct {
+	UserID          int64  `json:"userId"`
+	RequestID       string `json:"requestId"`
+	ExternalName    string `json:"externalName"`
+	CandidateTeamID string `json:"candidateTeamId"`
+	CandidateName   string `json:"candidateName"`
+	Locale          string `json:"locale"`
+}
+
+// TeamMatchOperatorPingNotification is the payload for the
+// "telegram.team-match-operator-ping" outbox event type: a one-line heads
+// up to a configured operator chat that a new team-match request needs
+// review (Config.TeamMatchOperatorChatIDs), sent once per request created,
+// not once per crowd response.
+type TeamMatchOperatorPingNotification struct {
+	ChatID       int64  `json:"chatId"`
+	ExternalName string `json:"externalName"`
+}
+
 // RetentionRepository prunes the tables that grow with traffic rather than
 // with the domain: the webhook dedup ledger, published outbox rows,
 // resolved confirmation requests, and the admin change history. Each method

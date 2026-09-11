@@ -126,7 +126,8 @@ func run() error {
 		valveVRSSync = &app.ValveVRSSync{
 			Provider: valvevrs.NewProvider(valvevrs.DefaultConfig(), httpClient),
 			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
-			Lock: clusterLock, Log: log,
+			Snapshots: enrichmentRepo,
+			Lock:      clusterLock, Log: log,
 		}
 		enrichmentSources = append(enrichmentSources, enrichment.SourceValveVRS)
 	}
@@ -211,6 +212,18 @@ func run() error {
 		WithRecaps(chats, chatTitle, log)
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, outbox, clock, runTx, log)
 
+	// teamMatch resolves a team with no cached Valve VRS ranking against
+	// Valve's own feed — pointless without Valve VRS itself enabled, so it
+	// shares that gate rather than adding a second on/off flag.
+	var teamMatch *app.TeamMatchService
+	if cfg.Enrichment.ValveVRSEnabled {
+		teamMatch = &app.TeamMatchService{
+			Requests: enrichmentRepo, Helpers: enrichmentRepo, Snapshots: enrichmentRepo,
+			Rankings: enrichmentRepo, Identity: enrichmentRepo, Predictions: predictionsRepo, Chats: chats,
+			Outbox: outbox, Clock: clock, Log: log, OperatorChatIDs: cfg.TeamMatchOperatorChatIDs,
+		}
+	}
+
 	updateHandler := &telegram.UpdateHandler{
 		Dedup: dedup, Predictions: predictionService, Chats: chats, Authorization: authorization,
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
@@ -223,7 +236,7 @@ func run() error {
 
 	synchronizer := &app.CompetitionSynchronization{
 		Gateway: gateway, Catalog: catalog, Subscriptions: subscriptions, Chats: chats, ActiveChats: chats,
-		Predictions: predictionService, Settlement: settlement, EventCompletion: completion,
+		Predictions: predictionService, Settlement: settlement, EventCompletion: completion, TeamMatch: teamMatch,
 		Outbox: outbox, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
 	}
 	digests := &app.DigestScheduler{

@@ -16,13 +16,14 @@ import (
 // /healthz, never propagated as a hard error that could affect anything
 // else.
 type ValveVRSSync struct {
-	Provider enrichment.RankingProvider
-	Teams    enrichment.TeamLister
-	Rankings enrichment.RankingRepository
-	Identity enrichment.IdentityRepository
-	State    enrichment.SyncStateRepository
-	Lock     common.ClusterLock
-	Log      *slog.Logger
+	Provider  enrichment.RankingProvider
+	Teams     enrichment.TeamLister
+	Rankings  enrichment.RankingRepository
+	Identity  enrichment.IdentityRepository
+	State     enrichment.SyncStateRepository
+	Snapshots enrichment.SnapshotRepository
+	Lock      common.ClusterLock
+	Log       *slog.Logger
 }
 
 func (s *ValveVRSSync) Dispatch(ctx context.Context) {
@@ -40,6 +41,16 @@ func (s *ValveVRSSync) sync(ctx context.Context) {
 	if err != nil {
 		s.recordFailure(ctx, err)
 		return
+	}
+
+	// Cached regardless of match outcome, ahead of the matching loop below
+	// — this is the raw material app.TeamMatchService searches against
+	// when a team with no ranking of its own shows up in a new poll, so it
+	// needs the full feed, not just the teams that happened to match here.
+	if s.Snapshots != nil {
+		if err := s.Snapshots.SaveSnapshot(ctx, ranked); err != nil {
+			s.Log.Error("valve vrs snapshot save failed", "error", err)
+		}
 	}
 
 	candidates, err := s.buildCandidates(ctx)

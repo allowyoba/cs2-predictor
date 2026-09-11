@@ -102,6 +102,16 @@ const (
 	ConfidenceExactName  MatchConfidence = "exact_name"
 	ConfidenceAlias      MatchConfidence = "alias"
 	ConfidenceRoster     MatchConfidence = "roster"
+	// ConfidenceFuzzyName is an automatic match on name similarity alone
+	// (team_match.go's FuzzyNameScore, at or above FuzzyAutoAcceptThreshold)
+	// — high enough to trust without a human, but recorded distinctly so
+	// it's visible in an audit that no exact/alias/roster step actually
+	// fired.
+	ConfidenceFuzzyName MatchConfidence = "fuzzy_name"
+	// ConfidenceManual is an operator's explicit decision via the
+	// /team_matches review queue — the only confidence level a human
+	// chose directly, as opposed to one a matching step computed.
+	ConfidenceManual MatchConfidence = "manual"
 )
 
 // IdentityRepository resolves/records the mapping between our internal team
