@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -195,8 +196,17 @@ func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatI
 	}
 	clause, extraArgs := periodClause(period, zone)
 	args := append([]any{chatID.Value}, extraArgs...)
+	args = append(args, scoring.LeaderboardMaxParticipants)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 
-	rows, err := executor(ctx, r.pool).Query(ctx, leaderboardQuery+clause+` GROUP BY u.id, u.display_name`, args...)
+	// ORDER BY mirrors scoring.DenseRank's own tie-break exactly, so a
+	// capped result still keeps the true top LeaderboardMaxParticipants
+	// participants (and in the same relative order DenseRank would produce)
+	// rather than an arbitrary DB-order-dependent subset.
+	rows, err := executor(ctx, r.pool).Query(ctx, leaderboardQuery+clause+`
+		 GROUP BY u.id, u.display_name
+		 ORDER BY points DESC, exact_count DESC, prediction_count DESC, u.id ASC
+		 LIMIT `+limitPlaceholder, args...)
 	if err != nil {
 		return nil, err
 	}
