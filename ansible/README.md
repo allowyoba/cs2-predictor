@@ -151,7 +151,7 @@ environment; `webhook.yml` uses only the connection-related ones (`APP_USER` is 
 | `GRID_API_KEY`          | Secret   | Optional. Written into the server `.env`; required only once `GRID_ENABLED=true` |
 | `LIQUIPEDIA_ENABLED`, `LIQUIPEDIA_SYNC_INTERVAL` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
 | `LIQUIPEDIA_API_KEY`    | Secret   | Optional. Written into the server `.env`; required only once `LIQUIPEDIA_ENABLED=true` |
-| `HLTV_ENABLED`, `HLTV_SYNC_INTERVAL`, `HLTV_MAX_TEAMS` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
+| `HLTV_ENABLED`, `APIFY_RANKING_CHECK_INTERVAL`, `APIFY_MAX_TEAMS` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
 | `APIFY_TOKEN`           | Secret   | Optional. Written into the server `.env`; required only once `HLTV_ENABLED=true` |
 
 These five are the one exception to "no application secret transits GitHub Actions": deploy needs to *guarantee*
@@ -232,8 +232,8 @@ LIQUIPEDIA_API_KEY=
 LIQUIPEDIA_SYNC_INTERVAL=
 HLTV_ENABLED=
 APIFY_TOKEN=
-HLTV_SYNC_INTERVAL=
-HLTV_MAX_TEAMS=
+APIFY_RANKING_CHECK_INTERVAL=
+APIFY_MAX_TEAMS=
 ```
 
 Ansible always writes it with owner `APP_USER` and mode `0600`, regardless of what these values contain. `APP_IMAGE`

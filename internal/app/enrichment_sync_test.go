@@ -17,9 +17,11 @@ func intPtr(n int) *int { return &n }
 type fakeRankingProvider struct {
 	ranked []enrichment.RankedTeam
 	err    error
+	calls  int
 }
 
 func (f *fakeRankingProvider) FetchRankings(context.Context) ([]enrichment.RankedTeam, error) {
+	f.calls++
 	return f.ranked, f.err
 }
 
@@ -253,6 +255,82 @@ func TestValveVRSSync_RecordsFailureWhenProviderFetchErrors(t *testing.T) {
 	}
 	if st.LastSuccessAt != nil {
 		t.Fatalf("RecordSuccess must not be called on a fetch failure, state = %+v", st)
+	}
+}
+
+// fakeRankingSyncGate lets a test dictate ShouldRun's answer (and,
+// optionally, an error) without needing a real ApifyRankingGate.
+type fakeRankingSyncGate struct {
+	allow bool
+	err   error
+}
+
+func (g fakeRankingSyncGate) ShouldRun(context.Context, enrichment.Source) (bool, error) {
+	return g.allow, g.err
+}
+
+func TestRankingSync_GateFalseSkipsTheFetchEntirely(t *testing.T) {
+	store := newFakeEnrichmentStore()
+	provider := &fakeRankingProvider{ranked: []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Spirit"}, GlobalRank: intPtr(1), PublishedAt: time.Now(), Source: enrichment.SourceHLTV},
+	}}
+	sync := &RankingSync{
+		Source: enrichment.SourceHLTV, Provider: provider,
+		Teams:    &fakeTeamLister{},
+		Rankings: store, Identity: store, State: store,
+		Gate: fakeRankingSyncGate{allow: false},
+		Lock: fakeClusterLock{}, Log: slog.Default(),
+	}
+	sync.Dispatch(context.Background())
+
+	if provider.calls != 0 {
+		t.Fatalf("expected the provider never to be called when the gate says no, calls = %d", provider.calls)
+	}
+	st, err := store.State(context.Background(), enrichment.SourceHLTV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastSuccessAt != nil || st.LastErrorAt != nil {
+		t.Fatalf("a gated-off tick must not touch sync state either way, state = %+v", st)
+	}
+}
+
+func TestRankingSync_GateTrueRunsNormally(t *testing.T) {
+	teamID := common.NewTeamID()
+	store := newFakeEnrichmentStore()
+	sync := &RankingSync{
+		Source: enrichment.SourceHLTV,
+		Provider: &fakeRankingProvider{ranked: []enrichment.RankedTeam{
+			{Identity: enrichment.TeamIdentity{Name: "Spirit"}, GlobalRank: intPtr(1), PublishedAt: time.Now(), Source: enrichment.SourceHLTV},
+		}},
+		Teams:    &fakeTeamLister{teams: []competition.Team{{ID: teamID, Name: "Spirit"}}},
+		Rankings: store, Identity: store, State: store,
+		Gate: fakeRankingSyncGate{allow: true},
+		Lock: fakeClusterLock{}, Log: slog.Default(),
+	}
+	sync.Dispatch(context.Background())
+
+	if got, err := store.FindRanking(context.Background(), teamID, enrichment.SourceHLTV); err != nil || got == nil {
+		t.Fatalf("expected a cached ranking when the gate allows the run, got %+v, err %v", got, err)
+	}
+}
+
+func TestRankingSync_GateErrorSkipsWithoutFailingDispatch(t *testing.T) {
+	store := newFakeEnrichmentStore()
+	provider := &fakeRankingProvider{ranked: []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Spirit"}, PublishedAt: time.Now(), Source: enrichment.SourceHLTV},
+	}}
+	sync := &RankingSync{
+		Source: enrichment.SourceHLTV, Provider: provider,
+		Teams:    &fakeTeamLister{},
+		Rankings: store, Identity: store, State: store,
+		Gate: fakeRankingSyncGate{err: errors.New("catalog unreachable")},
+		Lock: fakeClusterLock{}, Log: slog.Default(),
+	}
+	sync.Dispatch(context.Background()) // must not panic or block on the lock
+
+	if provider.calls != 0 {
+		t.Fatalf("expected no fetch when the gate itself fails to answer, calls = %d", provider.calls)
 	}
 }
 

@@ -66,8 +66,8 @@ services:
       LIQUIPEDIA_SYNC_INTERVAL: ${LIQUIPEDIA_SYNC_INTERVAL:-}
       HLTV_ENABLED: ${HLTV_ENABLED:-}
       APIFY_TOKEN: ${APIFY_TOKEN:-}
-      HLTV_SYNC_INTERVAL: ${HLTV_SYNC_INTERVAL:-}
-      HLTV_MAX_TEAMS: ${HLTV_MAX_TEAMS:-}
+      APIFY_RANKING_CHECK_INTERVAL: ${APIFY_RANKING_CHECK_INTERVAL:-}
+      APIFY_MAX_TEAMS: ${APIFY_MAX_TEAMS:-}
     healthcheck:
       # /healthz/ready, not /healthz/live: the deploy waits on this, and
       # what it needs to know is that migrations ran and the database and

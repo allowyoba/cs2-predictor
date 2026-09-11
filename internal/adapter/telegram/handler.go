@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"cs2predictor/internal/app"
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/enrichment"
@@ -120,6 +121,18 @@ type UpdateHandler struct {
 	// appoint/revoke the delegated tier in TeamMatchOperators via
 	// /team_match_admin (see isRootTeamMatchOperator).
 	TeamMatchOperatorChatIDs []int64
+
+	// --- provider health (see /provider_status, provider_status.go) ---
+
+	// ProviderGateway backs the PandaScore/competition-provider section of
+	// /provider_status. Nil (e.g. in tests that don't wire one) simply
+	// omits that section.
+	ProviderGateway *app.CompetitionProviderGateway
+	// EnrichmentState and EnrichmentSources back the per-source sections —
+	// the exact same provider_sync_state data /healthz/ready already
+	// exposes, just human-readable inside a DM. Nil/empty omits them.
+	EnrichmentState   enrichment.SyncStateRepository
+	EnrichmentSources []enrichment.Source
 }
 
 // requireManager wraps chat.AuthorizationService.RequireManager: on success
@@ -485,6 +498,8 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 			h.handleTeamMatchAdminCommand(ctx, chatID, userID, locale, strings.TrimSpace(strings.TrimPrefix(text, "/team_match_admin"))))
 	case strings.HasPrefix(text, "/team_matches"):
 		return h.teamMatchQueueMenu(ctx, sendTarget(chatID, nil), userID, locale, 0)
+	case strings.HasPrefix(text, "/provider_status"):
+		return h.providerStatusView(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/help"):
 		return h.helpView(ctx, sendTarget(chatID, nil), locale, "pstats:menu")
 	case !strings.HasPrefix(text, "/") && isRenameReply(msg, locale, h.Texts):

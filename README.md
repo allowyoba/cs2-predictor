@@ -93,9 +93,12 @@ Liquipedia — shows up as extra context inside a poll (a VRS rank, an HLTV rank
 None of it is a source of truth for anything; PandaScore alone decides what events, matches, and results actually
 exist. Providers form a swappable, ordered list with a circuit breaker: one that starts failing gets temporarily
 skipped, with the cooldown growing exponentially, and plugging in a second provider some day won't need any change to
-the actual business logic. HLTV's ranking is fetched via the paid Apify actor `paco_nassa~hltv-org-team-ranking`
-instead of a free feed, on a weekly cadence that fits Apify's free tier, and feeds the exact same team-identity
-matching pipeline as VRS (a new team is fuzzy-matched against the cached ranking, then either auto-accepted or sent to
+the actual business logic. HLTV's ranking, and a top-100 refresh of the VRS ranking itself, are both fetched via the
+paid Apify actor `paco_nassa~hltv-org-team-ranking` — at most once a calendar week each, on HLTV's own update day
+(Monday) at end of day, or ahead of schedule when a top-tier tournament is running or starts within the next 7 days
+(see `ApifyRankingGate`). VRS keeps its free GitHub-based feed running independently the rest of the week, as a
+fallback for whenever the paid one hasn't fired yet. Both HLTV and VRS feed the exact same team-identity matching
+pipeline (a new team is fuzzy-matched against the cached ranking, then either auto-accepted or sent to
 `/team_matches` for review) — the two rankings are cached and displayed as fully independent lines, one team having a
 cached VRS rank never implies anything about its HLTV rank or vice versa.
 
@@ -378,7 +381,11 @@ If a deploy fails, the bot can DM its own administrators about it directly — s
 comma-separated list of Telegram numeric IDs) as a GitHub environment variable and it'll happen automatically; leave
 it unset and nothing gets sent, quietly. The same list doubles at runtime as the root operator list for
 `/team_matches` (the Valve VRS team-identity review queue — see below): those IDs may run `/team_match_admin` to
-delegate reviewer access to others without touching this variable again.
+delegate reviewer access to others without touching this variable again. It's also the only list allowed to run
+`/provider_status`, a DM-only screen showing whether each configured data source (PandaScore, and every enabled
+enrichment provider — VRS, HLTV, GRID, Liquipedia) is currently healthy: last successful sync, last error and when it
+happened, and how many failures have struck in a row — the same numbers `/healthz/ready` already reports, just
+readable from inside a chat instead of curling an endpoint.
 
 All of this — the exact GitHub secrets/variables needed, least-privilege sudo, image signing details, what's actually
 in a backup and how to restore one, the full Ansible role breakdown — is written up in much more depth in

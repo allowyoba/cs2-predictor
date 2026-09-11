@@ -80,16 +80,27 @@ type EnrichmentConfig struct {
 	LiquipediaAPIKey       string
 	LiquipediaSyncInterval time.Duration
 
-	// HLTVEnabled fetches HLTV.org's own weekly world ranking via a public
-	// Apify actor (see internal/adapter/apifyhltv) — gated behind an Apify
-	// API token like GRID/Liquipedia are behind their own keys, so it
-	// defaults to disabled rather than silently running unconfigured.
-	HLTVEnabled      bool
-	HLTVAPIToken     string
-	HLTVSyncInterval time.Duration
-	// HLTVMaxTeams bounds both relevance and Apify's pay-per-result cost —
-	// see apifyhltv.defaultMaxTeams's doc comment.
-	HLTVMaxTeams int
+	// HLTVEnabled fetches, via the same public Apify actor (see
+	// internal/adapter/apifyhltv), BOTH HLTV.org's own weekly world ranking
+	// AND Valve's official ranking as mirrored on hltv.org — a paired
+	// weekly fetch, gated behind an Apify API token like GRID/Liquipedia
+	// are behind their own keys, so it defaults to disabled rather than
+	// silently running unconfigured. The Valve/VRS half feeds the exact
+	// same VALVE_VRS ranking ValveVRSEnabled's free GitHub-based feed
+	// does — that feed keeps running independently as the fallback for
+	// whichever week this one didn't fire (see ApifyRankingGate).
+	HLTVEnabled  bool
+	HLTVAPIToken string
+	// ApifyRankingCheckInterval is how often the *gate* is checked, not
+	// how often a fetch actually happens — actual cadence is capped to
+	// once a week by ApifyRankingGate regardless of how often this ticks;
+	// this only bounds how promptly a qualifying moment (the weekly
+	// schedule, or a tournament starting/running) is noticed.
+	ApifyRankingCheckInterval time.Duration
+	// ApifyMaxTeams bounds both relevance and Apify's pay-per-result cost
+	// for both the HLTV and Valve/VRS fetches — see
+	// apifyhltv.defaultMaxTeams's doc comment.
+	ApifyMaxTeams int
 }
 
 // RetentionConfig bounds how long the traffic-driven tables keep rows (see
@@ -435,15 +446,17 @@ func LoadConfig() (Config, error) {
 	if cfg.Enrichment.HLTVEnabled && strings.TrimSpace(cfg.Enrichment.HLTVAPIToken) == "" {
 		return Config{}, fmt.Errorf("APIFY_TOKEN is required when HLTV_ENABLED=true")
 	}
-	// Weekly, not the 6h VRS default: unlike Valve VRS's free GitHub
-	// snapshots, every HLTV fetch here costs real money (Apify bills this
-	// actor per result — see apifyhltv's doc comment), and HLTV only
-	// republishes its ranking once a week regardless, so anything shorter
-	// would just pay repeatedly for the same numbers.
-	if cfg.Enrichment.HLTVSyncInterval, err = envDuration("HLTV_SYNC_INTERVAL", 7*24*time.Hour); err != nil {
+	// Hourly by default — this only bounds how promptly ApifyRankingGate
+	// notices a qualifying moment, not how often a fetch actually happens
+	// (capped to once a week by the gate itself, regardless of this
+	// interval): unlike Valve VRS's free GitHub snapshots, every Apify
+	// fetch here costs real money (bills per result — see apifyhltv's doc
+	// comment), so the actual fetch stays weekly no matter how often this
+	// check runs.
+	if cfg.Enrichment.ApifyRankingCheckInterval, err = envDuration("APIFY_RANKING_CHECK_INTERVAL", time.Hour); err != nil {
 		return Config{}, err
 	}
-	if cfg.Enrichment.HLTVMaxTeams, err = envInt("HLTV_MAX_TEAMS", 50); err != nil {
+	if cfg.Enrichment.ApifyMaxTeams, err = envInt("APIFY_MAX_TEAMS", 100); err != nil {
 		return Config{}, err
 	}
 

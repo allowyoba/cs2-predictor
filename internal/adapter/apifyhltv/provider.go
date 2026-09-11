@@ -1,16 +1,23 @@
-// Package apifyhltv implements enrichment.RankingProvider against HLTV's
-// own weekly world ranking, fetched via the public Apify actor
-// paco_nassa/hltv-org-team-ranking, which scrapes hltv.org/ranking/teams.
+// Package apifyhltv implements enrichment.RankingProvider against
+// hltv.org/ranking/teams, fetched via the public Apify actor
+// paco_nassa/hltv-org-team-ranking — for either of the two rankings that
+// actor can scrape from that one page: HLTV's own ranking (rankingType
+// "hltv") or Valve's official ranking as mirrored on hltv.org (rankingType
+// "valve"). Both are exposed by the same Provider type, parameterized by
+// Config.RankingType/Config.Source — literally the same request/response
+// handling for both, since the actor's output shape is identical either
+// way.
 //
-// This adapter has NOT been exercised against a live Apify run — no token
-// was available while building it. The endpoint (POST
-// /v2/acts/{actorId}/run-sync-get-dataset-items), the actor's input fields
-// (rankingType/maxTeams/country/year/month/day), and its output item shape
-// (place/team.name/team.id/points/change/isNew) are all drawn from the
-// actor's own published documentation, not confirmed against a live
-// response. Once a real token is available, this should be revisited —
-// same caveat internal/adapter/grid's package doc carries for its own
-// unverified schema.
+// The endpoint (POST /v2/acts/{actorId}/run-sync-get-dataset-items) and the
+// actor's input fields (rankingType/maxTeams) match the actor's published
+// documentation. The response *shape* was corrected against a real sample
+// run: run-sync-get-dataset-items returns a dataset containing one item per
+// run (not one item per team) — {scrapedAt, rankingType, ..., rankings:
+// [...]} — and each entry of that inner "rankings" array carries a
+// top-level "players" roster (not nested under "team" as first assumed),
+// which this adapter now feeds into Identity.Roster for the same
+// roster-overlap matching fallback internal/adapter/valvevrs already
+// supports (see enrichment.MatchTeam).
 package apifyhltv
 
 import (
@@ -33,23 +40,45 @@ const (
 	defaultActorID = "paco_nassa~hltv-org-team-ranking"
 	// defaultMaxTeams bounds both relevance (a poll only ever needs a
 	// team's own rank, never the full list) and cost: the actor is billed
-	// per result returned ($3/1000 as of writing), so this caps a single
-	// sync run at a small, predictable fraction of a cent.
-	defaultMaxTeams = 50
+	// per result returned ($3/1000 as of writing). At the weekly cadence
+	// this is fetched (see app.ApifyRankingGate), 100 teams costs a small,
+	// predictable fraction of a cent either way.
+	defaultMaxTeams = 100
 )
 
-// Config points at the Apify REST API and the actor to run.
+// Config points at the Apify REST API and the actor to run, and which of
+// the actor's two rankings this Provider fetches.
 type Config struct {
-	BaseURL  string
-	ActorID  string
-	Token    string
-	MaxTeams int
+	BaseURL     string
+	ActorID     string
+	Token       string
+	MaxTeams    int
+	RankingType string
+	// Source is the enrichment.Source every RankedTeam this Provider
+	// returns is tagged with — SourceHLTV for RankingType "hltv",
+	// SourceValveVRS for RankingType "valve" (the two constructors below
+	// pair these correctly; this field exists so FetchRankings never has
+	// to infer one string from the other).
+	Source enrichment.Source
 }
 
-// DefaultConfig returns the real Apify API endpoint and the public HLTV
-// ranking actor, with the given token.
+// DefaultConfig returns the real Apify API endpoint, the public HLTV
+// ranking actor, and its "hltv" (HLTV's own world ranking) mode.
 func DefaultConfig(token string) Config {
-	return Config{BaseURL: defaultBaseURL, ActorID: defaultActorID, Token: token, MaxTeams: defaultMaxTeams}
+	return Config{BaseURL: defaultBaseURL, ActorID: defaultActorID, Token: token, MaxTeams: defaultMaxTeams,
+		RankingType: "hltv", Source: enrichment.SourceHLTV}
+}
+
+// DefaultValveConfig is DefaultConfig's counterpart for the same actor's
+// "valve" mode — Valve's own official ranking, mirrored on hltv.org. Tagged
+// enrichment.SourceValveVRS: this feeds the very same VALVE_VRS ranking the
+// free GitHub-based internal/adapter/valvevrs provider does, just fetched
+// less often and from a different feed — the two are combined via a
+// weekly-gated Apify job running alongside valvevrs's own frequent one (see
+// cmd/bot/main.go), each independently free to update the shared cache.
+func DefaultValveConfig(token string) Config {
+	return Config{BaseURL: defaultBaseURL, ActorID: defaultActorID, Token: token, MaxTeams: defaultMaxTeams,
+		RankingType: "valve", Source: enrichment.SourceValveVRS}
 }
 
 // Provider implements enrichment.RankingProvider by running the actor
@@ -73,30 +102,37 @@ func NewProvider(config Config, client *http.Client) *Provider {
 var _ enrichment.RankingProvider = (*Provider)(nil)
 
 // actorInput is paco_nassa/hltv-org-team-ranking's documented input shape.
-// rankingType is always "hltv" here — Valve's own official ranking is the
-// same actor's "valve" mode, but this bot already has a free, roster-aware
-// source for that (internal/adapter/valvevrs); duplicating it via Apify
-// would only lose the roster data without gaining anything.
 type actorInput struct {
 	RankingType string `json:"rankingType"`
 	MaxTeams    int    `json:"maxTeams,omitempty"`
 }
 
-// rankingItem is one row of the actor's documented output.
+// actorRun is one dataset item as actually returned by
+// run-sync-get-dataset-items: the whole scrape result for a single run, not
+// a single team — see the package doc comment.
+type actorRun struct {
+	Rankings []rankingItem `json:"rankings"`
+}
+
+// rankingItem is one row of actorRun.Rankings.
 type rankingItem struct {
 	Place int `json:"place"`
 	Team  struct {
 		Name string `json:"name"`
 	} `json:"team"`
 	Points int `json:"points"`
+	// Players is HLTV's reported roster for this team at scrape time — a
+	// sibling of "team", not nested under it.
+	Players []string `json:"players"`
 }
 
-// FetchRankings implements enrichment.RankingProvider. HLTV's own ranking
-// carries no regional breakdown or player roster — only Identity.Name,
-// GlobalRank and Points are populated; RegionalRank/Region/Roster stay
-// zero, same as any RankedTeam field a source simply doesn't report.
+// FetchRankings implements enrichment.RankingProvider. Neither of the
+// actor's two ranking modes carries a regional breakdown, so
+// RegionalRank/Region stay zero — same as any RankedTeam field a source
+// simply doesn't report — but Identity.Name, Identity.Roster, GlobalRank
+// and Points are all populated.
 func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, error) {
-	body, err := json.Marshal(actorInput{RankingType: "hltv", MaxTeams: p.config.MaxTeams})
+	body, err := json.Marshal(actorInput{RankingType: p.config.RankingType, MaxTeams: p.config.MaxTeams})
 	if err != nil {
 		return nil, fmt.Errorf("encode apify hltv actor input: %w", err)
 	}
@@ -128,25 +164,27 @@ func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, 
 		return nil, fmt.Errorf("apify hltv ranking actor returned HTTP %d: %s", resp.StatusCode, common.TruncateForLog(respBody))
 	}
 
-	var items []rankingItem
-	if err := json.Unmarshal(respBody, &items); err != nil {
+	var runs []actorRun
+	if err := json.Unmarshal(respBody, &runs); err != nil {
 		return nil, fmt.Errorf("decode apify hltv ranking response: %w", err)
 	}
 
 	publishedAt := time.Now().UTC()
-	out := make([]enrichment.RankedTeam, 0, len(items))
-	for _, item := range items {
-		if item.Team.Name == "" {
-			continue
+	var out []enrichment.RankedTeam
+	for _, run := range runs {
+		for _, item := range run.Rankings {
+			if item.Team.Name == "" {
+				continue
+			}
+			rank, points := item.Place, item.Points
+			out = append(out, enrichment.RankedTeam{
+				Identity:    enrichment.TeamIdentity{Name: item.Team.Name, Roster: item.Players},
+				GlobalRank:  &rank,
+				Points:      &points,
+				PublishedAt: publishedAt,
+				Source:      p.config.Source,
+			})
 		}
-		rank, points := item.Place, item.Points
-		out = append(out, enrichment.RankedTeam{
-			Identity:    enrichment.TeamIdentity{Name: item.Team.Name},
-			GlobalRank:  &rank,
-			Points:      &points,
-			PublishedAt: publishedAt,
-			Source:      enrichment.SourceHLTV,
-		})
 	}
 	return out, nil
 }

@@ -56,8 +56,8 @@ esac
             "LIQUIPEDIA_SYNC_INTERVAL": "",
             "HLTV_ENABLED": "",
             "APIFY_TOKEN": "",
-            "HLTV_SYNC_INTERVAL": "",
-            "HLTV_MAX_TEAMS": "",
+            "APIFY_RANKING_CHECK_INTERVAL": "",
+            "APIFY_MAX_TEAMS": "",
         }
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],
