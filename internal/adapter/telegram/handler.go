@@ -268,7 +268,23 @@ func (h *UpdateHandler) Handle(ctx context.Context, update Update) error {
 
 	if err := h.dispatch(ctx, update); err != nil {
 		// Un-claim so a Telegram webhook retry can reprocess this update,
-		// so a retried delivery gets a fresh attempt.
+		// so a retried delivery gets a fresh attempt. This does mean a
+		// handler whose user-visible reply already went out before some
+		// later, unexpected failure (a DB write, a second Bot API call)
+		// will have that reply replayed too on retry — accepted rather
+		// than fixed, for two reasons: (1) every expected failure a
+		// handler can hit (chat.ErrAccessDenied, a validationError) is
+		// already caught by handleCommandError and turned into a friendly
+		// reply + nil before it ever reaches here, so an error actually
+		// reaching this point means something unexpected happened (DB or
+		// Telegram outage), not routine user input; and (2) this
+		// codebase's own handler convention is to run every mutation
+		// before the final h.respond/h.send call, not after, so the
+		// window where a reply has already gone out but the handler can
+		// still fail afterward is narrow in practice. Closing it for good
+		// would need every handler's side effects made idempotent
+		// end-to-end, which is out of proportion to how rarely this path
+		// is even reached.
 		_ = h.Dedup.Release(ctx, update.UpdateID)
 		return err
 	}
