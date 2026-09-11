@@ -76,15 +76,23 @@ type UserStanding struct {
 	PointsDelta        int  // same as above
 }
 
+// accuracyPercent rounds correct/total to the nearest whole percent for a
+// compact Telegram UI, returning 0 for an empty sample rather than dividing
+// by zero. Every *.AccuracyPercent() method in this package is a thin
+// wrapper around this one formula, so a future rounding-rule change only
+// has to happen here.
+func accuracyPercent(correct, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	return (correct*100 + total/2) / total
+}
+
 // AccuracyPercent is the share of finished polls in which the user predicted
 // the correct match outcome (exact score or just the winner/draw). It is
 // intentionally independent of the points awarded for an exact score.
 func (s UserStanding) AccuracyPercent() int {
-	if s.Predictions <= 0 {
-		return 0
-	}
-	// Rounded to the nearest whole percent for a compact Telegram UI.
-	return (s.CorrectPredictions*100 + s.Predictions/2) / s.Predictions
+	return accuracyPercent(s.CorrectPredictions, s.Predictions)
 }
 
 type MedalCount struct {
@@ -129,10 +137,7 @@ type TeamSynergyInsight struct {
 }
 
 func (s TeamSynergyInsight) AccuracyPercent() int {
-	if s.Predictions <= 0 {
-		return 0
-	}
-	return (s.Correct*100 + s.Predictions/2) / s.Predictions
+	return accuracyPercent(s.Correct, s.Predictions)
 }
 
 // AnnualSpecials contains year-end metrics that need vote chronology or team
@@ -157,10 +162,7 @@ type UserChatStanding struct {
 }
 
 func (s UserChatStanding) AccuracyPercent() int {
-	if s.Predictions <= 0 {
-		return 0
-	}
-	return (s.CorrectPredictions*100 + s.Predictions/2) / s.Predictions
+	return accuracyPercent(s.CorrectPredictions, s.Predictions)
 }
 
 // PersonalRepository exposes statistics that are scoped by Telegram user
@@ -173,6 +175,16 @@ type PersonalRepository interface {
 	UserChatStats(ctx context.Context, userID common.UserID) ([]UserChatStanding, error)
 }
 
+// LeaderboardMaxParticipants bounds how many distinct participants a
+// Leaderboard read returns, ranked best-first, so an old, very large chat's
+// all-time leaderboard can't grow into an unbounded aggregate scan re-run on
+// every view. Set far above any realistic Telegram group's actual voter
+// count (bots/members who never predicted don't count at all) so it only
+// ever guards against a pathological case, never clips a real leaderboard —
+// unlike InsightsMaxPredictions/UserBetsMaxRows, which bound a single
+// person's own history and so can use a much tighter cap.
+const LeaderboardMaxParticipants = 5000
+
 // Repository is the scoring/leaderboard persistence port.
 type Repository interface {
 	// AvailableMonths returns the local calendar months for which this chat has
@@ -184,6 +196,8 @@ type Repository interface {
 	// subscriptions so historical tournament statistics remain accessible.
 	AvailableEventIDs(ctx context.Context, chatID common.ChatID) ([]common.EventID, error)
 	ReplaceAwards(ctx context.Context, pollID common.PollID, awards []Award) error
+	// Leaderboard returns every participant ranked best-first, up to
+	// LeaderboardMaxParticipants of them.
 	Leaderboard(ctx context.Context, chatID common.ChatID, period StatsPeriod) ([]UserStanding, error)
 	MedalCounts(ctx context.Context, chatID common.ChatID) (map[common.UserID]MedalCount, error)
 	AwardMedals(ctx context.Context, chatID common.ChatID, eventID common.EventID, standings []UserStanding, at time.Time) error
