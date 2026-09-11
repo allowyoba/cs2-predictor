@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1777,6 +1778,83 @@ func TestEnrichmentRepository_TeamMatchRequestLifecycle(t *testing.T) {
 		t.Fatal(err)
 	} else if len(pending) != 0 {
 		t.Fatalf("a resolved request must no longer be pending, got %+v", pending)
+	}
+}
+
+// RecordResponse used to read a candidate's score, adjust it in Go, then
+// write it back with no row lock — two people answering about the same
+// candidate at nearly the same time could read the same starting score and
+// have one's effect silently overwritten by the other's (a lost update).
+// This drives two concurrent "yes" votes from different helpers at real
+// Postgres and asserts both boosts land — CrowdYesBoost is small enough
+// (well under half of CrowdScoreCap starting from a mid-range score) that
+// "both applied" is unambiguous regardless of which transaction's SELECT ...
+// FOR UPDATE wins the row lock first.
+func TestEnrichmentRepository_ConcurrentCrowdResponsesDoNotLoseAnUpdate(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+	chats := pg.NewChatRepository(pool)
+	repo := pg.NewEnrichmentRepository(pool)
+
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Concurrency Cup", ExternalID: "cc-event", Status: competition.EventUpcoming, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	teamA := competition.Team{ID: common.NewTeamID(), Name: "Avangarr", ExternalID: "cc-team-a"}
+	teamB := competition.Team{ID: common.NewTeamID(), Name: "Avangaar", ExternalID: "cc-team-b"}
+	match := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "cc-match-1",
+		FirstTeam: &teamA, SecondTeam: &teamB, Status: competition.MatchNotStarted, Format: format,
+	}
+	if _, err := catalog.SaveMatch(ctx, match); err != nil {
+		t.Fatal(err)
+	}
+	helper1 := common.UserID{Value: 90101}
+	helper2 := common.UserID{Value: 90102}
+	if err := chats.SetUserLocale(ctx, helper1, common.LocaleRU); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetUserLocale(ctx, helper2, common.LocaleRU); err != nil {
+		t.Fatal(err)
+	}
+
+	req := enrichment.TeamMatchRequest{
+		ID: common.NewRequestID(), ExternalName: "Avangar", Source: enrichment.SourceValveVRS,
+		Status: enrichment.TeamMatchPending, BestTeamID: &teamA.ID, BestScore: 50, CreatedAt: time.Now().UTC(),
+	}
+	candidate := enrichment.TeamMatchCandidate{TeamID: teamA.ID, Score: 50, Kind: enrichment.CandidateKindFuzzy}
+	if err := repo.CreateRequest(ctx, req, []enrichment.TeamMatchCandidate{candidate}); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, h := range []common.UserID{helper1, helper2} {
+		wg.Add(1)
+		go func(helper common.UserID) {
+			defer wg.Done()
+			errs <- repo.RecordResponse(ctx, req.ID, helper, teamA.ID, enrichment.TeamMatchAnswerYes)
+		}(h)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, candidates, err := repo.FindRequest(ctx, req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 50 + 2*enrichment.CrowdYesBoost
+	if len(candidates) != 1 || candidates[0].Score != want {
+		t.Fatalf("expected both concurrent 'yes' votes to apply (score = %d), got %+v", want, candidates)
+	}
+	if candidates[0].Yes != 2 {
+		t.Fatalf("expected both responses recorded in the yes tally, got %+v", candidates[0])
 	}
 }
 

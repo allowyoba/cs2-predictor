@@ -109,6 +109,14 @@ func (s *TeamMatchService) ensureRequest(ctx context.Context, team competition.T
 		return nil, err
 	}
 	if existing != nil {
+		// A second local team fuzzy-matching the same external name as an
+		// already-pending request must not be silently dropped — offer it
+		// as a competing candidate instead, so an operator (or the crowd)
+		// can actually tell the two apart rather than one vanishing
+		// without a trace.
+		if err := s.addCompetingCandidate(ctx, existing.ID, team, bestScore); err != nil {
+			return nil, err
+		}
 		return &existing.ID, nil
 	}
 
@@ -122,6 +130,30 @@ func (s *TeamMatchService) ensureRequest(ctx context.Context, team competition.T
 	}
 	s.notifyOperators(ctx, req)
 	return &req.ID, nil
+}
+
+// addCompetingCandidate offers team as an additional candidate on an
+// already-existing request — a no-op if team is already one of its
+// candidates (the same team fuzzy-matching the same external name again in
+// a later match), or if the request already has MaxCandidatesPerRequest
+// candidates (an operator can already see the ambiguity from those; a
+// fourth near-identical option wouldn't help them decide).
+func (s *TeamMatchService) addCompetingCandidate(ctx context.Context, requestID common.RequestID, team competition.Team, score int) error {
+	_, candidates, err := s.Requests.FindRequest(ctx, requestID)
+	if err != nil {
+		return err
+	}
+	for _, c := range candidates {
+		if c.TeamID == team.ID {
+			return nil
+		}
+	}
+	if len(candidates) >= enrichment.MaxCandidatesPerRequest {
+		return nil
+	}
+	return s.Requests.AddCandidate(ctx, requestID, enrichment.TeamMatchCandidate{
+		TeamID: team.ID, TeamName: team.Name, Score: score, Kind: enrichment.CandidateKindFuzzy,
+	})
 }
 
 // autoAccept saves both the identity mapping and the ranking itself

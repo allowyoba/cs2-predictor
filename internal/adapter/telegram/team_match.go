@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,6 +11,14 @@ import (
 	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/platform/common"
 )
+
+// errTeamMatchAlreadyResolved is returned by confirmTeamMatch/rejectTeamMatch
+// when the request they were asked to act on is no longer pending — an old
+// /team_matches card's buttons stay tappable even after another operator (or
+// this same operator, via a double tap) already resolved it. The callback
+// dispatcher (callbacks.go) turns this into a toast rather than a hard
+// error.
+var errTeamMatchAlreadyResolved = errors.New("team match request already resolved")
 
 // The team-identity review surface: /team_matches (a global, chat-
 // independent DM screen — every other admin surface in this file is scoped
@@ -199,6 +208,9 @@ func (h *UpdateHandler) confirmTeamMatch(ctx context.Context, userID common.User
 	if req == nil || index < 0 || index >= len(candidates) {
 		return newValidationError("invalid team match candidate")
 	}
+	if req.Status != enrichment.TeamMatchPending {
+		return errTeamMatchAlreadyResolved
+	}
 	chosen := candidates[index]
 	externalID := enrichment.NormalizeTeamName(req.ExternalName)
 	if err := h.TeamIdentity.SaveIdentity(ctx, chosen.TeamID, req.Source, externalID, req.ExternalName, enrichment.ConfidenceManual); err != nil {
@@ -245,6 +257,16 @@ func (h *UpdateHandler) applyCachedRanking(ctx context.Context, teamID common.Te
 func (h *UpdateHandler) rejectTeamMatch(ctx context.Context, userID common.UserID, reqID common.RequestID) error {
 	if !h.isTeamMatchOperator(ctx, userID) {
 		return chat.ErrAccessDenied
+	}
+	req, _, err := h.TeamMatches.FindRequest(ctx, reqID)
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return newValidationError("team match request not found")
+	}
+	if req.Status != enrichment.TeamMatchPending {
+		return errTeamMatchAlreadyResolved
 	}
 	return h.TeamMatches.Resolve(ctx, reqID, enrichment.TeamMatchRejected, nil, h.Clock.Now())
 }

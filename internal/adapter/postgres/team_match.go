@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -113,6 +114,14 @@ func (r *EnrichmentRepository) CreateRequest(ctx context.Context, req enrichment
 	})
 }
 
+func (r *EnrichmentRepository) AddCandidate(ctx context.Context, requestID common.RequestID, candidate enrichment.TeamMatchCandidate) error {
+	_, err := executor(ctx, r.pool).Exec(ctx, `
+		INSERT INTO team_match_candidate(request_id, team_id, score, score_kind) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (request_id, team_id) DO NOTHING`,
+		requestID.Value, candidate.TeamID.Value, candidate.Score, string(candidate.Kind))
+	return err
+}
+
 func (r *EnrichmentRepository) ListPending(ctx context.Context, limit int) ([]enrichment.TeamMatchRequest, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx, `
 		SELECT id, external_name, source, status, best_team_id, best_score, crowd_asks_sent, created_at, resolved_at
@@ -186,11 +195,38 @@ func (r *EnrichmentRepository) RecordResponse(ctx context.Context, requestID com
 			return err
 		}
 
-		var current int
-		if err := ex.QueryRow(ctx,
-			`SELECT score FROM team_match_candidate WHERE request_id = $1 AND team_id = $2`,
-			requestID.Value, candidateTeamID.Value).Scan(&current); err != nil {
+		// FOR UPDATE locks every candidate row for this request until the
+		// transaction commits — without it, two people answering about the
+		// same candidate concurrently read the same starting score and the
+		// second UPDATE below silently overwrites the first (a lost
+		// update), and two people answering about different candidates on
+		// the same request could each compute "best" from a stale view of
+		// the other's just-written score.
+		rows, err := ex.Query(ctx,
+			`SELECT team_id, score FROM team_match_candidate WHERE request_id = $1 FOR UPDATE`,
+			requestID.Value)
+		if err != nil {
 			return err
+		}
+		scores := map[uuid.UUID]int{}
+		for rows.Next() {
+			var teamID uuid.UUID
+			var score int
+			if err := rows.Scan(&teamID, &score); err != nil {
+				rows.Close()
+				return err
+			}
+			scores[teamID] = score
+		}
+		rowsErr := rows.Err()
+		rows.Close()
+		if rowsErr != nil {
+			return rowsErr
+		}
+
+		current, ok := scores[candidateTeamID.Value]
+		if !ok {
+			return fmt.Errorf("candidate %s not found on request %s", candidateTeamID.Value, requestID.Value)
 		}
 		adjusted := enrichment.CrowdAdjustedScore(current, answer)
 		if _, err := ex.Exec(ctx, `
@@ -198,15 +234,15 @@ func (r *EnrichmentRepository) RecordResponse(ctx context.Context, requestID com
 			requestID.Value, candidateTeamID.Value, adjusted); err != nil {
 			return err
 		}
+		scores[candidateTeamID.Value] = adjusted
 
-		var bestTeamID uuid.UUID
-		var bestScore int
-		if err := ex.QueryRow(ctx,
-			`SELECT team_id, score FROM team_match_candidate WHERE request_id = $1 ORDER BY score DESC LIMIT 1`,
-			requestID.Value).Scan(&bestTeamID, &bestScore); err != nil {
-			return err
+		bestTeamID, bestScore := candidateTeamID.Value, adjusted
+		for teamID, score := range scores {
+			if score > bestScore {
+				bestTeamID, bestScore = teamID, score
+			}
 		}
-		_, err := ex.Exec(ctx,
+		_, err = ex.Exec(ctx,
 			`UPDATE team_match_request SET best_team_id = $2, best_score = $3 WHERE id = $1`,
 			requestID.Value, bestTeamID, bestScore)
 		return err

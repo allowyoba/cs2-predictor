@@ -34,6 +34,16 @@ func (f *fakeTeamMatchRepo) CreateRequest(_ context.Context, req enrichment.Team
 	f.seed(req, candidates)
 	return nil
 }
+func (f *fakeTeamMatchRepo) AddCandidate(_ context.Context, requestID common.RequestID, candidate enrichment.TeamMatchCandidate) error {
+	key := requestID.String()
+	for _, c := range f.candidates[key] {
+		if c.TeamID == candidate.TeamID {
+			return nil
+		}
+	}
+	f.candidates[key] = append(f.candidates[key], candidate)
+	return nil
+}
 func (f *fakeTeamMatchRepo) ListPending(context.Context, int) ([]enrichment.TeamMatchRequest, error) {
 	var out []enrichment.TeamMatchRequest
 	for _, r := range f.byID {
@@ -269,6 +279,65 @@ func TestTeamMatchCard_PickConfirmsIdentityAndResolves(t *testing.T) {
 	updated, _, _ := requests.FindRequest(context.Background(), req.ID)
 	if updated.Status != enrichment.TeamMatchConfirmed || updated.BestTeamID == nil || *updated.BestTeamID != teamID {
 		t.Fatalf("expected the request confirmed with the picked team, got %+v", updated)
+	}
+}
+
+// A stale /team_matches card's buttons stay tappable after the request they
+// point at is already resolved (Telegram doesn't disable old inline
+// buttons) — confirming again must not silently overwrite a decision
+// another operator (or an earlier tap) already made.
+func TestTeamMatchCard_PickOnAlreadyResolvedRequestShowsAlertAndDoesNotOverwrite(t *testing.T) {
+	handler, calls, requests, _ := teamMatchTestHandler(t)
+	teamA := common.NewTeamID()
+	teamB := common.NewTeamID()
+	req := enrichment.TeamMatchRequest{
+		ID: common.NewRequestID(), ExternalName: "Vitality", Source: enrichment.SourceValveVRS,
+		Status: enrichment.TeamMatchConfirmed, BestTeamID: &teamA, BestScore: 70,
+	}
+	requests.seed(req, []enrichment.TeamMatchCandidate{
+		{TeamID: teamA, TeamName: "Team Vitality", Score: 70},
+		{TeamID: teamB, TeamName: "Vitality Academy", Score: 65},
+	})
+
+	pickData := "team_matches:pick:" + req.ID.String() + ":1"
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, pickData)); err != nil {
+		t.Fatal(err)
+	}
+	updated, _, _ := requests.FindRequest(context.Background(), req.ID)
+	if updated.BestTeamID == nil || *updated.BestTeamID != teamA {
+		t.Fatalf("expected the original confirmed team to remain unchanged, got %+v", updated)
+	}
+	found := false
+	for _, c := range *calls {
+		if c["__method"] == "answerCallbackQuery" {
+			if txt, _ := c["text"].(string); strings.Contains(txt, ru(t, "teammatch.ask_expired")) {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected an alert with the ask_expired text, calls=%+v", *calls)
+	}
+}
+
+// Same guard, reject side: an operator rejecting an already-confirmed
+// request must not flip its status out from under the earlier decision.
+func TestTeamMatchCard_RejectOnAlreadyResolvedRequestDoesNotOverwrite(t *testing.T) {
+	handler, _, requests, _ := teamMatchTestHandler(t)
+	teamID := common.NewTeamID()
+	req := enrichment.TeamMatchRequest{
+		ID: common.NewRequestID(), ExternalName: "Vitality", Source: enrichment.SourceValveVRS,
+		Status: enrichment.TeamMatchConfirmed, BestTeamID: &teamID, BestScore: 70,
+	}
+	requests.seed(req, []enrichment.TeamMatchCandidate{{TeamID: teamID, TeamName: "Team Vitality", Score: 70}})
+
+	data := "team_matches:reject:" + req.ID.String()
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, data)); err != nil {
+		t.Fatal(err)
+	}
+	updated, _, _ := requests.FindRequest(context.Background(), req.ID)
+	if updated.Status != enrichment.TeamMatchConfirmed {
+		t.Fatalf("expected the already-confirmed status to remain unchanged, got %+v", updated)
 	}
 }
 

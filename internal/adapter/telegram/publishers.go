@@ -624,7 +624,9 @@ func (p *TeamMatchAskPublisher) Publish(ctx context.Context, message common.Outb
 		return err
 	}
 	locale := common.LocaleFrom(n.Locale)
-	text := p.texts.Get("teammatch.ask_question", locale, escapeHTML(n.ExternalName), bold(escapeHTML(n.CandidateName)))
+	// teammatch.ask_question already wraps both {0} and {1} in <b>...</b>
+	// itself — bolding CandidateName here too would double-nest the tag.
+	text := p.texts.Get("teammatch.ask_question", locale, escapeHTML(n.ExternalName), escapeHTML(n.CandidateName))
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{
 		button(p.texts.Get("teammatch.ask_yes", locale), "tmatch:ans:"+n.RequestID+":yes"),
 		button(p.texts.Get("teammatch.ask_no", locale), "tmatch:ans:"+n.RequestID+":no"),
