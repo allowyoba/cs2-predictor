@@ -493,6 +493,24 @@ func (r *ScoringRepository) MarkEventCompleted(ctx context.Context, chatID commo
 	return err
 }
 
+// LockEventCompletion acquires a transaction-scoped Postgres advisory lock
+// (pg_advisory_xact_lock) keyed by (chatID, eventID), auto-released at
+// COMMIT/ROLLBACK — see the interface doc comment for why this exists. The
+// two int64 inputs are combined into one lock key via hashtextextended
+// (chatID alone isn't a safe key: two different events completing in the
+// same chat around the same time must not serialize against each other,
+// only two attempts at completing the *same* (chat, event) should).
+func (r *ScoringRepository) LockEventCompletion(ctx context.Context, chatID common.ChatID, eventID common.EventID) error {
+	// The key is formatted in Go, as a single text arg, rather than
+	// concatenated in SQL from two params of different types — pgx infers
+	// each placeholder's wire type from how it's used in the query, and a
+	// bigint arg cast to ::text inline like "$1::text || ..." doesn't
+	// resolve to a type pgx already has an int64-to-text encode plan for.
+	key := fmt.Sprintf("%d:%s", chatID.Value, eventID.Value)
+	_, err := executor(ctx, r.pool).Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key)
+	return err
+}
+
 // SettlementRepository implements scoring.SettlementRepository against
 // match_settlement.
 type SettlementRepository struct {

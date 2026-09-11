@@ -203,6 +203,18 @@ type Repository interface {
 	AwardMedals(ctx context.Context, chatID common.ChatID, eventID common.EventID, standings []UserStanding, at time.Time) error
 	EventCompletionHash(ctx context.Context, chatID common.ChatID, eventID common.EventID) (string, bool, error)
 	MarkEventCompleted(ctx context.Context, chatID common.ChatID, eventID common.EventID, resultHash string, at time.Time) error
+	// LockEventCompletion serializes concurrent event-completion attempts
+	// for the same (chatID, eventID) pair via a transaction-scoped
+	// database lock: it must be called as the very first statement inside
+	// a transaction (see app.TxRunner), and blocks until any other
+	// transaction currently holding the same (chatID, eventID) lock has
+	// committed or rolled back. Two different scheduled jobs
+	// (DiscoverEvents and SynchronizeMatches) can both reach event
+	// completion for the same event, guarded by different cluster locks —
+	// without this, both could pass the EventCompletionHash idempotency
+	// check before either commits, double-awarding medals and enqueuing
+	// two "event finished" notifications.
+	LockEventCompletion(ctx context.Context, chatID common.ChatID, eventID common.EventID) error
 }
 
 // SettlementRepository is the per-poll settlement idempotency port.

@@ -93,6 +93,9 @@ func (f *fakeScoringForSettlement) EventCompletionHash(context.Context, common.C
 func (f *fakeScoringForSettlement) MarkEventCompleted(context.Context, common.ChatID, common.EventID, string, time.Time) error {
 	return nil
 }
+func (f *fakeScoringForSettlement) LockEventCompletion(context.Context, common.ChatID, common.EventID) error {
+	return nil
+}
 
 type fakeSettlementRepo struct {
 	hashes map[common.PollID]string

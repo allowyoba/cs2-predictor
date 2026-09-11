@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
@@ -1501,6 +1502,105 @@ func TestChatRepository_NotificationRecipientsNeedBothOptInAndReachability(t *te
 	if _, err := chats.Recipients(ctx, common.NotificationKind("everything"), []common.UserID{optedInReachable}); err == nil {
 		t.Fatal("an unknown notification kind was accepted")
 	}
+}
+
+// pgxTxCloser lets a test hold a transaction open across goroutines and
+// release it (rolling back — nothing in these tests needs the write kept)
+// from more than one place (an explicit release plus a deferred safety net)
+// without a second Rollback call's "already closed" error needing handling.
+type pgxTxCloser struct{ tx pgx.Tx }
+
+func (c pgxTxCloser) rollback(ctx context.Context) { _ = c.tx.Rollback(ctx) }
+
+// LockEventCompletion is app.EventCompletionService.completeForChat's guard
+// against two different scheduled jobs (DiscoverEvents and
+// SynchronizeMatches) both reaching event completion for the same
+// (chat, event) pair around the same time: a second transaction attempting
+// the same pair must block until the first transaction holding it commits
+// or rolls back, while two DIFFERENT pairs must not serialize against each
+// other at all (or every unrelated event completing in the same chat would
+// contend needlessly).
+func TestScoringRepository_LockEventCompletionSerializesOnlyTheSamePair(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	chatID := common.ChatID{Value: -300901}
+	eventA, eventB := common.NewEventID(), common.NewEventID()
+
+	// beginLocked starts a transaction, acquires the lock for (chatID, id)
+	// inside it, and returns the still-open transaction — the caller
+	// decides when to commit, simulating "this job's completion pass is
+	// still in progress".
+	beginLocked := func(t *testing.T, id common.EventID) pgxTxCloser {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin tx: %v", err)
+		}
+		if err := scoringRepo.LockEventCompletion(pg.WithTx(ctx, tx), chatID, id); err != nil {
+			t.Fatalf("lock: %v", err)
+		}
+		return pgxTxCloser{tx}
+	}
+
+	t.Run("same pair blocks until released", func(t *testing.T) {
+		first := beginLocked(t, eventA)
+		defer first.rollback(ctx)
+
+		acquired := make(chan error, 1)
+		go func() {
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				acquired <- err
+				return
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			acquired <- scoringRepo.LockEventCompletion(pg.WithTx(ctx, tx), chatID, eventA)
+		}()
+
+		select {
+		case err := <-acquired:
+			t.Fatalf("second lock attempt on the same pair acquired immediately (err=%v), want it blocked", err)
+		case <-time.After(300 * time.Millisecond):
+			// Still blocked, as expected.
+		}
+
+		first.rollback(ctx) // releases the advisory lock
+
+		select {
+		case err := <-acquired:
+			if err != nil {
+				t.Fatalf("second lock attempt failed after release: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("second lock attempt never unblocked after the first transaction ended")
+		}
+	})
+
+	t.Run("different pair does not block", func(t *testing.T) {
+		first := beginLocked(t, eventA)
+		defer first.rollback(ctx)
+
+		done := make(chan error, 1)
+		go func() {
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				done <- err
+				return
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			done <- scoringRepo.LockEventCompletion(pg.WithTx(ctx, tx), chatID, eventB)
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("lock on a different event id failed: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("a different (chat, event) pair must not be blocked by an unrelated lock")
+		}
+	})
 }
 
 // A chosen nickname must win over the Telegram-sourced display_name on

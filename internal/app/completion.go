@@ -83,22 +83,37 @@ func (s *EventCompletionService) Complete(ctx context.Context, event competition
 	return nil
 }
 
+// completeForChat's entire body runs inside one transaction, starting with
+// LockEventCompletion as its very first statement: DiscoverEvents and
+// SynchronizeMatches are two different scheduled jobs, guarded by two
+// different cluster locks, that can both reach event completion for the
+// same event around the same time. Without a lock scoped to this exact
+// (chat, event) pair, both could read EventCompletionHash before either
+// had written it, both see "not completed yet", and both award medals and
+// enqueue an "event finished" notification. The lock forces the second
+// caller to wait for the first transaction to commit (or roll back) before
+// it re-reads the hash itself — by then it observes the first caller's
+// write and takes the idempotency no-op path below instead.
 func (s *EventCompletionService) completeForChat(ctx context.Context, event competition.Event, chatID common.ChatID) error {
-	standings, err := s.scoringRepo.Leaderboard(ctx, chatID, scoring.ForEvent(event.ID))
-	if err != nil {
-		return err
-	}
-	hash := completionHash(standings)
-
-	existing, ok, err := s.scoringRepo.EventCompletionHash(ctx, chatID, event.ID)
-	if err != nil {
-		return err
-	}
-	if ok && existing == hash {
-		return nil // idempotency guard: nothing changed since last completion pass
-	}
-
 	return s.runTx(ctx, func(txCtx context.Context) error {
+		if err := s.scoringRepo.LockEventCompletion(txCtx, chatID, event.ID); err != nil {
+			return err
+		}
+
+		standings, err := s.scoringRepo.Leaderboard(txCtx, chatID, scoring.ForEvent(event.ID))
+		if err != nil {
+			return err
+		}
+		hash := completionHash(standings)
+
+		existing, ok, err := s.scoringRepo.EventCompletionHash(txCtx, chatID, event.ID)
+		if err != nil {
+			return err
+		}
+		if ok && existing == hash {
+			return nil // idempotency guard: nothing changed since last completion pass (also the path a racer takes after waiting out the lock above)
+		}
+
 		if err := s.scoringRepo.AwardMedals(txCtx, chatID, event.ID, standings, s.clock.Now()); err != nil {
 			return err
 		}
