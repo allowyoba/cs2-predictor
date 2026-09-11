@@ -93,19 +93,53 @@ func (r *CompetitionRepository) SearchEvents(ctx context.Context, query string, 
 	return r.scanEvents(ctx, rows)
 }
 
+// scanEvents reads every row first (deferring the provider lookup) and then
+// resolves all distinct provider ids in one batched query — not one
+// providerCode call per row, which would be an N+1 query against
+// data_provider on every multi-row event read (SearchEvents, FindEvents).
 func (r *CompetitionRepository) scanEvents(ctx context.Context, rows pgx.Rows) ([]competition.Event, error) {
 	var out []competition.Event
+	var providerIDs []int16
 	for rows.Next() {
 		e, providerID, err := scanEvent(rows)
 		if err != nil {
 			return nil, err
 		}
-		code, err := r.providerCode(ctx, providerID)
-		if err != nil {
+		out = append(out, e)
+		providerIDs = append(providerIDs, providerID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	codes, err := r.providerCodes(ctx, providerIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Provider = codes[providerIDs[i]]
+	}
+	return out, nil
+}
+
+// providerCodes batch-resolves data_provider ids to their codes in one
+// round trip, for scanEvents (see its doc comment).
+func (r *CompetitionRepository) providerCodes(ctx context.Context, ids []int16) (map[int16]string, error) {
+	out := map[int16]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx, `SELECT id, code FROM data_provider WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int16
+		var code string
+		if err := rows.Scan(&id, &code); err != nil {
 			return nil, err
 		}
-		e.Provider = code
-		out = append(out, e)
+		out[id] = code
 	}
 	return out, rows.Err()
 }
