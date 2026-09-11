@@ -45,6 +45,7 @@ esac
             "TELEGRAM_WEBHOOK_SECRET": "fresh-webhook-secret",
             "PANDASCORE_TOKEN": "fresh-pandascore-token",
             "CADDY_DOMAIN": "bot.example.test",
+            "DEPLOY_NOTIFY_CHAT_IDS": "",
         }
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],
@@ -73,7 +74,11 @@ esac
         self.assertNotIn("do-not-log-this", result.stdout)
         self.assertNotIn("private-token", result.stdout)
         for value in self.new_env_values.values():
-            self.assertNotIn(value, result.stdout)
+            # An empty value (DEPLOY_NOTIFY_CHAT_IDS when unset, as in this
+            # fixture) can't leak anything and would trivially "match" any
+            # string, which is not what this check is for.
+            if value:
+                self.assertNotIn(value, result.stdout)
         return result
 
     def assert_backup(self):

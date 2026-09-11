@@ -22,6 +22,7 @@ var (
 	_ common.OutboxPublisher = (*MonthlyDigestPublisher)(nil)
 	_ common.OutboxPublisher = (*AnnualDigestPublisher)(nil)
 	_ common.OutboxPublisher = (*BigEventPublisher)(nil)
+	_ common.OutboxPublisher = (*TeamMatchAskPublisher)(nil)
 	_ prediction.Gateway     = (*PollGateway)(nil)
 	_ chat.MembershipGateway = (*MembershipAdapter)(nil)
 )
@@ -566,4 +567,84 @@ func NewPollReminderPublisher(client *Client, chats chat.Repository, texts *Text
 			return n.UserID, text, nil
 		},
 	}
+}
+
+// NewTeamMatchOperatorPingPublisher delivers the one-line "a new team-match
+// request needs review" ping to a configured operator (see
+// app.TeamMatchService.notifyOperators) — plain text, no keyboard, since
+// the operator acts via /team_matches rather than a button on the ping
+// itself.
+func NewTeamMatchOperatorPingPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) common.OutboxPublisher {
+	return &personalNotePublisher{
+		eventType: "telegram.team-match-operator-ping", client: client, chats: chats, texts: texts, metrics: metrics,
+		compose: func(payload string) (int64, string, error) {
+			var n common.TeamMatchOperatorPingNotification
+			if err := json.Unmarshal([]byte(payload), &n); err != nil {
+				return 0, "", err
+			}
+			// Root operators are an ops concern, not a per-person
+			// preference — RU (this project's primary locale) rather than
+			// a per-chat lookup this compose closure has no ctx for.
+			text := texts.Get("teammatch.operator_ping", common.LocaleRU, escapeHTML(n.ExternalName))
+			return n.ChatID, text, nil
+		},
+	}
+}
+
+// TeamMatchAskPublisher delivers one crowd-review question to one helper's
+// DM (the "telegram.team-match-ask" outbox event type) — see
+// app.TeamMatchService.AskChatHelpers for who gets asked and how often.
+// Unlike the plain personalNotePublisher deliveries above, this carries an
+// inline keyboard (yes/no), so it needs its own Publish rather than reusing
+// that shared type.
+type TeamMatchAskPublisher struct {
+	client  *Client
+	chats   chat.Repository
+	texts   *Texts
+	metrics AdminMetrics
+}
+
+func NewTeamMatchAskPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) *TeamMatchAskPublisher {
+	return &TeamMatchAskPublisher{client: client, chats: chats, texts: texts, metrics: metrics}
+}
+
+func (p *TeamMatchAskPublisher) Supports(eventType string) bool {
+	return eventType == "telegram.team-match-ask"
+}
+
+func (p *TeamMatchAskPublisher) record(result string) {
+	if p.metrics != nil {
+		p.metrics.RecordDMDelivery(result)
+	}
+}
+
+func (p *TeamMatchAskPublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
+	var n common.TeamMatchAskNotification
+	if err := json.Unmarshal([]byte(message.Payload), &n); err != nil {
+		return err
+	}
+	locale := common.LocaleFrom(n.Locale)
+	text := p.texts.Get("teammatch.ask_question", locale, escapeHTML(n.ExternalName), bold(escapeHTML(n.CandidateName)))
+	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{
+		button(p.texts.Get("teammatch.ask_yes", locale), "tmatch:ans:"+n.RequestID+":yes"),
+		button(p.texts.Get("teammatch.ask_no", locale), "tmatch:ans:"+n.RequestID+":no"),
+	}}}
+
+	_, err := p.client.Call(ctx, "sendMessage", map[string]any{
+		"chat_id": n.UserID, "text": text, "parse_mode": "HTML", "reply_markup": kb,
+	})
+	if err == nil {
+		p.record("delivered")
+		return nil
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.IsUnreachableUser() {
+		p.record("unreachable")
+		if markErr := p.chats.SetDMReachable(ctx, common.UserID{Value: n.UserID}, false); markErr != nil {
+			return markErr
+		}
+		return nil
+	}
+	p.record("error")
+	return err
 }

@@ -243,6 +243,53 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		}
 		answered = true
 		err = h.renameMenu(ctx, target, userID, locale)
+	case strings.HasPrefix(data, "tmatch:ans:"):
+		err = h.answerTeamMatchAsk(ctx, target, userID, locale, strings.TrimPrefix(data, "tmatch:ans:"))
+	case data == "tmatch:continue:yes":
+		err = h.setTeamMatchHelperOptOut(ctx, target, userID, locale, false)
+	case data == "tmatch:continue:no":
+		err = h.setTeamMatchHelperOptOut(ctx, target, userID, locale, true)
+	case strings.HasPrefix(data, "team_matches:list:"):
+		page, parseErr := strconv.Atoi(strings.TrimPrefix(data, "team_matches:list:"))
+		if parseErr != nil || page < 0 {
+			err = newValidationError("invalid team match page")
+		} else {
+			err = h.teamMatchQueueMenu(ctx, target, userID, locale, page)
+		}
+	case strings.HasPrefix(data, "team_matches:open:"):
+		reqID, parseErr := common.ParseRequestID(strings.TrimPrefix(data, "team_matches:open:"))
+		if parseErr != nil {
+			err = newValidationError("invalid team match request id")
+		} else {
+			err = h.teamMatchCardMenu(ctx, target, userID, locale, reqID)
+		}
+	case strings.HasPrefix(data, "team_matches:pick:"):
+		parts := strings.Split(strings.TrimPrefix(data, "team_matches:pick:"), ":")
+		reqID, parseErr := common.ParseRequestID(parts[0])
+		index, indexErr := -1, error(nil)
+		if len(parts) == 2 {
+			index, indexErr = strconv.Atoi(parts[1])
+		}
+		if len(parts) != 2 || parseErr != nil || indexErr != nil {
+			err = newValidationError("invalid team match pick")
+			break
+		}
+		if confirmErr := h.confirmTeamMatch(ctx, userID, reqID, index); confirmErr != nil {
+			err = confirmErr
+			break
+		}
+		err = h.teamMatchQueueMenu(ctx, target, userID, locale, 0)
+	case strings.HasPrefix(data, "team_matches:reject:"):
+		reqID, parseErr := common.ParseRequestID(strings.TrimPrefix(data, "team_matches:reject:"))
+		if parseErr != nil {
+			err = newValidationError("invalid team match request id")
+			break
+		}
+		if rejectErr := h.rejectTeamMatch(ctx, userID, reqID); rejectErr != nil {
+			err = rejectErr
+			break
+		}
+		err = h.teamMatchQueueMenu(ctx, target, userID, locale, 0)
 	case data == "manage:chats":
 		err = h.managedChatsMenu(ctx, target, userID, locale)
 	case strings.HasPrefix(data, "manage:open:"):

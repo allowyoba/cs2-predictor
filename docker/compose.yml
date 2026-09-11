@@ -44,6 +44,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set it in .env}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set it in .env}
       PANDASCORE_TOKEN: ${PANDASCORE_TOKEN:?set it in .env}
+      DEPLOY_NOTIFY_CHAT_IDS: ${DEPLOY_NOTIFY_CHAT_IDS:-}
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:

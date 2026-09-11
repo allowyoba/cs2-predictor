@@ -15,6 +15,7 @@ import (
 	pg "cs2predictor/internal/adapter/postgres"
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/domain/prediction"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/domain/subscription"
@@ -1630,6 +1631,153 @@ func TestScoringRepository_LockEventCompletionSerializesOnlyTheSamePair(t *testi
 			t.Fatal("a different (chat, event) pair must not be blocked by an unrelated lock")
 		}
 	})
+}
+
+// EnrichmentRepository's team-match-request lifecycle end to end: the
+// snapshot cache, creating a request with an initial candidate, a crowd
+// response nudging that candidate's score and re-electing the request's
+// best candidate, the per-user ask/opt-out bookkeeping, and finally
+// resolving the request.
+func TestEnrichmentRepository_TeamMatchRequestLifecycle(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+	chats := pg.NewChatRepository(pool)
+	repo := pg.NewEnrichmentRepository(pool)
+
+	// Seed two local teams the normal way (via a match), and one Telegram
+	// user (via any upsert path — SetUserLocale is the simplest).
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "TM Cup", ExternalID: "tm-event", Status: competition.EventUpcoming, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	teamA := competition.Team{ID: common.NewTeamID(), Name: "Avangarr", ExternalID: "tm-team-a"}
+	teamB := competition.Team{ID: common.NewTeamID(), Name: "Avangaar", ExternalID: "tm-team-b"}
+	match := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "tm-match-1",
+		FirstTeam: &teamA, SecondTeam: &teamB, Status: competition.MatchNotStarted, Format: format,
+	}
+	if _, err := catalog.SaveMatch(ctx, match); err != nil {
+		t.Fatal(err)
+	}
+	helper := common.UserID{Value: 90001}
+	if err := chats.SetUserLocale(ctx, helper, common.LocaleRU); err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot cache.
+	rank := 12
+	if err := repo.SaveSnapshot(ctx, []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Avangar"}, GlobalRank: &rank, Source: enrichment.SourceValveVRS},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := repo.AllSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot) != 1 || snapshot[0].Identity.Name != "Avangar" || *snapshot[0].GlobalRank != 12 {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+
+	// Create a request with one candidate.
+	req := enrichment.TeamMatchRequest{
+		ID: common.NewRequestID(), ExternalName: "Avangar", Source: enrichment.SourceValveVRS,
+		Status: enrichment.TeamMatchPending, BestTeamID: &teamA.ID, BestScore: 70, CreatedAt: time.Now().UTC(),
+	}
+	candidate := enrichment.TeamMatchCandidate{TeamID: teamA.ID, Score: 70, Kind: enrichment.CandidateKindFuzzy}
+	if err := repo.CreateRequest(ctx, req, []enrichment.TeamMatchCandidate{candidate}); err != nil {
+		t.Fatal(err)
+	}
+
+	if existing, err := repo.FindPendingByExternalName(ctx, enrichment.SourceValveVRS, "Avangar"); err != nil {
+		t.Fatal(err)
+	} else if existing == nil || existing.ID.String() != req.ID.String() {
+		t.Fatalf("expected to find the just-created pending request, got %+v", existing)
+	}
+	if pending, err := repo.ListPending(ctx, 10); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 1 {
+		t.Fatalf("expected exactly one pending request, got %+v", pending)
+	}
+
+	// A "yes" response must nudge the candidate's score up (capped below
+	// auto-accept) and re-elect it as the request's best candidate.
+	if err := repo.RecordResponse(ctx, req.ID, helper, teamA.ID, enrichment.TeamMatchAnswerYes); err != nil {
+		t.Fatal(err)
+	}
+	gotReq, gotCandidates, err := repo.FindRequest(ctx, req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantScore := enrichment.CrowdAdjustedScore(70, enrichment.TeamMatchAnswerYes)
+	if gotReq.BestScore != wantScore || gotReq.BestTeamID == nil || *gotReq.BestTeamID != teamA.ID {
+		t.Fatalf("request not re-elected after response: %+v", gotReq)
+	}
+	if len(gotCandidates) != 1 || gotCandidates[0].Score != wantScore || gotCandidates[0].Yes != 1 || gotCandidates[0].No != 0 {
+		t.Fatalf("candidate tally wrong after one 'yes': %+v", gotCandidates)
+	}
+
+	if answered, err := repo.HasResponded(ctx, req.ID, helper); err != nil {
+		t.Fatal(err)
+	} else if !answered {
+		t.Fatal("expected HasResponded to be true after RecordResponse")
+	}
+
+	// Helper prefs: not eligible until asked-count/opt-out say otherwise.
+	if eligible, err := repo.EligibleHelpers(ctx, []common.UserID{helper}); err != nil {
+		t.Fatal(err)
+	} else if len(eligible) != 1 {
+		t.Fatalf("expected helper to be eligible before any asks, got %+v", eligible)
+	}
+	for range enrichment.MaxLifetimeAsksPerUser {
+		if err := repo.RecordAsk(ctx, helper, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if eligible, err := repo.EligibleHelpers(ctx, []common.UserID{helper}); err != nil {
+		t.Fatal(err)
+	} else if len(eligible) != 0 {
+		t.Fatalf("expected helper to be ineligible after hitting the lifetime cap, got %+v", eligible)
+	}
+
+	otherHelper := common.UserID{Value: 90002}
+	if err := chats.SetUserLocale(ctx, otherHelper, common.LocaleRU); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetOptedOut(ctx, otherHelper, true); err != nil {
+		t.Fatal(err)
+	}
+	if eligible, err := repo.EligibleHelpers(ctx, []common.UserID{otherHelper}); err != nil {
+		t.Fatal(err)
+	} else if len(eligible) != 0 {
+		t.Fatalf("expected the opted-out helper to be excluded, got %+v", eligible)
+	}
+
+	if err := repo.IncrementCrowdAsksSent(ctx, req.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	if gotReq, _, err := repo.FindRequest(ctx, req.ID); err != nil {
+		t.Fatal(err)
+	} else if gotReq.CrowdAsksSent != 2 {
+		t.Fatalf("CrowdAsksSent = %d, want 2", gotReq.CrowdAsksSent)
+	}
+
+	if err := repo.Resolve(ctx, req.ID, enrichment.TeamMatchConfirmed, &teamA.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := repo.FindRequest(ctx, req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Status != enrichment.TeamMatchConfirmed || resolved.ResolvedAt == nil {
+		t.Fatalf("expected the request resolved as confirmed, got %+v", resolved)
+	}
+	if pending, err := repo.ListPending(ctx, 10); err != nil {
+		t.Fatal(err)
+	} else if len(pending) != 0 {
+		t.Fatalf("a resolved request must no longer be pending, got %+v", pending)
+	}
 }
 
 // A chosen nickname must win over the Telegram-sourced display_name on

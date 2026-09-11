@@ -53,6 +53,13 @@ type Config struct {
 	LogLevel string
 
 	Enrichment EnrichmentConfig
+
+	// TeamMatchOperatorChatIDs receive a ping when a new team-identity
+	// review request needs attention, and are the only chat ids allowed to
+	// use /team_matches — reuses DEPLOY_NOTIFY_CHAT_IDS (already set for
+	// deploy-failure notifications, see ansible/roles/notify_admins)
+	// rather than introducing a second admin-contact list.
+	TeamMatchOperatorChatIDs []int64
 }
 
 // EnrichmentConfig controls the optional team/match data enrichment sources
@@ -160,6 +167,30 @@ func envDurationMillis(key string, defMillis int64) (time.Duration, error) {
 	return time.Duration(ms) * time.Millisecond, nil
 }
 
+// envInt64List parses a comma-separated list of integers (blank entries and
+// surrounding whitespace ignored), or nil if the variable is unset/empty —
+// the same convention ansible/roles/notify_admins already applies to this
+// exact variable on the deploy side.
+func envInt64List(key string) ([]int64, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil, nil
+	}
+	var out []int64
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%s: invalid integer %q: %w", key, part, err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 func envBool(key string, def bool) bool {
 	v := os.Getenv(key)
 	if v == "" {
@@ -241,6 +272,12 @@ func LoadConfig() (Config, error) {
 	for i := range order {
 		order[i] = strings.TrimSpace(order[i])
 	}
+
+	operatorIDs, err := envInt64List("DEPLOY_NOTIFY_CHAT_IDS")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TeamMatchOperatorChatIDs = operatorIDs
 	startupGrace, err := envDuration("COMPETITION_PROVIDERS_HEALTH_STARTUP_GRACE", 2*time.Minute)
 	if err != nil {
 		return Config{}, err

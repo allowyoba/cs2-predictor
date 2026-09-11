@@ -13,6 +13,7 @@ import (
 
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/domain/prediction"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/domain/subscription"
@@ -105,6 +106,20 @@ type UpdateHandler struct {
 	// a group's admin panel off to a DM. Left empty, deep-link buttons
 	// aren't rendered (see dmDeepLink).
 	BotUsername string
+
+	// --- team-identity review (see internal/app.TeamMatchService) ---
+
+	TeamMatches        enrichment.TeamMatchRepository
+	TeamMatchHelpers   enrichment.TeamMatchHelperRepository
+	TeamMatchOperators enrichment.TeamMatchOperatorRepository
+	TeamRankings       enrichment.RankingRepository
+	TeamIdentity       enrichment.IdentityRepository
+	TeamSnapshots      enrichment.SnapshotRepository
+	// TeamMatchOperatorChatIDs are the root /team_matches operators
+	// (DEPLOY_NOTIFY_CHAT_IDS) — always allowed, and the only ones who may
+	// appoint/revoke the delegated tier in TeamMatchOperators via
+	// /team_match_admin (see isRootTeamMatchOperator).
+	TeamMatchOperatorChatIDs []int64
 }
 
 // requireManager wraps chat.AuthorizationService.RequireManager: on success
@@ -465,6 +480,11 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/bets"):
 		return h.privateBetsMenu(ctx, sendTarget(chatID, nil), userID, locale, nil, 0, 0)
+	case strings.HasPrefix(text, "/team_match_admin"):
+		return h.handleCommandError(ctx, chat.Settings{ChatID: chatID, Locale: locale}, nil, text,
+			h.handleTeamMatchAdminCommand(ctx, chatID, userID, locale, strings.TrimSpace(strings.TrimPrefix(text, "/team_match_admin"))))
+	case strings.HasPrefix(text, "/team_matches"):
+		return h.teamMatchQueueMenu(ctx, sendTarget(chatID, nil), userID, locale, 0)
 	case strings.HasPrefix(text, "/help"):
 		return h.helpView(ctx, sendTarget(chatID, nil), locale, "pstats:menu")
 	case !strings.HasPrefix(text, "/") && isRenameReply(msg, locale, h.Texts):
