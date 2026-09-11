@@ -216,6 +216,35 @@ func TestCloseDue_IsIdempotent(t *testing.T) {
 	}
 }
 
+// One poll's gateway failure must not stop CloseDue from attempting the
+// rest of the due batch: a second due poll (a different match/chat) still
+// gets closed, and the failure is still reported (joined) rather than
+// silently swallowed.
+func TestCloseDue_ContinuesPastAGatewayFailureAndJoinsTheError(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	repo := newInMemoryRepo()
+	failure := errors.New("telegram unavailable")
+	gateway := &stubGateway{failAfter: 1, failErr: failure}
+	svc := NewService(repo, gateway, common.FixedClock(now.Add(-time.Minute)))
+
+	matchA := testMatch(now)
+	matchB := testMatch(now)
+	if _, err := svc.Create(context.Background(), matchA, common.ChatID{Value: -1}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(context.Background(), matchB, common.ChatID{Value: -2}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := svc.CloseDue(context.Background(), now)
+	if !errors.Is(err, failure) {
+		t.Fatalf("err = %v, want it to wrap %v", err, failure)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1 (the first poll fails, the second still gets closed)", count)
+	}
+}
+
 func (r *inMemoryRepo) PollsAwaitingReminder(context.Context, time.Time, int) ([]Poll, error) {
 	return nil, nil
 }
@@ -283,7 +312,10 @@ func TestCancelForMatch_CancelsEveryOpenPollForTheMatch(t *testing.T) {
 // A gateway failure partway through a batch aborts the rest: the polls
 // already processed keep their new status, and the ones not yet reached
 // stay untouched for the next scheduler tick to retry.
-func TestCancelForMatch_AbortsRemainingPollsOnGatewayFailure(t *testing.T) {
+// One poll's gateway failure must not stop the rest of the batch: the other
+// poll for this match still gets cancelled, and the failure is still
+// reported (joined) rather than silently swallowed.
+func TestCancelForMatch_ContinuesPastAGatewayFailureAndJoinsTheError(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	repo := newInMemoryRepo()
 	failure := errors.New("telegram unavailable")
@@ -301,10 +333,10 @@ func TestCancelForMatch_AbortsRemainingPollsOnGatewayFailure(t *testing.T) {
 
 	count, err := svc.CancelForMatch(context.Background(), match.ID)
 	if !errors.Is(err, failure) {
-		t.Fatalf("err = %v, want %v", err, failure)
+		t.Fatalf("err = %v, want it to wrap %v", err, failure)
 	}
-	if count != 0 {
-		t.Fatalf("count = %d, want 0 (the failing poll doesn't count as processed)", count)
+	if count != 1 {
+		t.Fatalf("count = %d, want 1 (the first poll fails, the second still gets processed)", count)
 	}
 }
 

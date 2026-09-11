@@ -2,6 +2,7 @@ package prediction
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -131,25 +132,30 @@ func (s *Service) RecordVote(ctx context.Context, telegramPollID string, userID 
 // CloseDue closes every OPEN poll whose ClosesAt has passed, returning how
 // many were processed. Idempotent: calling it again immediately afterward
 // processes zero, since the repository no longer reports them as open+due.
+// One poll's gateway failure does not stop the rest of this batch from
+// being attempted — each poll is independent, and OpenPollsDue will report
+// whichever ones are still open+due again on the next run — but every
+// failure is preserved (joined) in the returned error so the caller still
+// learns something went wrong rather than a silently partial run.
 func (s *Service) CloseDue(ctx context.Context, at time.Time) (int, error) {
 	due, err := s.repo.OpenPollsDue(ctx, at)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
+	var errs []error
 	for _, poll := range due {
 		if err := s.close(ctx, poll); err != nil {
-			return count, err
+			errs = append(errs, fmt.Errorf("poll %s: %w", poll.ID.Value, err))
+			continue
 		}
 		count++
 	}
-	return count, nil
+	return count, errors.Join(errs...)
 }
 
 // close only marks the poll CLOSED in the repository if the gateway call
-// succeeded — a gateway failure aborts processing (the error propagates to
-// the caller, which in CloseDue's loop means any remaining due polls in
-// that batch are left unprocessed until the next scheduler tick).
+// succeeded.
 func (s *Service) close(ctx context.Context, poll Poll) error {
 	if err := s.gateway.Close(ctx, poll); err != nil {
 		return err
@@ -167,15 +173,17 @@ func (s *Service) CancelForMatch(ctx context.Context, matchID common.MatchID) (i
 	return s.closeMatching(ctx, matchID, PollCancelled)
 }
 
-// closeMatching applies the same gateway-then-persist, abort-on-error
-// pattern as close() — a gateway failure on one poll aborts the remaining
-// polls in this batch too.
+// closeMatching applies the same gateway-then-persist pattern as close():
+// one poll's failure (gateway or persist) does not stop the rest of this
+// batch from being attempted — see CloseDue's doc comment for why — with
+// every failure preserved (joined) in the returned error.
 func (s *Service) closeMatching(ctx context.Context, matchID common.MatchID, status PollStatus) (int, error) {
 	polls, err := s.repo.OpenPollsForMatch(ctx, matchID)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
+	var errs []error
 	for _, poll := range polls {
 		var gatewayErr error
 		if status == PollCancelled {
@@ -184,15 +192,17 @@ func (s *Service) closeMatching(ctx context.Context, matchID common.MatchID, sta
 			gatewayErr = s.gateway.Close(ctx, poll)
 		}
 		if gatewayErr != nil {
-			return count, gatewayErr
+			errs = append(errs, fmt.Errorf("poll %s: %w", poll.ID.Value, gatewayErr))
+			continue
 		}
 		poll.Status = status
 		if _, err := s.repo.SavePoll(ctx, poll); err != nil {
-			return count, err
+			errs = append(errs, fmt.Errorf("poll %s: %w", poll.ID.Value, err))
+			continue
 		}
 		count++
 	}
-	return count, nil
+	return count, errors.Join(errs...)
 }
 
 // Reschedule updates only ClosesAt on every open poll for the match, keeping

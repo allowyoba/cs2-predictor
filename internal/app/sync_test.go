@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -20,6 +21,10 @@ import (
 // DiscoverEvents/announceBigEvent key on.
 type fakeSyncCatalog struct {
 	events map[common.EventID]competition.Event
+	// failSaveFor, when set, makes SaveEvent fail for exactly this one
+	// event id — used to prove one event's failure doesn't stop the rest
+	// of a DiscoverEvents batch from being processed.
+	failSaveFor *common.EventID
 }
 
 func newFakeSyncCatalog() *fakeSyncCatalog {
@@ -50,6 +55,9 @@ func (f *fakeSyncCatalog) FindMatches(context.Context, common.EventID) ([]compet
 	return nil, nil
 }
 func (f *fakeSyncCatalog) SaveEvent(_ context.Context, e competition.Event) (competition.Event, error) {
+	if f.failSaveFor != nil && e.ID == *f.failSaveFor {
+		return competition.Event{}, errors.New("save event failed")
+	}
 	f.events[e.ID] = e
 	return e, nil
 }
@@ -206,6 +214,32 @@ func TestDiscoverEvents_DoesNotReannounceOnASubsequentSyncTick(t *testing.T) {
 
 	if len(outbox.enqueued) != 1 {
 		t.Fatalf("expected exactly 1 announcement across both ticks, got %d: %+v", len(outbox.enqueued), outbox.enqueued)
+	}
+}
+
+// One event's SaveEvent failing must not stop the rest of the batch from
+// being discovered and announced.
+func TestDiscoverEvents_ContinuesPastOneEventsFailure(t *testing.T) {
+	failing := topTierEvent("Broken Event")
+	ok := topTierEvent("IEM Katowice")
+	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{failing, ok}}
+	catalog := newFakeSyncCatalog()
+	catalog.failSaveFor = &failing.ID
+	subs := &fakeSyncSubs{}
+	chats := &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true}}}
+	outbox := &fakeSyncOutbox{}
+	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
+
+	sync.DiscoverEvents(context.Background())
+
+	if _, saved := catalog.events[failing.ID]; saved {
+		t.Fatal("the failing event must not have been persisted")
+	}
+	if _, saved := catalog.events[ok.ID]; !saved {
+		t.Fatal("the event after the failing one must still have been persisted")
+	}
+	if len(outbox.enqueued) != 1 || outbox.enqueued[0].aggregateID != "-1:big-event:"+ok.ID.Value.String() {
+		t.Fatalf("expected exactly one announcement for the event that succeeded, got %+v", outbox.enqueued)
 	}
 }
 
