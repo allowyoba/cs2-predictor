@@ -95,8 +95,8 @@ exist. Providers form a swappable, ordered list with a circuit breaker: one that
 skipped, with the cooldown growing exponentially, and plugging in a second provider some day won't need any change to
 the actual business logic. HLTV's ranking, and a top-100 refresh of the VRS ranking itself, are both fetched via the
 paid Apify actor `paco_nassa~hltv-org-team-ranking` — at most once a calendar week each, on HLTV's own update day
-(Monday) at end of day, or ahead of schedule when a top-tier tournament is running or starts within the next 7 days
-(see `ApifyRankingGate`). VRS keeps its free GitHub-based feed running independently the rest of the week, as a
+(Monday) at end of day (see `ApifyRankingGate`; deliberately tournament-independent — HLTV only republishes weekly
+regardless). VRS keeps its free GitHub-based feed running independently the rest of the week, as a
 fallback for whenever the paid one hasn't fired yet. Both HLTV and VRS feed the exact same team-identity matching
 pipeline (a new team is fuzzy-matched against the cached ranking, then either auto-accepted or sent to
 `/team_matches` for review) — the two rankings are cached and displayed as fully independent lines, one team having a

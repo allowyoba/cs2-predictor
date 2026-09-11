@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"cs2predictor/internal/domain/enrichment"
@@ -31,6 +32,22 @@ type RankingSync struct {
 	State     enrichment.SyncStateRepository
 	Snapshots enrichment.SnapshotRepository
 	Lock      common.ClusterLock
+	// LockKey overrides the cluster-lock name Dispatch acquires — normally
+	// derived from Source alone, which is fine as long as only one
+	// RankingSync instance ever maintains a given Source. That stops being
+	// true once a Source has both a free, frequent job and a paid, rarely-
+	// ticking one (see cmd/bot/main.go's vrsApifyRankingSync, sharing
+	// enrichment.SourceValveVRS with valveVRSSync): with no jitter and one
+	// interval an exact multiple of the other, their ticks stay phase-
+	// locked, and a shared lock name means the paid job can silently and
+	// indefinitely lose the advisory-lock race to the free one every single
+	// time they collide — ClusterLock.Execute returns (false, nil) on a
+	// lost race, not an error, so Dispatch logs nothing when that happens.
+	// Set LockKey to give such a job its own lock identity instead; both
+	// still write the same Source's rows, but do so independently rather
+	// than under one mutual-exclusion umbrella that was never required for
+	// correctness (every write here is a per-team UPSERT).
+	LockKey string
 	// Gate, if set, is consulted at the start of every Dispatch: a false
 	// result skips this tick's fetch entirely (no provider call, no
 	// snapshot/ranking writes, no success/failure recorded) without it
@@ -42,12 +59,24 @@ type RankingSync struct {
 	Log  *slog.Logger
 }
 
+func (s *RankingSync) lockKey() string {
+	if s.LockKey != "" {
+		return s.LockKey
+	}
+	return "cs2predictor:ranking-sync:" + string(s.Source)
+}
+
 func (s *RankingSync) Dispatch(ctx context.Context) {
-	_, err := s.Lock.Execute(ctx, "cs2predictor:ranking-sync:"+string(s.Source), func(ctx context.Context) error {
+	_, err := s.Lock.Execute(ctx, s.lockKey(), func(ctx context.Context) error {
 		if s.Gate != nil {
-			ok, err := s.Gate.ShouldRun(ctx, s.Source)
-			if err != nil {
-				s.Log.Warn("ranking sync gate check failed, skipping this tick", "source", s.Source, "error", err)
+			ok, gateErr := s.Gate.ShouldRun(ctx, s.Source)
+			if gateErr != nil {
+				// Recorded, not just logged: a gate that fails forever
+				// (e.g. its own dependency is down) must show up in
+				// /provider_status and /healthz/ready the same way any
+				// other persistent sync failure does, rather than quietly
+				// reporting the source as healthy while it never fetches.
+				s.recordFailure(ctx, fmt.Errorf("gate check failed: %w", gateErr))
 				return nil
 			}
 			if !ok {
