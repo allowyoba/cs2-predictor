@@ -171,3 +171,30 @@ func TestCall_CapsExcessiveRetryAfter(t *testing.T) {
 		t.Fatalf("slept = %v, want capped at %v", slept, maxRetryWait)
 	}
 }
+
+// A stalled connection must not hang a request-handling path forever: Call
+// applies its own deadline rather than trusting every caller to have set
+// one (this bot is webhook-driven, so nothing here is a long-poll call that
+// would legitimately need longer).
+func TestCall_AppliesItsOwnTimeoutToAStalledRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Long enough to outlast the test's shrunk timeout below, short
+		// enough not to hang the suite if this regresses.
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	original := doCallTimeout
+	doCallTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { doCallTimeout = original })
+
+	client := NewClient(Config{BaseURL: server.URL, Token: "t"}, server.Client())
+	start := time.Now()
+	_, err := client.Call(context.Background(), "sendMessage", map[string]any{})
+	if err == nil {
+		t.Fatal("expected the stalled request to time out")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Call took %v, want it bounded by doCallTimeout (with retries)", elapsed)
+	}
+}

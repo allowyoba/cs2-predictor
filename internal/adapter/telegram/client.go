@@ -242,6 +242,16 @@ func (c *Client) Call(ctx context.Context, method string, payload any) (json.Raw
 	return nil, lastErr
 }
 
+// doCallTimeout bounds a single HTTP round trip to Telegram so a stalled
+// connection can't hang a request-handling path indefinitely — this bot is
+// webhook-driven (no getUpdates long-polling call ever goes through here),
+// so every method this client calls is expected to complete quickly.
+// context.WithTimeout takes the earlier of this and any deadline the caller
+// already set, so it only ever tightens, never loosens, an existing one.
+// A var, not a const, so a test can shrink it rather than actually waiting
+// out a 15s stall.
+var doCallTimeout = 15 * time.Second
+
 func (c *Client) doCall(ctx context.Context, method string, payload any) (json.RawMessage, error) {
 	if strings.TrimSpace(c.config.Token) == "" {
 		return nil, &APIError{Method: method, Message: "telegram token is not configured"}
@@ -251,6 +261,9 @@ func (c *Client) doCall(ctx context.Context, method string, payload any) (json.R
 	if err != nil {
 		return nil, &APIError{Method: method, Message: fmt.Sprintf("encode %s payload failed", method)}
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, doCallTimeout)
+	defer cancel()
 
 	url := fmt.Sprintf("%s/bot%s/%s", c.config.BaseURL, c.config.Token, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
