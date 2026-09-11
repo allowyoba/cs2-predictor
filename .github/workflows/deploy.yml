@@ -79,6 +79,15 @@ jobs:
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
           PANDASCORE_TOKEN: ${{ secrets.PANDASCORE_TOKEN }}
           CADDY_DOMAIN: ${{ vars.CADDY_DOMAIN }}
+          # Root /team_matches operators and deploy-failure DM recipients —
+          # ansible's own .env template reads this exact variable
+          # (application_deploy/tasks/main.yml), but it must also be set
+          # here for that lookup to see anything: the separate "Notify the
+          # bot's administrators" step below reads the same GitHub variable
+          # directly and worked all along, which is what made this gap easy
+          # to miss — that step never touches .env at all, it just proves
+          # the GitHub variable itself is configured correctly.
+          DEPLOY_NOTIFY_CHAT_IDS: ${{ vars.DEPLOY_NOTIFY_CHAT_IDS }}
           # Optional team-data enrichment — every one of these is safe to
           # leave undeclared in the environment: an unset vars/secrets
           # context resolves to an empty string here, ansible writes that
