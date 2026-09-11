@@ -46,6 +46,9 @@ func privateCommands(locale common.LocaleCode) []BotCommand {
 			{Command: "bets", Description: "All your bets and their results"},
 			{Command: "events", Description: "Search tournaments for the open group panel"},
 			{Command: "timezone", Description: "Change the open group's timezone"},
+			{Command: "team_matches", Description: "Review pending team-identity matches"},
+			{Command: "team_match_admin", Description: "Manage team-match reviewers (root admins only)"},
+			{Command: "provider_status", Description: "Data-source health status (root admins only)"},
 			{Command: "help", Description: "Command reference"},
 		}
 	}
@@ -56,6 +59,9 @@ func privateCommands(locale common.LocaleCode) []BotCommand {
 		{Command: "bets", Description: "Все ваши ставки и их результаты"},
 		{Command: "events", Description: "Поиск турниров для открытой панели группы"},
 		{Command: "timezone", Description: "Сменить часовой пояс открытой группы"},
+		{Command: "team_matches", Description: "Проверка сопоставлений команд с рейтингами"},
+		{Command: "team_match_admin", Description: "Управление операторами сопоставления (только для главных админов)"},
+		{Command: "provider_status", Description: "Статус источников данных (только для главных админов)"},
 		{Command: "help", Description: "Справка по командам"},
 	}
 }
