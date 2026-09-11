@@ -378,7 +378,11 @@ If a deploy fails, the bot can DM its own administrators about it directly — s
 comma-separated list of Telegram numeric IDs) as a GitHub environment variable and it'll happen automatically; leave
 it unset and nothing gets sent, quietly. The same list doubles at runtime as the root operator list for
 `/team_matches` (the Valve VRS team-identity review queue — see below): those IDs may run `/team_match_admin` to
-delegate reviewer access to others without touching this variable again.
+delegate reviewer access to others without touching this variable again. It's also the only list allowed to run
+`/provider_status`, a DM-only screen showing whether each configured data source (PandaScore, and every enabled
+enrichment provider — VRS, HLTV, GRID, Liquipedia) is currently healthy: last successful sync, last error and when it
+happened, and how many failures have struck in a row — the same numbers `/healthz/ready` already reports, just
+readable from inside a chat instead of curling an endpoint.
 
 All of this — the exact GitHub secrets/variables needed, least-privilege sudo, image signing details, what's actually
 in a backup and how to restore one, the full Ansible role breakdown — is written up in much more depth in

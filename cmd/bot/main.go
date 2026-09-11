@@ -261,6 +261,9 @@ func run() error {
 		TeamIdentity:             enrichmentRepo,
 		TeamSnapshots:            enrichmentRepo,
 		TeamMatchOperatorChatIDs: cfg.TeamMatchOperatorChatIDs,
+		ProviderGateway:          gateway,
+		EnrichmentState:          enrichmentRepo,
+		EnrichmentSources:        enrichmentSources,
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 
