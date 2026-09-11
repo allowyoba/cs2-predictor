@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"cs2predictor/internal/domain/chat"
@@ -25,13 +26,14 @@ type EventCompletionService struct {
 	outbox        common.Outbox
 	clock         common.Clock
 	runTx         TxRunner
+	log           *slog.Logger
 }
 
 func NewEventCompletionService(catalog competition.Catalog, subscriptions subscription.Repository, chats chat.Repository,
-	scoringRepo scoring.Repository, outbox common.Outbox, clock common.Clock, runTx TxRunner) *EventCompletionService {
+	scoringRepo scoring.Repository, outbox common.Outbox, clock common.Clock, runTx TxRunner, log *slog.Logger) *EventCompletionService {
 	return &EventCompletionService{
 		catalog: catalog, subscriptions: subscriptions, chats: chats,
-		scoringRepo: scoringRepo, outbox: outbox, clock: clock, runTx: runTx,
+		scoringRepo: scoringRepo, outbox: outbox, clock: clock, runTx: runTx, log: log,
 	}
 }
 
@@ -62,9 +64,20 @@ func (s *EventCompletionService) Complete(ctx context.Context, event competition
 	if err != nil {
 		return err
 	}
+	// One chat's completion failing (a transient DB blip, or a chat whose
+	// data is in a bad state) must not stop every other subscribed chat's
+	// completion from running — same per-item resilience as
+	// CompetitionSynchronization's announceBigEvent/fanOutNewPolls. Each
+	// chat is independent and individually idempotency-guarded (the
+	// EventCompletionHash check in completeForChat), so a retried next run
+	// safely picks up wherever this one left off.
 	for _, chatID := range chatIDs {
 		if err := s.completeForChat(ctx, event, chatID); err != nil {
-			return err
+			if s.log != nil {
+				s.log.Error("event completion failed for one chat, continuing with the rest",
+					"chatId", chatID.Value, "eventId", event.ID.Value, "error", err)
+			}
+			continue
 		}
 	}
 	return nil

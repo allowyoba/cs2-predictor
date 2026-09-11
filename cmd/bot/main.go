@@ -209,7 +209,7 @@ func run() error {
 	}
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
 		WithRecaps(chats, chatTitle, log)
-	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, outbox, clock, runTx)
+	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, outbox, clock, runTx, log)
 
 	updateHandler := &telegram.UpdateHandler{
 		Dedup: dedup, Predictions: predictionService, Chats: chats, Authorization: authorization,

@@ -55,23 +55,15 @@ func (s *CompetitionSynchronization) DiscoverEvents(ctx context.Context) {
 		if err != nil {
 			return err
 		}
+		// One event's processing failing (a transient DB blip, or bad data
+		// for that one event) must not stop every event ordered after it in
+		// this batch from being discovered — same per-item resilience as
+		// announceBigEvent/fanOutNewPolls below. Each event is independent
+		// and a retried next run safely reprocesses whatever didn't finish.
 		for _, event := range loaded {
-			previous, err := s.Catalog.FindEvent(ctx, event.ID)
-			if err != nil {
-				return err
-			}
-			if _, err := s.Catalog.SaveEvent(ctx, event); err != nil {
-				return err
-			}
-			if event.Status == competition.EventFinished && (previous == nil || previous.Status != competition.EventFinished) {
-				if err := s.EventCompletion.Complete(ctx, event); err != nil {
-					return err
-				}
-			}
-			if previous == nil && event.Tier.IsTopTier() {
-				if err := s.announceBigEvent(ctx, event); err != nil {
-					return err
-				}
+			if err := s.discoverOneEvent(ctx, event); err != nil {
+				s.Log.Error("event discovery failed for one event, continuing with the rest", "eventId", event.ID.Value, "error", err)
+				continue
 			}
 		}
 		s.Metrics.SyncRuns.WithLabelValues("events", "success").Inc()
@@ -79,6 +71,27 @@ func (s *CompetitionSynchronization) DiscoverEvents(ctx context.Context) {
 		s.Log.Info("event catalog synchronized", "count", len(loaded))
 		return nil
 	})
+}
+
+func (s *CompetitionSynchronization) discoverOneEvent(ctx context.Context, event competition.Event) error {
+	previous, err := s.Catalog.FindEvent(ctx, event.ID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.Catalog.SaveEvent(ctx, event); err != nil {
+		return err
+	}
+	if event.Status == competition.EventFinished && (previous == nil || previous.Status != competition.EventFinished) {
+		if err := s.EventCompletion.Complete(ctx, event); err != nil {
+			return err
+		}
+	}
+	if previous == nil && event.Tier.IsTopTier() {
+		if err := s.announceBigEvent(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SynchronizeMatches fetches a single global, distinct match snapshot for
@@ -114,11 +127,16 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 		// provider group failing (e.g. an open circuit breaker) must not
 		// discard matches successfully fetched for a different, healthy
 		// provider's events — so whatever did come back is processed
-		// (and persisted) regardless, before the error is surfaced.
+		// (and persisted) regardless, before the error is surfaced. Each
+		// match is independent of the others, so — same per-item
+		// resilience as announceBigEvent/fanOutNewPolls below — one match's
+		// processing failure must not stop every match ordered after it in
+		// this batch from being processed too.
 		loaded, err := s.Gateway.Matches(ctx, activeEvents)
 		for _, m := range loaded {
 			if procErr := s.processMatch(ctx, m); procErr != nil {
-				return procErr
+				s.Log.Error("match processing failed for one match, continuing with the rest", "matchId", m.ID.Value, "error", procErr)
+				continue
 			}
 		}
 		if err != nil {
