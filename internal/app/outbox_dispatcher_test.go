@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"cs2predictor/internal/platform/common"
 )
@@ -105,5 +106,47 @@ func TestOutboxDispatcher_MarksFailedWhenPublisherErrors(t *testing.T) {
 	}
 	if outbox.failed[msg.ID] != "telegram is down" {
 		t.Fatalf("failed reason = %q, want %q", outbox.failed[msg.ID], "telegram is down")
+	}
+}
+
+// A message that fails on what Pending's attempts<OutboxMaxAttempts cutoff
+// makes its LAST allowed attempt goes permanently quiet afterward — Pending
+// will never return it again. That transition must be its own observable
+// signal (a dedicated metric label), not indistinguishable from every
+// ordinary retryable failure, or an operator has no way to notice a message
+// silently gave up forever.
+func TestOutboxDispatcher_RecordsExhaustedMetricOnTheFinalAttempt(t *testing.T) {
+	msg := common.OutboxMessage{
+		ID: uuid.New(), Type: "telegram.match-result", Payload: "{}", OccurredAt: time.Now(),
+		Attempts: common.OutboxMaxAttempts - 1, // this failure will push it to the cap
+	}
+	outbox := newFakeOutbox(msg)
+	publisher := &fakePublisher{eventType: "telegram.match-result", err: errors.New("telegram is down")}
+	metrics := newTestMetrics()
+	d := &OutboxDispatcher{Outbox: outbox, Publishers: []common.OutboxPublisher{publisher}, Lock: fakeClusterLock{}, BatchSize: 10, Metrics: metrics, Log: slog.Default()}
+
+	d.Dispatch(context.Background())
+
+	if got := testutil.ToFloat64(metrics.OutboxEvents.WithLabelValues("exhausted", msg.Type)); got != 1 {
+		t.Fatalf("exhausted metric = %v, want 1", got)
+	}
+}
+
+// A message with attempts still comfortably under the cap must NOT trip the
+// exhausted signal — only the attempt that actually crosses the cap should.
+func TestOutboxDispatcher_DoesNotRecordExhaustedBeforeTheFinalAttempt(t *testing.T) {
+	msg := common.OutboxMessage{
+		ID: uuid.New(), Type: "telegram.match-result", Payload: "{}", OccurredAt: time.Now(),
+		Attempts: 1,
+	}
+	outbox := newFakeOutbox(msg)
+	publisher := &fakePublisher{eventType: "telegram.match-result", err: errors.New("telegram is down")}
+	metrics := newTestMetrics()
+	d := &OutboxDispatcher{Outbox: outbox, Publishers: []common.OutboxPublisher{publisher}, Lock: fakeClusterLock{}, BatchSize: 10, Metrics: metrics, Log: slog.Default()}
+
+	d.Dispatch(context.Background())
+
+	if got := testutil.ToFloat64(metrics.OutboxEvents.WithLabelValues("exhausted", msg.Type)); got != 0 {
+		t.Fatalf("exhausted metric = %v, want 0 (not yet at the retry cap)", got)
 	}
 }

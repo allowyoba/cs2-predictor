@@ -52,7 +52,18 @@ func (d *OutboxDispatcher) dispatchOne(ctx context.Context, message common.Outbo
 	if err := publisher.Publish(ctx, message); err != nil {
 		_ = d.Outbox.Failed(ctx, message.ID, err.Error())
 		d.Metrics.OutboxEvents.WithLabelValues("failed", message.Type).Inc()
-		d.Log.Error("outbox publish failed", "eventId", message.ID, "type", message.Type, "error", err)
+		d.Log.Error("outbox publish failed", "eventId", message.ID, "type", message.Type, "error", err, "attempts", message.Attempts+1)
+		// message.Attempts is the value BEFORE this failure's increment
+		// (see Outbox.Failed); once it reaches OutboxMaxAttempts, Pending
+		// stops returning this message forever — it goes permanently quiet
+		// rather than erroring loudly, so that transition needs its own
+		// distinct, alertable signal instead of looking identical to every
+		// ordinary retryable failure above.
+		if message.Attempts+1 >= common.OutboxMaxAttempts {
+			d.Metrics.OutboxEvents.WithLabelValues("exhausted", message.Type).Inc()
+			d.Log.Error("outbox message exhausted its retry budget, will not be retried again",
+				"eventId", message.ID, "type", message.Type, "attempts", message.Attempts+1)
+		}
 		return
 	}
 	if err := d.Outbox.Published(ctx, message.ID); err != nil {
