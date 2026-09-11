@@ -170,7 +170,8 @@ esac
                               "TELEGRAM_BOT_TOKEN=fresh-bot-token\n"
                               "TELEGRAM_WEBHOOK_SECRET=fresh-webhook-secret\n"
                               "PANDASCORE_TOKEN=fresh-pandascore-token\n"
-                              "CADDY_DOMAIN=bot.example.test\n")
+                              "CADDY_DOMAIN=bot.example.test\n"
+                              "DEPLOY_NOTIFY_CHAT_IDS=\n")
             self.assertFalse(Path(tmp, "deploy_key").exists())
             self.assertFalse(Path(tmp, "known_hosts").exists())
 
