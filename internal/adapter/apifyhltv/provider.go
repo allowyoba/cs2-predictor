@@ -102,16 +102,25 @@ func NewProvider(config Config, client *http.Client) *Provider {
 var _ enrichment.RankingProvider = (*Provider)(nil)
 
 // actorInput is paco_nassa/hltv-org-team-ranking's documented input shape.
+// MaxTeams deliberately has no `omitempty`: a caller that explicitly wants
+// 0 (say, to make the cap failure-obvious in a misconfiguration rather than
+// silently falling back to the actor's own default) must get exactly that
+// sent, not have the field vanish and the actor apply its own default
+// instead.
 type actorInput struct {
 	RankingType string `json:"rankingType"`
-	MaxTeams    int    `json:"maxTeams,omitempty"`
+	MaxTeams    int    `json:"maxTeams"`
 }
 
 // actorRun is one dataset item as actually returned by
 // run-sync-get-dataset-items: the whole scrape result for a single run, not
-// a single team — see the package doc comment.
+// a single team — see the package doc comment. ScrapedAt is the run's own
+// timestamp, used as every one of its teams' RankedTeam.PublishedAt (that
+// field's contract is "the ranking snapshot's own date, not fetch time" —
+// see enrichment.RankedTeam's doc comment).
 type actorRun struct {
-	Rankings []rankingItem `json:"rankings"`
+	ScrapedAt time.Time     `json:"scrapedAt"`
+	Rankings  []rankingItem `json:"rankings"`
 }
 
 // rankingItem is one row of actorRun.Rankings.
@@ -169,9 +178,16 @@ func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, 
 		return nil, fmt.Errorf("decode apify hltv ranking response: %w", err)
 	}
 
-	publishedAt := time.Now().UTC()
 	var out []enrichment.RankedTeam
 	for _, run := range runs {
+		// ScrapedAt is the run's own timestamp, not this call's — falls
+		// back to fetch time only if the actor ever omits it, so a bad or
+		// missing field degrades to the old behavior instead of stamping
+		// every team with the Unix epoch.
+		publishedAt := run.ScrapedAt.UTC()
+		if publishedAt.IsZero() {
+			publishedAt = time.Now().UTC()
+		}
 		for _, item := range run.Rankings {
 			if item.Team.Name == "" {
 				continue
