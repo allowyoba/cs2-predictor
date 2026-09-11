@@ -2,15 +2,16 @@
 // own weekly world ranking, fetched via the public Apify actor
 // paco_nassa/hltv-org-team-ranking, which scrapes hltv.org/ranking/teams.
 //
-// This adapter has NOT been exercised against a live Apify run — no token
-// was available while building it. The endpoint (POST
-// /v2/acts/{actorId}/run-sync-get-dataset-items), the actor's input fields
-// (rankingType/maxTeams/country/year/month/day), and its output item shape
-// (place/team.name/team.id/points/change/isNew) are all drawn from the
-// actor's own published documentation, not confirmed against a live
-// response. Once a real token is available, this should be revisited —
-// same caveat internal/adapter/grid's package doc carries for its own
-// unverified schema.
+// The endpoint (POST /v2/acts/{actorId}/run-sync-get-dataset-items) and the
+// actor's input fields (rankingType/maxTeams) match the actor's published
+// documentation. The response *shape* was corrected against a real sample
+// run: run-sync-get-dataset-items returns a dataset containing one item per
+// run (not one item per team) — {scrapedAt, rankingType, ..., rankings:
+// [...]} — and each entry of that inner "rankings" array carries a
+// top-level "players" roster (not nested under "team" as first assumed),
+// which this adapter now feeds into Identity.Roster for the same
+// roster-overlap matching fallback internal/adapter/valvevrs already
+// supports (see enrichment.MatchTeam).
 package apifyhltv
 
 import (
@@ -82,19 +83,29 @@ type actorInput struct {
 	MaxTeams    int    `json:"maxTeams,omitempty"`
 }
 
-// rankingItem is one row of the actor's documented output.
+// actorRun is one dataset item as actually returned by
+// run-sync-get-dataset-items: the whole scrape result for a single run, not
+// a single team — see the package doc comment.
+type actorRun struct {
+	Rankings []rankingItem `json:"rankings"`
+}
+
+// rankingItem is one row of actorRun.Rankings.
 type rankingItem struct {
 	Place int `json:"place"`
 	Team  struct {
 		Name string `json:"name"`
 	} `json:"team"`
 	Points int `json:"points"`
+	// Players is HLTV's reported roster for this team at scrape time — a
+	// sibling of "team", not nested under it.
+	Players []string `json:"players"`
 }
 
 // FetchRankings implements enrichment.RankingProvider. HLTV's own ranking
-// carries no regional breakdown or player roster — only Identity.Name,
-// GlobalRank and Points are populated; RegionalRank/Region/Roster stay
-// zero, same as any RankedTeam field a source simply doesn't report.
+// carries no regional breakdown, so RegionalRank/Region stay zero — same as
+// any RankedTeam field a source simply doesn't report — but Identity.Name,
+// Identity.Roster, GlobalRank and Points are all populated.
 func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, error) {
 	body, err := json.Marshal(actorInput{RankingType: "hltv", MaxTeams: p.config.MaxTeams})
 	if err != nil {
@@ -128,25 +139,27 @@ func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, 
 		return nil, fmt.Errorf("apify hltv ranking actor returned HTTP %d: %s", resp.StatusCode, common.TruncateForLog(respBody))
 	}
 
-	var items []rankingItem
-	if err := json.Unmarshal(respBody, &items); err != nil {
+	var runs []actorRun
+	if err := json.Unmarshal(respBody, &runs); err != nil {
 		return nil, fmt.Errorf("decode apify hltv ranking response: %w", err)
 	}
 
 	publishedAt := time.Now().UTC()
-	out := make([]enrichment.RankedTeam, 0, len(items))
-	for _, item := range items {
-		if item.Team.Name == "" {
-			continue
+	var out []enrichment.RankedTeam
+	for _, run := range runs {
+		for _, item := range run.Rankings {
+			if item.Team.Name == "" {
+				continue
+			}
+			rank, points := item.Place, item.Points
+			out = append(out, enrichment.RankedTeam{
+				Identity:    enrichment.TeamIdentity{Name: item.Team.Name, Roster: item.Players},
+				GlobalRank:  &rank,
+				Points:      &points,
+				PublishedAt: publishedAt,
+				Source:      enrichment.SourceHLTV,
+			})
 		}
-		rank, points := item.Place, item.Points
-		out = append(out, enrichment.RankedTeam{
-			Identity:    enrichment.TeamIdentity{Name: item.Team.Name},
-			GlobalRank:  &rank,
-			Points:      &points,
-			PublishedAt: publishedAt,
-			Source:      enrichment.SourceHLTV,
-		})
 	}
 	return out, nil
 }

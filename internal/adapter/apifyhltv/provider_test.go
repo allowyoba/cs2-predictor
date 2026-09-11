@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,13 +18,44 @@ func newTestProvider(t *testing.T, server *httptest.Server, maxTeams int) *Provi
 	return NewProvider(config, server.Client())
 }
 
-func TestFetchRankings_ParsesRankingItemsAndTagsSourceHLTV(t *testing.T) {
+// sampleActorRunResponse is a trimmed, real run-sync-get-dataset-items
+// response (captured against the live actor) — the dataset holds one item
+// per RUN, not per team: the whole scrape result, with the actual teams
+// nested under "rankings", and each team's roster reported as a top-level
+// "players" array rather than nested under "team".
+const sampleActorRunResponse = `[
+	{
+		"scrapedAt": "2026-09-11T21:57:15.554Z",
+		"rankingType": "hltv",
+		"totalTeams": 2,
+		"parameters": {"rankingType": "hltv", "maxTeams": 2},
+		"source": "hltv.org",
+		"url": "https://www.hltv.org/ranking/teams",
+		"rankings": [
+			{
+				"place": 1,
+				"team": {"name": "Spirit", "id": 7020, "logo": "https://img-cdn.hltv.org/teamlogo/x.png", "country": "Russia"},
+				"points": 1000,
+				"change": 0,
+				"isNew": false,
+				"players": ["sh1ro", "magixx", "tN1R", "zont1x", "donk"]
+			},
+			{
+				"place": 2,
+				"team": {"name": "Falcons", "id": 11283, "logo": "https://img-cdn.hltv.org/teamlogo/y.png", "country": "Denmark"},
+				"points": 606,
+				"change": 0,
+				"isNew": false,
+				"players": ["karrigan", "NiKo", "TeSeS", "m0NESY", "kyousuke"]
+			}
+		]
+	}
+]`
+
+func TestFetchRankings_ParsesRealActorResponseShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-			{"place": 1, "team": {"name": "Vitality"}, "points": 1000, "change": 0, "isNew": false},
-			{"place": 2, "team": {"name": "Spirit"}, "points": 900, "change": -1, "isNew": false}
-		]`))
+		_, _ = w.Write([]byte(sampleActorRunResponse))
 	}))
 	defer server.Close()
 
@@ -34,16 +66,33 @@ func TestFetchRankings_ParsesRankingItemsAndTagsSourceHLTV(t *testing.T) {
 	if len(rankings) != 2 {
 		t.Fatalf("got %d rankings, want 2: %+v", len(rankings), rankings)
 	}
-	if rankings[0].Identity.Name != "Vitality" || *rankings[0].GlobalRank != 1 || *rankings[0].Points != 1000 {
+	if rankings[0].Identity.Name != "Spirit" || *rankings[0].GlobalRank != 1 || *rankings[0].Points != 1000 {
 		t.Fatalf("unexpected first ranking: %+v", rankings[0])
+	}
+	wantRoster := []string{"sh1ro", "magixx", "tN1R", "zont1x", "donk"}
+	if !slices.Equal(rankings[0].Identity.Roster, wantRoster) {
+		t.Fatalf("roster = %v, want %v", rankings[0].Identity.Roster, wantRoster)
 	}
 	for _, r := range rankings {
 		if r.Source != enrichment.SourceHLTV {
 			t.Fatalf("expected Source=HLTV, got %q", r.Source)
 		}
-		if len(r.Identity.Roster) != 0 {
-			t.Fatalf("HLTV ranking must not fabricate roster data, got %+v", r.Identity.Roster)
-		}
+	}
+}
+
+func TestFetchRankings_EmptyDatasetProducesNoRankings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rankings) != 0 {
+		t.Fatalf("expected no rankings for an empty dataset, got %+v", rankings)
 	}
 }
 
@@ -85,7 +134,7 @@ func TestFetchRankings_SendsExpectedRequestShape(t *testing.T) {
 func TestFetchRankings_SkipsItemsWithNoTeamName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"place": 1, "team": {"name": ""}, "points": 500}]`))
+		_, _ = w.Write([]byte(`[{"rankings": [{"place": 1, "team": {"name": ""}, "points": 500}]}]`))
 	}))
 	defer server.Close()
 
