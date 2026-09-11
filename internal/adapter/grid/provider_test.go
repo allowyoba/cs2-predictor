@@ -2,9 +2,11 @@ package grid
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"cs2predictor/internal/domain/enrichment"
@@ -13,13 +15,17 @@ import (
 // fakeGRID serves both the Central Data (allSeries) and Series State
 // (seriesState) endpoints from fixtures, and records every request's raw
 // GraphQL body for assertions on what was actually sent (auth header,
-// variables).
+// variables). GetTeamStats/GetHeadToHead issue seriesState lookups
+// concurrently (see collectSeriesResults), so every field the handler
+// mutates is guarded by mu rather than assumed single-goroutine.
 type fakeGRID struct {
-	t            *testing.T
+	t          *testing.T
+	wantAPIKey string
+
+	mu           sync.Mutex
 	allSeries    map[string]any // {"data": {"allSeries": {...}}}
 	seriesStates map[string]map[string]any
 	requests     []*http.Request
-	wantAPIKey   string
 }
 
 func newFakeGRID(t *testing.T) *fakeGRID {
@@ -29,7 +35,9 @@ func newFakeGRID(t *testing.T) *fakeGRID {
 
 func (f *fakeGRID) server() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
 		f.requests = append(f.requests, r)
+		f.mu.Unlock()
 		if got := r.Header.Get("x-api-key"); got != f.wantAPIKey {
 			f.t.Errorf("x-api-key header = %q, want %q", got, f.wantAPIKey)
 		}
@@ -152,6 +160,46 @@ func TestGetTeamStats_NameMatchIsCaseInsensitiveButExact(t *testing.T) {
 	}
 	if form == nil || form.Sample != 1 {
 		t.Fatalf("GetTeamStats = %+v, want exactly 1 sample (Spirit Academy must not match)", form)
+	}
+}
+
+// GetTeamStats fetches seriesState lookups concurrently in windows of
+// seriesResultBatch (see collectSeriesResults), but must still behave
+// exactly as if it had walked seriesIDs one at a time in order: stop once
+// sampleSize results are collected, using the FIRST sampleSize
+// finished/matching series (most-recent-first) rather than an arbitrary
+// subset, and never call the endpoint at all for series beyond that point.
+func TestGetTeamStats_StopsAfterSampleSizeAndNeverQueriesLaterSeries(t *testing.T) {
+	fake := newFakeGRID(t)
+	var edges []any
+	for i := 1; i <= 15; i++ {
+		id := fmt.Sprintf("s%d", i)
+		edges = append(edges, seriesEdgeFixture(id, "Spirit", fmt.Sprintf("Opponent%d", i)))
+		// First 10 (within the first seriesResultBatch window) alternate
+		// win/loss; the rest are all wins, so if they were ever counted the
+		// tally would no longer be the expected 5/5.
+		won := i <= 10 && i%2 == 1
+		fake.seriesStates[id] = seriesStateFixture(true, map[string]bool{"Spirit": won, fmt.Sprintf("Opponent%d", i): !won})
+	}
+	fake.allSeries = map[string]any{"edges": edges}
+	server := fake.server()
+	defer server.Close()
+
+	form, err := newTestProvider(server).GetTeamStats(t.Context(), enrichment.TeamIdentity{Name: "Spirit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if form == nil || form.Sample != 10 || form.Wins != 5 || form.Losses != 5 {
+		t.Fatalf("GetTeamStats = %+v, want Sample=10 Wins=5 Losses=5 (exactly the first 10 series)", form)
+	}
+
+	fake.mu.Lock()
+	requestCount := len(fake.requests)
+	fake.mu.Unlock()
+	// 1 allSeries call + exactly 10 seriesState calls (s1..s10) — s11..s15
+	// must never be queried once the sample is full.
+	if requestCount != 11 {
+		t.Fatalf("recorded %d requests, want 11 (1 allSeries + 10 seriesState, stopping before s11..s15)", requestCount)
 	}
 }
 
