@@ -68,7 +68,7 @@ func TestComposePollDescription_FullExampleMatchesSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "FISSURE PLAYGROUND Season 3 2026", "Group A", "BO3", "10.09", "15:00 MSK", "#8 (1723) · #121 (867)", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "FISSURE PLAYGROUND Season 3 2026", "Group A", "BO3", "10.09", "15:00 MSK", "#8 (1723) · #121 (867)", "", "", "")
 	want := "🏆 FISSURE PLAYGROUND Season 3 2026\n" +
 		"🎯 Group A · BO3\n" +
 		"🕒 10.09 · 15:00 MSK\n" +
@@ -83,7 +83,7 @@ func TestComposePollDescription_MissingStageKeepsOnlyFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "BO3", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "BO3", "", "", "", "", "", "")
 	if want := "🏆 Major\n🎯 BO3"; got != want {
 		t.Fatalf("composePollDescription = %q, want %q", got, want)
 	}
@@ -94,7 +94,7 @@ func TestComposePollDescription_MissingFormatKeepsOnlyStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "", "", "", "", "", "", "")
 	if want := "🏆 Major\n🎯 Group A"; got != want {
 		t.Fatalf("composePollDescription = %q, want %q", got, want)
 	}
@@ -105,7 +105,7 @@ func TestComposePollDescription_MissingStageAndFormatOmitsTheWholeLine(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "")
 	if strings.Contains(got, "🎯") {
 		t.Fatalf("expected no 🎯 line when both stage and format are missing, got %q", got)
 	}
@@ -116,7 +116,7 @@ func TestComposePollDescription_MissingTournamentOmitsItsLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "", "Group A", "BO3", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "", "Group A", "BO3", "", "", "", "", "", "")
 	if strings.Contains(got, "🏆") {
 		t.Fatalf("expected no 🏆 line when the tournament name is empty, got %q", got)
 	}
@@ -127,7 +127,7 @@ func TestComposePollDescription_MissingDateTimeOmitsItsLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "")
 	if strings.Contains(got, "🕒") {
 		t.Fatalf("expected no 🕒 line when date/time are both empty, got %q", got)
 	}
@@ -138,7 +138,7 @@ func TestComposePollDescription_MissingVRSOmitsItsLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "")
 	if strings.Contains(got, "VRS") {
 		t.Fatalf("expected no VRS line when the caller passed an empty vrsLine, got %q", got)
 	}
@@ -149,7 +149,7 @@ func TestComposePollDescription_EverythingEmptyProducesEmptyString(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "", "", ""); got != "" {
+	if got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "", "", "", ""); got != "" {
 		t.Fatalf("composePollDescription = %q, want empty", got)
 	}
 }
@@ -159,7 +159,7 @@ func TestComposePollDescription_IncludesFormAndH2HAfterVRS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "#1 (1993) · #3 (1908)", "4–1 · 3–2", "6–4")
+	got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "#1 (1993) · #3 (1908)", "", "4–1 · 3–2", "6–4")
 	lines := strings.Split(got, "\n")
 	if len(lines) != 3 {
 		t.Fatalf("expected exactly 3 lines (VRS, form, H2H), got %v", lines)
@@ -176,7 +176,7 @@ func TestComposePollDescription_NoBlankLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "BO3", "10.09", "15:00 MSK", "#1 (1993) · #3 (1908)", "4–1 · 3–2", "6–4")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "BO3", "10.09", "15:00 MSK", "#1 (1993) · #3 (1908)", "", "4–1 · 3–2", "6–4")
 	if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n") {
 		t.Fatalf("expected no leading/trailing newline, got %q", got)
 	}
@@ -190,9 +190,9 @@ func TestComposePollDescription_NoBlankLines(t *testing.T) {
 	}
 }
 
-// --- formatVRSCombined / formatVRSSide ---
+// --- formatRankingCombined / formatRankingSide ---
 
-func TestFormatVRSCombined_BothTeamsRankedAndPointed(t *testing.T) {
+func TestFormatRankingCombined_BothTeamsRankedAndPointed(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank, secondRank := 8, 121
 	firstPoints, secondPoints := 1723, 867
@@ -200,56 +200,56 @@ func TestFormatVRSCombined_BothTeamsRankedAndPointed(t *testing.T) {
 		first:  {TeamID: first, GlobalRank: &firstRank, Points: &firstPoints},
 		second: {TeamID: second, GlobalRank: &secondRank, Points: &secondPoints},
 	}
-	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatRankingCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#8 (1723) · #121 (867)"; got != want {
-		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
+		t.Fatalf("formatRankingCombined = %q, want %q", got, want)
 	}
 }
 
-func TestFormatVRSCombined_RankOnlyOmitsParentheses(t *testing.T) {
+func TestFormatRankingCombined_RankOnlyOmitsParentheses(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank, secondRank := 1, 3
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first:  {TeamID: first, GlobalRank: &firstRank},
 		second: {TeamID: second, GlobalRank: &secondRank},
 	}
-	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatRankingCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#1 · #3"; got != want {
-		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
+		t.Fatalf("formatRankingCombined = %q, want %q", got, want)
 	}
 }
 
 // If only one team has cached VRS data, the other side must show "N/A"
 // rather than being dropped — a bare "#1" with no second value would leave
 // the reader unable to tell which team it's for.
-func TestFormatVRSCombined_OneTeamUnrankedShowsNAForTheOtherSide(t *testing.T) {
+func TestFormatRankingCombined_OneTeamUnrankedShowsNAForTheOtherSide(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank := 1
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first: {TeamID: first, GlobalRank: &firstRank},
 	}
-	got := formatVRSCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatRankingCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#1 · N/A"; got != want {
-		t.Fatalf("formatVRSCombined = %q, want %q", got, want)
+		t.Fatalf("formatRankingCombined = %q, want %q", got, want)
 	}
 	if strings.Contains(got, "#0") {
 		t.Fatalf("expected no #0 placeholder in %q", got)
 	}
 }
 
-func TestFormatVRSCombined_NeitherTeamRankedOmitsLine(t *testing.T) {
+func TestFormatRankingCombined_NeitherTeamRankedOmitsLine(t *testing.T) {
 	first, second := common.NewTeamID(), common.NewTeamID()
-	if got := formatVRSCombined(nil, &competition.Team{ID: first}, &competition.Team{ID: second}); got != "" {
-		t.Fatalf("formatVRSCombined = %q, want empty (line omitted)", got)
+	if got := formatRankingCombined(nil, &competition.Team{ID: first}, &competition.Team{ID: second}); got != "" {
+		t.Fatalf("formatRankingCombined = %q, want empty (line omitted)", got)
 	}
 }
 
-func TestFormatVRSCombined_NilTeamOmitsLine(t *testing.T) {
+func TestFormatRankingCombined_NilTeamOmitsLine(t *testing.T) {
 	rank := 1
 	teamID := common.NewTeamID()
 	rankings := map[common.TeamID]enrichment.TeamRanking{teamID: {TeamID: teamID, GlobalRank: &rank}}
-	if got := formatVRSCombined(rankings, &competition.Team{ID: teamID}, nil); got != "" {
-		t.Fatalf("formatVRSCombined = %q, want empty when a side of the match is unknown", got)
+	if got := formatRankingCombined(rankings, &competition.Team{ID: teamID}, nil); got != "" {
+		t.Fatalf("formatRankingCombined = %q, want empty when a side of the match is unknown", got)
 	}
 }
 
@@ -295,9 +295,14 @@ func TestFormatH2H_NilOrZeroSampleOmitsLine(t *testing.T) {
 // --- Send() integration tests: exercise the real HTTP payload ---
 
 // fakeRankingRepository is a minimal enrichment.RankingRepository — only
-// FindRankings is exercised by PollGateway.Send.
+// FindRankings is exercised by PollGateway.Send. Send now queries this
+// repository once per configured ranking source (VRS, HLTV): a test that
+// only sets rankings gets that same data back regardless of which source
+// asked (fine for tests that don't care about per-source scoping); a test
+// that needs the two sources to differ sets bySource instead.
 type fakeRankingRepository struct {
 	rankings map[common.TeamID]enrichment.TeamRanking
+	bySource map[enrichment.Source]map[common.TeamID]enrichment.TeamRanking
 	err      error
 }
 
@@ -307,13 +312,17 @@ func (f *fakeRankingRepository) SaveRanking(context.Context, enrichment.TeamRank
 func (f *fakeRankingRepository) FindRanking(context.Context, common.TeamID, enrichment.Source) (*enrichment.TeamRanking, error) {
 	return nil, nil
 }
-func (f *fakeRankingRepository) FindRankings(_ context.Context, teamIDs []common.TeamID, _ enrichment.Source) (map[common.TeamID]enrichment.TeamRanking, error) {
+func (f *fakeRankingRepository) FindRankings(_ context.Context, teamIDs []common.TeamID, source enrichment.Source) (map[common.TeamID]enrichment.TeamRanking, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
+	src := f.rankings
+	if f.bySource != nil {
+		src = f.bySource[source]
+	}
 	out := map[common.TeamID]enrichment.TeamRanking{}
 	for _, id := range teamIDs {
-		if r, ok := f.rankings[id]; ok {
+		if r, ok := src[id]; ok {
 			out[id] = r
 		}
 	}
@@ -539,6 +548,35 @@ func TestSend_MissingVRSOmitsTheLineCleanly(t *testing.T) {
 	sent := sendTestPoll(t, nil, PollEnrichmentSources{}, first, second)
 	if strings.Contains(sent.description, "VRS") || strings.Contains(sent.description, "📈") {
 		t.Fatalf("expected no VRS line when rankings aren't wired, got %q", sent.description)
+	}
+}
+
+// HLTV is checked against the same enrichment.RankingRepository as VRS, but
+// as a wholly independent source (enrichment.SourceHLTV) — one having cached
+// data must never leak into, or be conflated with, the other's line.
+func TestSend_IncludesHLTVLineIndependentlyFromVRS(t *testing.T) {
+	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
+	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
+	vrsRank, hltvRank := 1, 5
+	rankings := &fakeRankingRepository{bySource: map[enrichment.Source]map[common.TeamID]enrichment.TeamRanking{
+		enrichment.SourceValveVRS: {first.ID: {TeamID: first.ID, GlobalRank: &vrsRank}},
+		enrichment.SourceHLTV:     {second.ID: {TeamID: second.ID, GlobalRank: &hltvRank}},
+	}}
+	sent := sendTestPoll(t, nil, PollEnrichmentSources{Rankings: rankings}, first, second)
+	if !strings.Contains(sent.description, "📈 VRS: #1 · N/A") {
+		t.Fatalf("expected the VRS line scoped to its own source only, got %q", sent.description)
+	}
+	if !strings.Contains(sent.description, "🌐 HLTV: N/A · #5") {
+		t.Fatalf("expected the HLTV line scoped to its own source only, got %q", sent.description)
+	}
+}
+
+func TestSend_MissingHLTVOmitsTheLineCleanly(t *testing.T) {
+	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
+	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
+	sent := sendTestPoll(t, nil, PollEnrichmentSources{}, first, second)
+	if strings.Contains(sent.description, "HLTV") || strings.Contains(sent.description, "🌐") {
+		t.Fatalf("expected no HLTV line when rankings aren't wired, got %q", sent.description)
 	}
 }
 
