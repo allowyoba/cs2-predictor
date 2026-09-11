@@ -146,6 +146,13 @@ environment; `webhook.yml` uses only the connection-related ones (`APP_USER` is 
 | `TELEGRAM_WEBHOOK_SECRET`| Secret  | **Required.** Written into the server `.env`                                                                      |
 | `PANDASCORE_TOKEN`      | Secret   | **Required.** Written into the server `.env`                                                                      |
 | `CADDY_DOMAIN`          | Variable | **Required.** Written into the server `.env`; not sensitive on its own, so it's a variable, not a secret          |
+| `VALVE_VRS_ENABLED`, `VALVE_VRS_SYNC_INTERVAL` | Variable | Optional. Written into the server `.env`; unset leaves the enrichment provider on its own default (see `.env.example`) |
+| `GRID_ENABLED`, `GRID_SYNC_INTERVAL`   | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
+| `GRID_API_KEY`          | Secret   | Optional. Written into the server `.env`; required only once `GRID_ENABLED=true` |
+| `LIQUIPEDIA_ENABLED`, `LIQUIPEDIA_SYNC_INTERVAL` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
+| `LIQUIPEDIA_API_KEY`    | Secret   | Optional. Written into the server `.env`; required only once `LIQUIPEDIA_ENABLED=true` |
+| `HLTV_ENABLED`, `HLTV_SYNC_INTERVAL`, `HLTV_MAX_TEAMS` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
+| `APIFY_TOKEN`           | Secret   | Optional. Written into the server `.env`; required only once `HLTV_ENABLED=true` |
 
 These five are the one exception to "no application secret transits GitHub Actions": deploy needs to *guarantee*
 `.env` exists on the target with correct content, ownership and mode, not depend on someone having created it by hand
@@ -199,6 +206,13 @@ against a VM where any of them is unset. It's written *after* `configuration_bac
 are always recoverable, and a failed health check rolls it back alongside the previous image (see
 `application_deploy`'s rescue block) — a bad value doesn't strand the VM on a release it can't run.
 
+Every optional enrichment variable in the table above (`VALVE_VRS_*`, `GRID_*`, `LIQUIPEDIA_*`, `HLTV_*`, `APIFY_TOKEN`)
+is written the same way, defaulting to an empty string when the GitHub `production` environment doesn't define it —
+never omitted, so a deploy never fails just because one of these was never configured. An empty value reaches the bot
+container as an empty string (see `compose.prod.yml`), and `internal/app/config.go` treats that exactly like the
+variable being unset at all: each provider falls back to its own default (`VALVE_VRS_ENABLED` defaults on, the rest
+default off).
+
 The resulting file looks like:
 
 ```dotenv
@@ -207,6 +221,19 @@ TELEGRAM_BOT_TOKEN=...
 TELEGRAM_WEBHOOK_SECRET=...
 PANDASCORE_TOKEN=...
 CADDY_DOMAIN=bot.example.com
+DEPLOY_NOTIFY_CHAT_IDS=
+VALVE_VRS_ENABLED=
+VALVE_VRS_SYNC_INTERVAL=
+GRID_ENABLED=
+GRID_API_KEY=
+GRID_SYNC_INTERVAL=
+LIQUIPEDIA_ENABLED=
+LIQUIPEDIA_API_KEY=
+LIQUIPEDIA_SYNC_INTERVAL=
+HLTV_ENABLED=
+APIFY_TOKEN=
+HLTV_SYNC_INTERVAL=
+HLTV_MAX_TEAMS=
 ```
 
 Ansible always writes it with owner `APP_USER` and mode `0600`, regardless of what these values contain. `APP_IMAGE`

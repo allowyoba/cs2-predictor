@@ -50,6 +50,24 @@ services:
       # app.Config.TeamMatchOperatorChatIDs). Empty is a valid, supported
       # value (the feature simply has no root operators configured).
       DEPLOY_NOTIFY_CHAT_IDS: ${DEPLOY_NOTIFY_CHAT_IDS:-}
+      # Optional team-data enrichment. Every one of these is safe to leave
+      # unset: an empty ${VAR:-} substitution reaches the bot as an empty
+      # string, and internal/app/config.go's env* helpers treat "" as
+      # "not configured" (falling back to each feature's own default —
+      # VALVE_VRS_ENABLED defaults on, the rest default off) rather than
+      # failing to start.
+      VALVE_VRS_ENABLED: ${VALVE_VRS_ENABLED:-}
+      VALVE_VRS_SYNC_INTERVAL: ${VALVE_VRS_SYNC_INTERVAL:-}
+      GRID_ENABLED: ${GRID_ENABLED:-}
+      GRID_API_KEY: ${GRID_API_KEY:-}
+      GRID_SYNC_INTERVAL: ${GRID_SYNC_INTERVAL:-}
+      LIQUIPEDIA_ENABLED: ${LIQUIPEDIA_ENABLED:-}
+      LIQUIPEDIA_API_KEY: ${LIQUIPEDIA_API_KEY:-}
+      LIQUIPEDIA_SYNC_INTERVAL: ${LIQUIPEDIA_SYNC_INTERVAL:-}
+      HLTV_ENABLED: ${HLTV_ENABLED:-}
+      APIFY_TOKEN: ${APIFY_TOKEN:-}
+      HLTV_SYNC_INTERVAL: ${HLTV_SYNC_INTERVAL:-}
+      HLTV_MAX_TEAMS: ${HLTV_MAX_TEAMS:-}
     healthcheck:
       # /healthz/ready, not /healthz/live: the deploy waits on this, and
       # what it needs to know is that migrations ran and the database and

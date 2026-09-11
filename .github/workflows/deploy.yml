@@ -79,6 +79,24 @@ jobs:
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
           PANDASCORE_TOKEN: ${{ secrets.PANDASCORE_TOKEN }}
           CADDY_DOMAIN: ${{ vars.CADDY_DOMAIN }}
+          # Optional team-data enrichment — every one of these is safe to
+          # leave undeclared in the environment: an unset vars/secrets
+          # context resolves to an empty string here, ansible writes that
+          # empty value into .env (see application_deploy's own defaulting),
+          # and internal/app/config.go treats an empty value as "not
+          # configured" rather than failing to start.
+          VALVE_VRS_ENABLED: ${{ vars.VALVE_VRS_ENABLED }}
+          VALVE_VRS_SYNC_INTERVAL: ${{ vars.VALVE_VRS_SYNC_INTERVAL }}
+          GRID_ENABLED: ${{ vars.GRID_ENABLED }}
+          GRID_API_KEY: ${{ secrets.GRID_API_KEY }}
+          GRID_SYNC_INTERVAL: ${{ vars.GRID_SYNC_INTERVAL }}
+          LIQUIPEDIA_ENABLED: ${{ vars.LIQUIPEDIA_ENABLED }}
+          LIQUIPEDIA_API_KEY: ${{ secrets.LIQUIPEDIA_API_KEY }}
+          LIQUIPEDIA_SYNC_INTERVAL: ${{ vars.LIQUIPEDIA_SYNC_INTERVAL }}
+          HLTV_ENABLED: ${{ vars.HLTV_ENABLED }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          HLTV_SYNC_INTERVAL: ${{ vars.HLTV_SYNC_INTERVAL }}
+          HLTV_MAX_TEAMS: ${{ vars.HLTV_MAX_TEAMS }}
           ANSIBLE_HOST_KEY_CHECKING: 'True'
         run: make deploy
 
