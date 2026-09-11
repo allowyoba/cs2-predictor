@@ -23,31 +23,52 @@ type fakeSnapshotRepo struct {
 }
 
 func (f *fakeSnapshotRepo) SaveSnapshot(context.Context, []enrichment.RankedTeam) error { return nil }
-func (f *fakeSnapshotRepo) AllSnapshot(context.Context) ([]enrichment.RankedTeam, error) {
-	return f.entries, nil
+func (f *fakeSnapshotRepo) AllSnapshot(_ context.Context, source enrichment.Source) ([]enrichment.RankedTeam, error) {
+	var out []enrichment.RankedTeam
+	for _, e := range f.entries {
+		if e.Source == source {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// rankingKey composes the (team, source) pair fakeRankingRepoForMatch keys
+// by — a bare TeamID key would conflate two different sources' rankings
+// for the same team, which the real repository never does (see
+// EnrichmentRepository's SQL, always filtered by source).
+type rankingKey struct {
+	team   common.TeamID
+	source enrichment.Source
 }
 
 type fakeRankingRepoForMatch struct {
-	byTeam map[common.TeamID]enrichment.TeamRanking
+	byTeam map[rankingKey]enrichment.TeamRanking
 	saved  []enrichment.TeamRanking
 }
 
 func newFakeRankingRepoForMatch() *fakeRankingRepoForMatch {
-	return &fakeRankingRepoForMatch{byTeam: map[common.TeamID]enrichment.TeamRanking{}}
+	return &fakeRankingRepoForMatch{byTeam: map[rankingKey]enrichment.TeamRanking{}}
 }
 func (f *fakeRankingRepoForMatch) SaveRanking(_ context.Context, r enrichment.TeamRanking) error {
 	f.saved = append(f.saved, r)
-	f.byTeam[r.TeamID] = r
+	f.byTeam[rankingKey{r.TeamID, r.Source}] = r
 	return nil
 }
-func (f *fakeRankingRepoForMatch) FindRanking(_ context.Context, teamID common.TeamID, _ enrichment.Source) (*enrichment.TeamRanking, error) {
-	if r, ok := f.byTeam[teamID]; ok {
+func (f *fakeRankingRepoForMatch) FindRanking(_ context.Context, teamID common.TeamID, source enrichment.Source) (*enrichment.TeamRanking, error) {
+	if r, ok := f.byTeam[rankingKey{teamID, source}]; ok {
 		return &r, nil
 	}
 	return nil, nil
 }
-func (f *fakeRankingRepoForMatch) FindRankings(context.Context, []common.TeamID, enrichment.Source) (map[common.TeamID]enrichment.TeamRanking, error) {
-	return f.byTeam, nil
+func (f *fakeRankingRepoForMatch) FindRankings(_ context.Context, teamIDs []common.TeamID, source enrichment.Source) (map[common.TeamID]enrichment.TeamRanking, error) {
+	out := map[common.TeamID]enrichment.TeamRanking{}
+	for _, id := range teamIDs {
+		if r, ok := f.byTeam[rankingKey{id, source}]; ok {
+			out[id] = r
+		}
+	}
+	return out, nil
 }
 
 type savedIdentity struct {
@@ -209,12 +230,28 @@ func newTestTeamMatchService(snapshot []enrichment.RankedTeam) (*TeamMatchServic
 	identity := &fakeIdentityRepoForMatch{}
 	svc := &TeamMatchService{
 		Requests: requests, Helpers: newFakeHelperRepo(), Snapshots: &fakeSnapshotRepo{entries: snapshot},
-		Rankings: rankings, Identity: identity,
+		Rankings: rankings, Identity: identity, Sources: []enrichment.Source{enrichment.SourceValveVRS},
 		Predictions: &fakePredictionsForMatch{}, Chats: &fakeChatsForMatch{},
 		Outbox: &recordingOutbox{fakeOutbox: fakeOutbox{failed: map[uuid.UUID]string{}}},
 		Clock:  common.FixedClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Log: slog.Default(),
 	}
 	return svc, requests, rankings, identity
+}
+
+// ensureRequestSingle calls EnsureRequests (which now checks every
+// svc.Sources independently) and asserts exactly the single-source shape
+// most of these tests exercise, returning the one request id or nil the
+// same way the old single-source EnsureRequest used to.
+func ensureRequestSingle(t *testing.T, svc *TeamMatchService, team competition.Team) *common.RequestID {
+	t.Helper()
+	ids := svc.EnsureRequests(context.Background(), team)
+	if len(ids) > 1 {
+		t.Fatalf("expected at most one request id for a single-source test, got %v", ids)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return &ids[0]
 }
 
 // --- EnsureRequest ---
@@ -225,10 +262,7 @@ func TestEnsureRequest_AutoAcceptsHighFuzzyScore(t *testing.T) {
 	svc, requests, rankings, identity := newTestTeamMatchService(snapshot)
 	team := competition.Team{ID: common.NewTeamID(), Name: "Vitality"}
 
-	reqID, err := svc.EnsureRequest(context.Background(), team)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reqID := ensureRequestSingle(t, svc, team)
 	if reqID != nil {
 		t.Fatalf("expected auto-accept (nil request id), got %v", reqID)
 	}
@@ -251,10 +285,7 @@ func TestEnsureRequest_SkipsWhenAlreadyRanked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, err := svc.EnsureRequest(context.Background(), team)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reqID := ensureRequestSingle(t, svc, team)
 	if reqID != nil {
 		t.Fatalf("expected nil (already resolved), got %v", reqID)
 	}
@@ -271,10 +302,7 @@ func TestEnsureRequest_SkipsWhenNoPlausibleMatchAtAll(t *testing.T) {
 	svc, requests, _, _ := newTestTeamMatchService(snapshot)
 	team := competition.Team{ID: common.NewTeamID(), Name: "Some Unranked Regional Team"}
 
-	reqID, err := svc.EnsureRequest(context.Background(), team)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reqID := ensureRequestSingle(t, svc, team)
 	if reqID != nil {
 		t.Fatalf("expected nil (not plausibly ranked), got %v", reqID)
 	}
@@ -295,10 +323,7 @@ func TestEnsureRequest_CreatesRequestForAmbiguousScore(t *testing.T) {
 		t.Fatalf("test fixture invalid: score %d must sit strictly between the two thresholds", score)
 	}
 
-	reqID, err := svc.EnsureRequest(context.Background(), team)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reqID := ensureRequestSingle(t, svc, team)
 	if reqID == nil {
 		t.Fatal("expected a review request to be opened")
 	}
@@ -323,19 +348,50 @@ func TestEnsureRequest_ReusesExistingPendingRequestForSameExternalName(t *testin
 	teamA := competition.Team{ID: common.NewTeamID(), Name: "Avangarr"}
 	teamB := competition.Team{ID: common.NewTeamID(), Name: "Avangaar"}
 
-	firstID, err := svc.EnsureRequest(context.Background(), teamA)
-	if err != nil || firstID == nil {
-		t.Fatalf("expected a request from the first call, err=%v id=%v", err, firstID)
+	firstID := ensureRequestSingle(t, svc, teamA)
+	if firstID == nil {
+		t.Fatal("expected a request from the first call")
 	}
-	secondID, err := svc.EnsureRequest(context.Background(), teamB)
-	if err != nil || secondID == nil {
-		t.Fatalf("expected a request from the second call, err=%v id=%v", err, secondID)
+	secondID := ensureRequestSingle(t, svc, teamB)
+	if secondID == nil {
+		t.Fatal("expected a request from the second call")
 	}
 	if firstID.String() != secondID.String() {
 		t.Fatalf("expected the same request to be reused for the same external name, got %s and %s", firstID.String(), secondID.String())
 	}
 	if pending, _ := requests.ListPending(context.Background(), 10); len(pending) != 1 {
 		t.Fatalf("expected exactly one pending request, got %+v", pending)
+	}
+}
+
+// A team can be ambiguous on one ranking source while already resolved (or
+// simply unranked) on another — EnsureRequests must check every configured
+// Source independently and only report the ones that actually opened a
+// request, never conflating two different feeds' identities.
+func TestEnsureRequests_ChecksEachConfiguredSourceIndependently(t *testing.T) {
+	valveSnapshot := enrichment.RankedTeam{Identity: enrichment.TeamIdentity{Name: "Avangar"}, Source: enrichment.SourceValveVRS}
+	hltvSnapshot := enrichment.RankedTeam{Identity: enrichment.TeamIdentity{Name: "Avangar"}, Source: enrichment.SourceHLTV}
+	svc, requests, rankings, _ := newTestTeamMatchService([]enrichment.RankedTeam{valveSnapshot, hltvSnapshot})
+	svc.Sources = []enrichment.Source{enrichment.SourceValveVRS, enrichment.SourceHLTV}
+	team := competition.Team{ID: common.NewTeamID(), Name: "Avangarr"}
+
+	// The team is already resolved on HLTV, but not on Valve VRS — only
+	// the Valve side should end up with a pending request.
+	rank := 5
+	if err := rankings.SaveRanking(context.Background(), enrichment.TeamRanking{TeamID: team.ID, GlobalRank: &rank, Source: enrichment.SourceHLTV}); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := svc.EnsureRequests(context.Background(), team)
+	if len(ids) != 1 {
+		t.Fatalf("expected exactly one pending request (Valve only), got %v", ids)
+	}
+	req, _, err := requests.FindRequest(context.Background(), ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Source != enrichment.SourceValveVRS {
+		t.Fatalf("expected the pending request's source to be Valve VRS, got %s", req.Source)
 	}
 }
 

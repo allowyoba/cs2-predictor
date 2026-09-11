@@ -302,16 +302,22 @@ type TeamMatchOperatorRepository interface {
 	ListOperators(ctx context.Context) ([]common.UserID, error)
 }
 
-// SnapshotRepository caches every team Valve's own ranking feed currently
-// reports (valve_vrs_snapshot), independent of whether any of them have
-// been matched to a local team — see this file's doc comment for why the
-// fuzzy-review pipeline needs this separate from RankingRepository.
+// SnapshotRepository caches every team a ranking feed (Valve VRS, HLTV, ...)
+// currently reports (ranking_snapshot), independent of whether any of them
+// have been matched to a local team — see this file's doc comment for why
+// the fuzzy-review pipeline needs this separate from RankingRepository.
+// Rows are scoped by Source throughout: two different feeds happening to
+// rank a similarly-named team must never be compared against each other.
 type SnapshotRepository interface {
+	// SaveSnapshot upserts ranked, keyed by (source, normalized name) —
+	// each entry's own Source field says which feed's cache it belongs to,
+	// so a single call can in principle mix sources, though callers today
+	// always pass one provider's full result at a time.
 	SaveSnapshot(ctx context.Context, ranked []RankedTeam) error
-	// AllSnapshot returns every currently-cached entry, for scoring a new
-	// unmatched team's name against all of them in Go (the feed is at most
-	// a few hundred rows — small enough that this beats maintaining a
-	// SQL-side fuzzy-search index for what is, in practice, an occasional
-	// lookup).
-	AllSnapshot(ctx context.Context) ([]RankedTeam, error)
+	// AllSnapshot returns every currently-cached entry for one source, for
+	// scoring a new unmatched team's name against all of them in Go (the
+	// feed is at most a few hundred rows — small enough that this beats
+	// maintaining a SQL-side fuzzy-search index for what is, in practice,
+	// an occasional lookup).
+	AllSnapshot(ctx context.Context, source Source) ([]RankedTeam, error)
 }

@@ -1672,7 +1672,7 @@ func TestEnrichmentRepository_TeamMatchRequestLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := repo.AllSnapshot(ctx)
+	snapshot, err := repo.AllSnapshot(ctx, enrichment.SourceValveVRS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1777,6 +1777,57 @@ func TestEnrichmentRepository_TeamMatchRequestLifecycle(t *testing.T) {
 		t.Fatal(err)
 	} else if len(pending) != 0 {
 		t.Fatalf("a resolved request must no longer be pending, got %+v", pending)
+	}
+}
+
+// Two different ranking sources (Valve VRS, HLTV) reporting a
+// similarly-named team must never collide in ranking_snapshot — this is
+// exactly the bug migration 0028 fixes (the table used to key solely on
+// normalized_name, shared across every source).
+func TestEnrichmentRepository_SnapshotIsScopedPerSource(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	repo := pg.NewEnrichmentRepository(pool)
+
+	valveRank, hltvRank := 3, 7
+	if err := repo.SaveSnapshot(ctx, []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Vitality"}, GlobalRank: &valveRank, Source: enrichment.SourceValveVRS},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveSnapshot(ctx, []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Vitality"}, GlobalRank: &hltvRank, Source: enrichment.SourceHLTV},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	valveSnapshot, err := repo.AllSnapshot(ctx, enrichment.SourceValveVRS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(valveSnapshot) != 1 || *valveSnapshot[0].GlobalRank != valveRank {
+		t.Fatalf("Valve VRS snapshot was overwritten by the HLTV save, got %+v", valveSnapshot)
+	}
+
+	hltvSnapshot, err := repo.AllSnapshot(ctx, enrichment.SourceHLTV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hltvSnapshot) != 1 || *hltvSnapshot[0].GlobalRank != hltvRank {
+		t.Fatalf("unexpected HLTV snapshot: %+v", hltvSnapshot)
+	}
+
+	// A save for one source must not clear or affect the other's rows —
+	// re-saving Valve's alone shouldn't touch the HLTV row from above.
+	newValveRank := 4
+	if err := repo.SaveSnapshot(ctx, []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Vitality"}, GlobalRank: &newValveRank, Source: enrichment.SourceValveVRS},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if hltvSnapshot, err := repo.AllSnapshot(ctx, enrichment.SourceHLTV); err != nil {
+		t.Fatal(err)
+	} else if len(hltvSnapshot) != 1 || *hltvSnapshot[0].GlobalRank != hltvRank {
+		t.Fatalf("HLTV snapshot changed after an unrelated Valve VRS save, got %+v", hltvSnapshot)
 	}
 }
 

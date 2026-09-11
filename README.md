@@ -92,7 +92,10 @@ there's no live poll left on a finished tournament that a second signature could
 inside a poll (a VRS rank, recent form, head-to-head record). None of it is a source of truth for anything; PandaScore
 alone decides what events, matches, and results actually exist. Providers form a swappable, ordered list with a
 circuit breaker: one that starts failing gets temporarily skipped, with the cooldown growing exponentially, and
-plugging in a second provider some day won't need any change to the actual business logic.
+plugging in a second provider some day won't need any change to the actual business logic. HLTV's own weekly world
+ranking is available too, fetched via the paid Apify actor `paco_nassa~hltv-org-team-ranking` instead of a free feed —
+it feeds the same team-identity matching pipeline as VRS (a new team is fuzzy-matched against the cached ranking, then
+either auto-accepted or sent to `/team_matches` for review), on a weekly cadence that fits Apify's free tier.
 
 **Telegram Topics** are supported — a chat-wide default and a per-tournament override — and there's the usual
 infrastructure you'd expect from something meant to run unattended: a transactional outbox, PostgreSQL advisory
