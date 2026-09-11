@@ -137,6 +137,9 @@ func (f *fakeScoringForCompletion) MarkEventCompleted(_ context.Context, chatID 
 	f.completionHashes[chatID] = hash
 	return nil
 }
+func (f *fakeScoringForCompletion) LockEventCompletion(context.Context, common.ChatID, common.EventID) error {
+	return nil
+}
 
 func newMatch(status competition.MatchStatus) competition.Match {
 	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)

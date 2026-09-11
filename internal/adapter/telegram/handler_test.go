@@ -280,6 +280,9 @@ func (fakeScoring) EventCompletionHash(context.Context, common.ChatID, common.Ev
 func (fakeScoring) MarkEventCompleted(context.Context, common.ChatID, common.EventID, string, time.Time) error {
 	return nil
 }
+func (fakeScoring) LockEventCompletion(context.Context, common.ChatID, common.EventID) error {
+	return nil
+}
 func (fakeScoring) AvailableUserMonths(context.Context, common.UserID) ([]scoring.StatsMonth, error) {
 	return nil, nil
 }

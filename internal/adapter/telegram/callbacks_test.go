@@ -189,6 +189,9 @@ func (s *dataScoring) EventCompletionHash(context.Context, common.ChatID, common
 func (s *dataScoring) MarkEventCompleted(context.Context, common.ChatID, common.EventID, string, time.Time) error {
 	return nil
 }
+func (s *dataScoring) LockEventCompletion(context.Context, common.ChatID, common.EventID) error {
+	return nil
+}
 
 // personalDataScoring adds the user-scoped statistics port on top of the
 // regular group leaderboard fake so private-chat navigation can be exercised
