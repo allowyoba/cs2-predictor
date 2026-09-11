@@ -247,4 +247,3 @@ func fetchPages[T any](ctx context.Context, p *Provider, path string, maxPages i
 	}
 	return result, nil
 }
-
