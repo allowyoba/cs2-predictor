@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"cs2predictor/internal/adapter/apifyhltv"
 	"cs2predictor/internal/adapter/grid"
 	"cs2predictor/internal/adapter/liquipedia"
 	"cs2predictor/internal/adapter/pandascore"
@@ -121,15 +122,35 @@ func run() error {
 	// best-effort context like a Valve VRS rank line to an outgoing poll) ---
 	enrichmentRepo := pg.NewEnrichmentRepository(pool)
 	var enrichmentSources []enrichment.Source
-	var valveVRSSync *app.ValveVRSSync
+	// teamMatchSources feeds TeamMatchService: every ranking source whose
+	// RankingSync is actually running, so an unmatched team only ever gets
+	// checked against feeds this deployment has real data for.
+	var teamMatchSources []enrichment.Source
+	var valveVRSSync *app.RankingSync
 	if cfg.Enrichment.ValveVRSEnabled {
-		valveVRSSync = &app.ValveVRSSync{
+		valveVRSSync = &app.RankingSync{
+			Source:   enrichment.SourceValveVRS,
 			Provider: valvevrs.NewProvider(valvevrs.DefaultConfig(), httpClient),
 			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
 			Snapshots: enrichmentRepo,
 			Lock:      clusterLock, Log: log,
 		}
 		enrichmentSources = append(enrichmentSources, enrichment.SourceValveVRS)
+		teamMatchSources = append(teamMatchSources, enrichment.SourceValveVRS)
+	}
+	var hltvRankingSync *app.RankingSync
+	if cfg.Enrichment.HLTVEnabled {
+		apifyConfig := apifyhltv.DefaultConfig(cfg.Enrichment.HLTVAPIToken)
+		apifyConfig.MaxTeams = cfg.Enrichment.HLTVMaxTeams
+		hltvRankingSync = &app.RankingSync{
+			Source:   enrichment.SourceHLTV,
+			Provider: apifyhltv.NewProvider(apifyConfig, httpClient),
+			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
+			Snapshots: enrichmentRepo,
+			Lock:      clusterLock, Log: log,
+		}
+		enrichmentSources = append(enrichmentSources, enrichment.SourceHLTV)
+		teamMatchSources = append(teamMatchSources, enrichment.SourceHLTV)
 	}
 	var teamStatsSync *app.TeamStatsSync
 	if cfg.Enrichment.GRIDEnabled {
@@ -212,14 +233,16 @@ func run() error {
 		WithRecaps(chats, chatTitle, log)
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, outbox, clock, runTx, log)
 
-	// teamMatch resolves a team with no cached Valve VRS ranking against
-	// Valve's own feed — pointless without Valve VRS itself enabled, so it
-	// shares that gate rather than adding a second on/off flag.
+	// teamMatch resolves a team with no cached ranking against whichever
+	// ranking feeds (teamMatchSources) are actually enabled — pointless
+	// with none of them on, so it shares that gate rather than adding a
+	// separate on/off flag of its own.
 	var teamMatch *app.TeamMatchService
-	if cfg.Enrichment.ValveVRSEnabled {
+	if len(teamMatchSources) > 0 {
 		teamMatch = &app.TeamMatchService{
 			Requests: enrichmentRepo, Helpers: enrichmentRepo, Snapshots: enrichmentRepo,
-			Rankings: enrichmentRepo, Identity: enrichmentRepo, Predictions: predictionsRepo, Chats: chats,
+			Rankings: enrichmentRepo, Identity: enrichmentRepo, Sources: teamMatchSources,
+			Predictions: predictionsRepo, Chats: chats,
 			Outbox: outbox, Clock: clock, Log: log, OperatorChatIDs: cfg.TeamMatchOperatorChatIDs,
 		}
 	}
@@ -311,6 +334,9 @@ func run() error {
 		runBackground(cfg.OutboxDelay, dispatcher.Dispatch)
 		if valveVRSSync != nil {
 			runBackground(cfg.Enrichment.ValveVRSSyncInterval, valveVRSSync.Dispatch)
+		}
+		if hltvRankingSync != nil {
+			runBackground(cfg.Enrichment.HLTVSyncInterval, hltvRankingSync.Dispatch)
 		}
 		if teamStatsSync != nil {
 			runBackground(cfg.Enrichment.GRIDSyncInterval, teamStatsSync.Dispatch)

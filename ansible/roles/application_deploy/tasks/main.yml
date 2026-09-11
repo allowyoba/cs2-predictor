@@ -126,6 +126,18 @@
           PANDASCORE_TOKEN={{ lookup('env', 'PANDASCORE_TOKEN') }}
           CADDY_DOMAIN={{ lookup('env', 'CADDY_DOMAIN') }}
           DEPLOY_NOTIFY_CHAT_IDS={{ lookup('env', 'DEPLOY_NOTIFY_CHAT_IDS') | default('') }}
+          VALVE_VRS_ENABLED={{ lookup('env', 'VALVE_VRS_ENABLED') | default('') }}
+          VALVE_VRS_SYNC_INTERVAL={{ lookup('env', 'VALVE_VRS_SYNC_INTERVAL') | default('') }}
+          GRID_ENABLED={{ lookup('env', 'GRID_ENABLED') | default('') }}
+          GRID_API_KEY={{ lookup('env', 'GRID_API_KEY') | default('') }}
+          GRID_SYNC_INTERVAL={{ lookup('env', 'GRID_SYNC_INTERVAL') | default('') }}
+          LIQUIPEDIA_ENABLED={{ lookup('env', 'LIQUIPEDIA_ENABLED') | default('') }}
+          LIQUIPEDIA_API_KEY={{ lookup('env', 'LIQUIPEDIA_API_KEY') | default('') }}
+          LIQUIPEDIA_SYNC_INTERVAL={{ lookup('env', 'LIQUIPEDIA_SYNC_INTERVAL') | default('') }}
+          HLTV_ENABLED={{ lookup('env', 'HLTV_ENABLED') | default('') }}
+          APIFY_TOKEN={{ lookup('env', 'APIFY_TOKEN') | default('') }}
+          HLTV_SYNC_INTERVAL={{ lookup('env', 'HLTV_SYNC_INTERVAL') | default('') }}
+          HLTV_MAX_TEAMS={{ lookup('env', 'HLTV_MAX_TEAMS') | default('') }}
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
         mode: '0600'

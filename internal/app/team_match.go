@@ -25,19 +25,27 @@ const teamMatchParticipantWindow = 90 * 24 * time.Hour
 const teamMatchAskBatchSize = 2
 
 // TeamMatchService is the identity-resolution pipeline's third tier: for a
-// team that has no cached Valve VRS ranking at all, it either accepts a
-// near-certain fuzzy name match automatically, or opens a TeamMatchRequest
-// that an operator resolves via /team_matches — optionally informed by a
-// few chat members' yes/no votes first (RecordResponse; see
-// enrichment.CrowdAdjustedScore for why the crowd alone can never confirm
-// one). See internal/domain/enrichment/team_match.go for the scoring rules
-// this pipeline is built on.
+// team that has no cached ranking at all from one of Sources, it either
+// accepts a near-certain fuzzy name match automatically, or opens a
+// TeamMatchRequest that an operator resolves via /team_matches —
+// optionally informed by a few chat members' yes/no votes first
+// (RecordResponse; see enrichment.CrowdAdjustedScore for why the crowd
+// alone can never confirm one). See
+// internal/domain/enrichment/team_match.go for the scoring rules this
+// pipeline is built on. The pipeline itself has nothing source-specific
+// about it — the same code resolves a Valve VRS identity and an HLTV one,
+// each tracked independently, since they're different rankings that can
+// each be matched or not on their own.
 type TeamMatchService struct {
 	Requests  enrichment.TeamMatchRepository
 	Helpers   enrichment.TeamMatchHelperRepository
 	Snapshots enrichment.SnapshotRepository
 	Rankings  enrichment.RankingRepository
 	Identity  enrichment.IdentityRepository
+	// Sources lists every ranking feed this service should try to resolve
+	// an unmatched team against — e.g. {SourceValveVRS, SourceHLTV} when
+	// both are enabled. EnsureRequests checks each independently.
+	Sources []enrichment.Source
 	// Predictions is the plain repository (not *prediction.Service):
 	// ChatParticipants is all this needs, the same minimal dependency
 	// PollReminderService takes for the same "who plays in this chat"
@@ -53,21 +61,38 @@ type TeamMatchService struct {
 	OperatorChatIDs []int64
 }
 
-// EnsureRequest is the entry point, called once per team per newly
+// EnsureRequests is the entry point, called once per team per newly
 // discovered match (see CompetitionSynchronization.fanOutNewPolls) — never
 // per chat, since the fuzzy search and snapshot read are the same
-// regardless of which chat the match is being announced to. Returns the
-// pending request id a chat's participants can be asked about
-// (AskChatHelpers), or nil if the team was auto-accepted or isn't
-// plausibly ranked by Valve at all.
-func (s *TeamMatchService) EnsureRequest(ctx context.Context, team competition.Team) (*common.RequestID, error) {
-	if existing, err := s.Rankings.FindRanking(ctx, team.ID, enrichment.SourceValveVRS); err != nil {
+// regardless of which chat the match is being announced to. Tries every
+// configured Source independently (a team can be ambiguous on HLTV but
+// already resolved on Valve VRS, or vice versa) and returns the pending
+// request id for each Source that ended up needing review — never one for
+// a Source the team was auto-accepted on, or isn't plausibly ranked by at
+// all.
+func (s *TeamMatchService) EnsureRequests(ctx context.Context, team competition.Team) []common.RequestID {
+	var pending []common.RequestID
+	for _, source := range s.Sources {
+		id, err := s.ensureRequest(ctx, team, source)
+		if err != nil {
+			s.Log.Error("team match ensure-request failed", "team", team.Name, "source", source, "error", err)
+			continue
+		}
+		if id != nil {
+			pending = append(pending, *id)
+		}
+	}
+	return pending
+}
+
+func (s *TeamMatchService) ensureRequest(ctx context.Context, team competition.Team, source enrichment.Source) (*common.RequestID, error) {
+	if existing, err := s.Rankings.FindRanking(ctx, team.ID, source); err != nil {
 		return nil, err
 	} else if existing != nil {
 		return nil, nil // already resolved
 	}
 
-	snapshot, err := s.Snapshots.AllSnapshot(ctx)
+	snapshot, err := s.Snapshots.AllSnapshot(ctx, source)
 	if err != nil {
 		return nil, err
 	}
@@ -76,10 +101,10 @@ func (s *TeamMatchService) EnsureRequest(ctx context.Context, team competition.T
 		return nil, nil // not a plausible match — most likely just unranked
 	}
 	if bestScore >= enrichment.FuzzyAutoAcceptThreshold {
-		return nil, s.autoAccept(ctx, team.ID, best)
+		return nil, s.autoAccept(ctx, team.ID, source, best)
 	}
 
-	existing, err := s.Requests.FindPendingByExternalName(ctx, enrichment.SourceValveVRS, best.Identity.Name)
+	existing, err := s.Requests.FindPendingByExternalName(ctx, source, best.Identity.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +113,7 @@ func (s *TeamMatchService) EnsureRequest(ctx context.Context, team competition.T
 	}
 
 	req := enrichment.TeamMatchRequest{
-		ID: common.NewRequestID(), ExternalName: best.Identity.Name, Source: enrichment.SourceValveVRS,
+		ID: common.NewRequestID(), ExternalName: best.Identity.Name, Source: source,
 		Status: enrichment.TeamMatchPending, BestTeamID: &team.ID, BestScore: bestScore, CreatedAt: s.Clock.Now(),
 	}
 	candidate := enrichment.TeamMatchCandidate{TeamID: team.ID, TeamName: team.Name, Score: bestScore, Kind: enrichment.CandidateKindFuzzy}
@@ -101,24 +126,25 @@ func (s *TeamMatchService) EnsureRequest(ctx context.Context, team competition.T
 
 // autoAccept saves both the identity mapping and the ranking itself
 // immediately, from the snapshot row already in hand — a team resolved
-// this way shows up with its VRS rank starting with the very poll that
+// this way shows up with its rank starting with the very poll that
 // triggered the match, rather than waiting for the next scheduled sync.
-func (s *TeamMatchService) autoAccept(ctx context.Context, teamID common.TeamID, best enrichment.RankedTeam) error {
+func (s *TeamMatchService) autoAccept(ctx context.Context, teamID common.TeamID, source enrichment.Source, best enrichment.RankedTeam) error {
 	externalID := enrichment.NormalizeTeamName(best.Identity.Name)
-	if err := s.Identity.SaveIdentity(ctx, teamID, enrichment.SourceValveVRS, externalID, best.Identity.Name, enrichment.ConfidenceFuzzyName); err != nil {
+	if err := s.Identity.SaveIdentity(ctx, teamID, source, externalID, best.Identity.Name, enrichment.ConfidenceFuzzyName); err != nil {
 		return err
 	}
 	return s.Rankings.SaveRanking(ctx, enrichment.TeamRanking{
 		TeamID: teamID, GlobalRank: best.GlobalRank, RegionalRank: best.RegionalRank,
 		Region: best.Region, Points: best.Points, Roster: best.Identity.Roster,
-		PublishedAt: best.PublishedAt, Source: enrichment.SourceValveVRS,
+		PublishedAt: best.PublishedAt, Source: source,
 	})
 }
 
-// bestSnapshotMatch scores name against every cached Valve entry and
-// returns the highest-scoring one. The snapshot is at most a few hundred
-// rows (see enrichment.SnapshotRepository's doc comment), so scoring all of
-// them in Go on an occasional lookup like this is simpler than any SQL-side
+// bestSnapshotMatch scores name against every cached entry (already scoped
+// to one Source by the caller) and returns the highest-scoring one. The
+// snapshot is at most a few hundred rows (see
+// enrichment.SnapshotRepository's doc comment), so scoring all of them in
+// Go on an occasional lookup like this is simpler than any SQL-side
 // fuzzy-search scheme would be.
 func bestSnapshotMatch(name string, snapshot []enrichment.RankedTeam) (enrichment.RankedTeam, int) {
 	var best enrichment.RankedTeam

@@ -171,7 +171,19 @@ esac
                               "TELEGRAM_WEBHOOK_SECRET=fresh-webhook-secret\n"
                               "PANDASCORE_TOKEN=fresh-pandascore-token\n"
                               "CADDY_DOMAIN=bot.example.test\n"
-                              "DEPLOY_NOTIFY_CHAT_IDS=\n")
+                              "DEPLOY_NOTIFY_CHAT_IDS=\n"
+                              "VALVE_VRS_ENABLED=\n"
+                              "VALVE_VRS_SYNC_INTERVAL=\n"
+                              "GRID_ENABLED=\n"
+                              "GRID_API_KEY=\n"
+                              "GRID_SYNC_INTERVAL=\n"
+                              "LIQUIPEDIA_ENABLED=\n"
+                              "LIQUIPEDIA_API_KEY=\n"
+                              "LIQUIPEDIA_SYNC_INTERVAL=\n"
+                              "HLTV_ENABLED=\n"
+                              "APIFY_TOKEN=\n"
+                              "HLTV_SYNC_INTERVAL=\n"
+                              "HLTV_MAX_TEAMS=\n")
             self.assertFalse(Path(tmp, "deploy_key").exists())
             self.assertFalse(Path(tmp, "known_hosts").exists())
 

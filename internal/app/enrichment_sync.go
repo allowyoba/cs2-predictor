@@ -8,14 +8,22 @@ import (
 	"cs2predictor/internal/platform/common"
 )
 
-// ValveVRSSync fetches Valve's Regional Standings, resolves each team
-// against the local catalog, and caches the result: a standalone
-// scheduled job with its own interval, lock and logging, separate from
-// CompetitionSynchronization's jobs. A failure here (Valve unreachable,
-// malformed data, ...) is always best-effort: logged and recorded for
-// /healthz, never propagated as a hard error that could affect anything
-// else.
-type ValveVRSSync struct {
+// RankingSync fetches one named ranking feed (Valve VRS, HLTV, ...),
+// resolves each team against the local catalog via the shared identity-
+// matching pipeline (internal/domain/enrichment/identity.go), and caches
+// the result: a standalone scheduled job with its own interval, lock and
+// logging, separate from CompetitionSynchronization's jobs. One instance
+// per Source — the matching logic itself has nothing source-specific about
+// it, so Valve VRS and HLTV are wired identically, just pointed at
+// different providers. A failure here (the feed unreachable, malformed
+// data, ...) is always best-effort: logged and recorded for /healthz,
+// never propagated as a hard error that could affect anything else.
+type RankingSync struct {
+	// Source names which enrichment.Source this instance maintains — used
+	// throughout as the identity/ranking lookup key, and folded into this
+	// job's cluster-lock name and log lines so two sources' jobs never
+	// contend with each other and their logs stay distinguishable.
+	Source    enrichment.Source
 	Provider  enrichment.RankingProvider
 	Teams     enrichment.TeamLister
 	Rankings  enrichment.RankingRepository
@@ -26,17 +34,17 @@ type ValveVRSSync struct {
 	Log       *slog.Logger
 }
 
-func (s *ValveVRSSync) Dispatch(ctx context.Context) {
-	_, err := s.Lock.Execute(ctx, "cs2predictor:valve-vrs-sync", func(ctx context.Context) error {
+func (s *RankingSync) Dispatch(ctx context.Context) {
+	_, err := s.Lock.Execute(ctx, "cs2predictor:ranking-sync:"+string(s.Source), func(ctx context.Context) error {
 		s.sync(ctx)
 		return nil
 	})
 	if err != nil {
-		s.Log.Error("valve vrs sync dispatch failed", "error", err)
+		s.Log.Error("ranking sync dispatch failed", "source", s.Source, "error", err)
 	}
 }
 
-func (s *ValveVRSSync) sync(ctx context.Context) {
+func (s *RankingSync) sync(ctx context.Context) {
 	ranked, err := s.Provider.FetchRankings(ctx)
 	if err != nil {
 		s.recordFailure(ctx, err)
@@ -49,7 +57,7 @@ func (s *ValveVRSSync) sync(ctx context.Context) {
 	// needs the full feed, not just the teams that happened to match here.
 	if s.Snapshots != nil {
 		if err := s.Snapshots.SaveSnapshot(ctx, ranked); err != nil {
-			s.Log.Error("valve vrs snapshot save failed", "error", err)
+			s.Log.Error("ranking snapshot save failed", "source", s.Source, "error", err)
 		}
 	}
 
@@ -73,29 +81,29 @@ func (s *ValveVRSSync) sync(ctx context.Context) {
 			PublishedAt: rt.PublishedAt, Source: rt.Source,
 		}
 		if err := s.Rankings.SaveRanking(ctx, ranking); err != nil {
-			s.Log.Error("valve vrs ranking save failed", "team", rt.Identity.Name, "error", err)
+			s.Log.Error("ranking save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
 		}
 	}
 
-	if err := s.State.RecordSuccess(ctx, enrichment.SourceValveVRS); err != nil {
-		s.Log.Error("valve vrs sync state record-success failed", "error", err)
+	if err := s.State.RecordSuccess(ctx, s.Source); err != nil {
+		s.Log.Error("ranking sync state record-success failed", "source", s.Source, "error", err)
 	}
-	s.Log.Info("valve vrs rankings synchronized", "fetched", len(ranked), "matched", matched, "unmatched", unmatched)
+	s.Log.Info("rankings synchronized", "source", s.Source, "fetched", len(ranked), "matched", matched, "unmatched", unmatched)
 }
 
-func (s *ValveVRSSync) recordFailure(ctx context.Context, err error) {
-	s.Log.Warn("valve vrs sync failed, keeping cached rankings", "error", err)
-	if stateErr := s.State.RecordFailure(ctx, enrichment.SourceValveVRS, err.Error()); stateErr != nil {
-		s.Log.Error("valve vrs sync state record-failure failed", "error", stateErr)
+func (s *RankingSync) recordFailure(ctx context.Context, err error) {
+	s.Log.Warn("ranking sync failed, keeping cached rankings", "source", s.Source, "error", err)
+	if stateErr := s.State.RecordFailure(ctx, s.Source, err.Error()); stateErr != nil {
+		s.Log.Error("ranking sync state record-failure failed", "source", s.Source, "error", stateErr)
 	}
 }
 
 // buildCandidates loads every local team plus its known aliases (one batch
-// query, not one per team) and, where we already have a cached Valve
-// ranking for it, that ranking's roster — giving MatchTeam's roster-overlap
-// step something to compare against even on a team that has never matched
-// by name/alias before.
-func (s *ValveVRSSync) buildCandidates(ctx context.Context) ([]enrichment.TeamCandidate, error) {
+// query, not one per team) and, where we already have a cached ranking for
+// it from this same Source, that ranking's roster — giving MatchTeam's
+// roster-overlap step something to compare against even on a team that has
+// never matched by name/alias before.
+func (s *RankingSync) buildCandidates(ctx context.Context) ([]enrichment.TeamCandidate, error) {
 	teams, err := s.Teams.ListTeams(ctx)
 	if err != nil {
 		return nil, err
@@ -108,7 +116,7 @@ func (s *ValveVRSSync) buildCandidates(ctx context.Context) ([]enrichment.TeamCa
 	for i, t := range teams {
 		teamIDs[i] = t.ID
 	}
-	rankings, err := s.Rankings.FindRankings(ctx, teamIDs, enrichment.SourceValveVRS)
+	rankings, err := s.Rankings.FindRankings(ctx, teamIDs, s.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -123,14 +131,15 @@ func (s *ValveVRSSync) buildCandidates(ctx context.Context) ([]enrichment.TeamCa
 	return candidates, nil
 }
 
-// resolveTeam tries the cheap, already-confirmed mapping first (Valve
-// publishes no team IDs, so the normalized team name is used as the stable
-// "external ID" for this provider), falling back to MatchTeam's name/alias/
-// roster pipeline and persisting a new mapping when that succeeds.
-func (s *ValveVRSSync) resolveTeam(ctx context.Context, candidates []enrichment.TeamCandidate, identity enrichment.TeamIdentity) (common.TeamID, bool) {
+// resolveTeam tries the cheap, already-confirmed mapping first (this
+// Source's provider publishes no stable team IDs of its own, so the
+// normalized team name is used as the stable "external ID" for it),
+// falling back to MatchTeam's name/alias/roster pipeline and persisting a
+// new mapping when that succeeds.
+func (s *RankingSync) resolveTeam(ctx context.Context, candidates []enrichment.TeamCandidate, identity enrichment.TeamIdentity) (common.TeamID, bool) {
 	externalID := enrichment.NormalizeTeamName(identity.Name)
-	if id, err := s.Identity.FindTeamByExternalID(ctx, enrichment.SourceValveVRS, externalID); err != nil {
-		s.Log.Warn("valve vrs identity lookup failed, falling back to name/alias/roster matching", "team", identity.Name, "error", err)
+	if id, err := s.Identity.FindTeamByExternalID(ctx, s.Source, externalID); err != nil {
+		s.Log.Warn("ranking identity lookup failed, falling back to name/alias/roster matching", "source", s.Source, "team", identity.Name, "error", err)
 	} else if id != nil {
 		return *id, true
 	}
@@ -139,8 +148,8 @@ func (s *ValveVRSSync) resolveTeam(ctx context.Context, candidates []enrichment.
 	if !ok {
 		return common.TeamID{}, false
 	}
-	if err := s.Identity.SaveIdentity(ctx, teamID, enrichment.SourceValveVRS, externalID, identity.Name, confidence); err != nil {
-		s.Log.Warn("valve vrs identity save failed", "team", identity.Name, "error", err)
+	if err := s.Identity.SaveIdentity(ctx, teamID, s.Source, externalID, identity.Name, confidence); err != nil {
+		s.Log.Warn("ranking identity save failed", "source", s.Source, "team", identity.Name, "error", err)
 	}
 	return teamID, true
 }

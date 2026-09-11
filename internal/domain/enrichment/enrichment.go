@@ -24,6 +24,12 @@ const (
 	SourceValveVRS   Source = "VALVE_VRS"
 	SourceGRID       Source = "GRID"
 	SourceLiquipedia Source = "LIQUIPEDIA"
+	// SourceHLTV is HLTV.org's own weekly world ranking (distinct from
+	// SourceValveVRS, which is Valve's own official standings — HLTV
+	// happens to mirror both on its site, but they are separate rankings
+	// with separate update cadences and must never be merged into one
+	// cache row).
+	SourceHLTV Source = "HLTV"
 )
 
 // TeamIdentity is how a provider refers to a team before it has been

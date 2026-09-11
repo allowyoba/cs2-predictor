@@ -88,11 +88,16 @@ conversation with it, you get to confirm it yourself a second time instead. A pe
 it's waiting, and whoever was asked gets told if it was. Bulk cleanup of finished tournaments skips all of this —
 there's no live poll left on a finished tournament that a second signature could be protecting.
 
-**Team-data enrichment** — Valve Regional Standings, and optionally GRID and Liquipedia — shows up as extra context
-inside a poll (a VRS rank, recent form, head-to-head record). None of it is a source of truth for anything; PandaScore
-alone decides what events, matches, and results actually exist. Providers form a swappable, ordered list with a
-circuit breaker: one that starts failing gets temporarily skipped, with the cooldown growing exponentially, and
-plugging in a second provider some day won't need any change to the actual business logic.
+**Team-data enrichment** — Valve Regional Standings, optionally HLTV's own world ranking, and optionally GRID and
+Liquipedia — shows up as extra context inside a poll (a VRS rank, an HLTV rank, recent form, head-to-head record).
+None of it is a source of truth for anything; PandaScore alone decides what events, matches, and results actually
+exist. Providers form a swappable, ordered list with a circuit breaker: one that starts failing gets temporarily
+skipped, with the cooldown growing exponentially, and plugging in a second provider some day won't need any change to
+the actual business logic. HLTV's ranking is fetched via the paid Apify actor `paco_nassa~hltv-org-team-ranking`
+instead of a free feed, on a weekly cadence that fits Apify's free tier, and feeds the exact same team-identity
+matching pipeline as VRS (a new team is fuzzy-matched against the cached ranking, then either auto-accepted or sent to
+`/team_matches` for review) — the two rankings are cached and displayed as fully independent lines, one team having a
+cached VRS rank never implies anything about its HLTV rank or vice versa.
 
 **Telegram Topics** are supported — a chat-wide default and a per-tournament override — and there's the usual
 infrastructure you'd expect from something meant to run unattended: a transactional outbox, PostgreSQL advisory

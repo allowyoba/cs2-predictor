@@ -79,6 +79,17 @@ type EnrichmentConfig struct {
 	LiquipediaEnabled      bool
 	LiquipediaAPIKey       string
 	LiquipediaSyncInterval time.Duration
+
+	// HLTVEnabled fetches HLTV.org's own weekly world ranking via a public
+	// Apify actor (see internal/adapter/apifyhltv) — gated behind an Apify
+	// API token like GRID/Liquipedia are behind their own keys, so it
+	// defaults to disabled rather than silently running unconfigured.
+	HLTVEnabled      bool
+	HLTVAPIToken     string
+	HLTVSyncInterval time.Duration
+	// HLTVMaxTeams bounds both relevance and Apify's pay-per-result cost —
+	// see apifyhltv.defaultMaxTeams's doc comment.
+	HLTVMaxTeams int
 }
 
 // RetentionConfig bounds how long the traffic-driven tables keep rows (see
@@ -416,6 +427,23 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("LIQUIPEDIA_API_KEY is required when LIQUIPEDIA_ENABLED=true")
 	}
 	if cfg.Enrichment.LiquipediaSyncInterval, err = envDuration("LIQUIPEDIA_SYNC_INTERVAL", 24*time.Hour); err != nil {
+		return Config{}, err
+	}
+
+	cfg.Enrichment.HLTVEnabled = envBool("HLTV_ENABLED", false)
+	cfg.Enrichment.HLTVAPIToken = os.Getenv("APIFY_TOKEN")
+	if cfg.Enrichment.HLTVEnabled && strings.TrimSpace(cfg.Enrichment.HLTVAPIToken) == "" {
+		return Config{}, fmt.Errorf("APIFY_TOKEN is required when HLTV_ENABLED=true")
+	}
+	// Weekly, not the 6h VRS default: unlike Valve VRS's free GitHub
+	// snapshots, every HLTV fetch here costs real money (Apify bills this
+	// actor per result — see apifyhltv's doc comment), and HLTV only
+	// republishes its ranking once a week regardless, so anything shorter
+	// would just pay repeatedly for the same numbers.
+	if cfg.Enrichment.HLTVSyncInterval, err = envDuration("HLTV_SYNC_INTERVAL", 7*24*time.Hour); err != nil {
+		return Config{}, err
+	}
+	if cfg.Enrichment.HLTVMaxTeams, err = envInt("HLTV_MAX_TEAMS", 50); err != nil {
 		return Config{}, err
 	}
 

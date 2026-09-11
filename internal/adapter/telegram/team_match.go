@@ -208,14 +208,15 @@ func (h *UpdateHandler) confirmTeamMatch(ctx context.Context, userID common.User
 	return h.TeamMatches.Resolve(ctx, reqID, enrichment.TeamMatchConfirmed, &chosen.TeamID, h.Clock.Now())
 }
 
-// applyCachedRanking looks the just-confirmed team up in the cached Valve
-// snapshot and saves its ranking immediately if found — best effort, since
-// the scheduled sync will pick it up on its own next run regardless.
+// applyCachedRanking looks the just-confirmed team up in the cached
+// snapshot for source and saves its ranking immediately if found — best
+// effort, since the scheduled sync will pick it up on its own next run
+// regardless.
 func (h *UpdateHandler) applyCachedRanking(ctx context.Context, teamID common.TeamID, source enrichment.Source, externalID string) {
 	if h.TeamSnapshots == nil || h.TeamRankings == nil {
 		return
 	}
-	snapshot, err := h.TeamSnapshots.AllSnapshot(ctx)
+	snapshot, err := h.TeamSnapshots.AllSnapshot(ctx, source)
 	if err != nil {
 		loggerFrom(ctx, h.Log).Warn("team match snapshot lookup failed after confirm", "error", err)
 		return

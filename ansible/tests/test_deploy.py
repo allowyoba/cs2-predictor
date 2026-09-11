@@ -46,6 +46,18 @@ esac
             "PANDASCORE_TOKEN": "fresh-pandascore-token",
             "CADDY_DOMAIN": "bot.example.test",
             "DEPLOY_NOTIFY_CHAT_IDS": "",
+            "VALVE_VRS_ENABLED": "",
+            "VALVE_VRS_SYNC_INTERVAL": "",
+            "GRID_ENABLED": "",
+            "GRID_API_KEY": "",
+            "GRID_SYNC_INTERVAL": "",
+            "LIQUIPEDIA_ENABLED": "",
+            "LIQUIPEDIA_API_KEY": "",
+            "LIQUIPEDIA_SYNC_INTERVAL": "",
+            "HLTV_ENABLED": "",
+            "APIFY_TOKEN": "",
+            "HLTV_SYNC_INTERVAL": "",
+            "HLTV_MAX_TEAMS": "",
         }
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],

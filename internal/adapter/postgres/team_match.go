@@ -29,21 +29,21 @@ func (r *EnrichmentRepository) SaveSnapshot(ctx context.Context, ranked []enrich
 			continue
 		}
 		if _, err := ex.Exec(ctx, `
-			INSERT INTO valve_vrs_snapshot(normalized_name, external_name, global_rank, points, updated_at)
-			VALUES ($1, $2, $3, $4, now())
-			ON CONFLICT (normalized_name) DO UPDATE SET
+			INSERT INTO ranking_snapshot(source, normalized_name, external_name, global_rank, points, updated_at)
+			VALUES ($1, $2, $3, $4, $5, now())
+			ON CONFLICT (source, normalized_name) DO UPDATE SET
 			  external_name = excluded.external_name, global_rank = excluded.global_rank,
 			  points = excluded.points, updated_at = now()`,
-			normalized, rt.Identity.Name, rt.GlobalRank, rt.Points); err != nil {
+			string(rt.Source), normalized, rt.Identity.Name, rt.GlobalRank, rt.Points); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *EnrichmentRepository) AllSnapshot(ctx context.Context) ([]enrichment.RankedTeam, error) {
+func (r *EnrichmentRepository) AllSnapshot(ctx context.Context, source enrichment.Source) ([]enrichment.RankedTeam, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx,
-		`SELECT external_name, global_rank, points FROM valve_vrs_snapshot`)
+		`SELECT external_name, global_rank, points FROM ranking_snapshot WHERE source = $1`, string(source))
 	if err != nil {
 		return nil, err
 	}
@@ -51,11 +51,10 @@ func (r *EnrichmentRepository) AllSnapshot(ctx context.Context) ([]enrichment.Ra
 
 	var out []enrichment.RankedTeam
 	for rows.Next() {
-		var rt enrichment.RankedTeam
+		rt := enrichment.RankedTeam{Source: source}
 		if err := rows.Scan(&rt.Identity.Name, &rt.GlobalRank, &rt.Points); err != nil {
 			return nil, err
 		}
-		rt.Source = enrichment.SourceValveVRS
 		out = append(out, rt)
 	}
 	return out, rows.Err()

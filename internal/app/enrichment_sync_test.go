@@ -181,7 +181,8 @@ func (s *fakeEnrichmentStore) State(_ context.Context, provider enrichment.Sourc
 func TestValveVRSSync_MatchesTeamByExactNameAndCachesRanking(t *testing.T) {
 	teamID := common.NewTeamID()
 	store := newFakeEnrichmentStore()
-	sync := &ValveVRSSync{
+	sync := &RankingSync{
+		Source: enrichment.SourceValveVRS,
 		Provider: &fakeRankingProvider{ranked: []enrichment.RankedTeam{
 			{Identity: enrichment.TeamIdentity{Name: "Spirit"}, GlobalRank: intPtr(1), Points: intPtr(2011), PublishedAt: time.Now(), Source: enrichment.SourceValveVRS},
 		}},
@@ -209,7 +210,8 @@ func TestValveVRSSync_MatchesTeamByExactNameAndCachesRanking(t *testing.T) {
 
 func TestValveVRSSync_SkipsUnmatchedTeamsWithoutFailingTheSync(t *testing.T) {
 	store := newFakeEnrichmentStore()
-	sync := &ValveVRSSync{
+	sync := &RankingSync{
+		Source: enrichment.SourceValveVRS,
 		Provider: &fakeRankingProvider{ranked: []enrichment.RankedTeam{
 			{Identity: enrichment.TeamIdentity{Name: "Completely Unknown Team"}, GlobalRank: intPtr(1), PublishedAt: time.Now(), Source: enrichment.SourceValveVRS},
 		}},
@@ -233,7 +235,8 @@ func TestValveVRSSync_SkipsUnmatchedTeamsWithoutFailingTheSync(t *testing.T) {
 
 func TestValveVRSSync_RecordsFailureWhenProviderFetchErrors(t *testing.T) {
 	store := newFakeEnrichmentStore()
-	sync := &ValveVRSSync{
+	sync := &RankingSync{
+		Source:   enrichment.SourceValveVRS,
 		Provider: &fakeRankingProvider{err: errors.New("valve unreachable")},
 		Teams:    &fakeTeamLister{},
 		Rankings: store, Identity: store, State: store,
@@ -259,7 +262,8 @@ func TestValveVRSSync_ReusesConfirmedExternalIDMappingOnSubsequentRuns(t *testin
 	provider := &fakeRankingProvider{ranked: []enrichment.RankedTeam{
 		{Identity: enrichment.TeamIdentity{Name: "Natus Vincere"}, GlobalRank: intPtr(2), PublishedAt: time.Now(), Source: enrichment.SourceValveVRS},
 	}}
-	sync := &ValveVRSSync{
+	sync := &RankingSync{
+		Source:   enrichment.SourceValveVRS,
 		Provider: provider,
 		Teams:    &fakeTeamLister{teams: []competition.Team{{ID: teamID, Name: "Natus Vincere"}}},
 		Rankings: store, Identity: store, State: store,

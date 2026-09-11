@@ -216,11 +216,12 @@ func (s *CompetitionSynchronization) processMatch(ctx context.Context, incoming 
 }
 
 // ensureTeamsMatched is the identity-resolution trigger point: a team only
-// ever gets checked against Valve's ranking feed once it actually shows up
-// in a match about to be predicted, not for every team Valve ranks (most of
-// which no subscribed chat will ever see) — see TeamMatchService.EnsureRequest.
-// Called once per match, not once per chat, since the check is identical
-// regardless of which chats end up seeing the resulting poll.
+// ever gets checked against a ranking feed once it actually shows up in a
+// match about to be predicted, not for every team that feed ranks (most of
+// which no subscribed chat will ever see) — see
+// TeamMatchService.EnsureRequests. Called once per match, not once per
+// chat, since the check is identical regardless of which chats end up
+// seeing the resulting poll.
 func (s *CompetitionSynchronization) ensureTeamsMatched(ctx context.Context, m competition.Match) []common.RequestID {
 	if s.TeamMatch == nil {
 		return nil
@@ -230,14 +231,7 @@ func (s *CompetitionSynchronization) ensureTeamsMatched(ctx context.Context, m c
 		if team == nil {
 			continue
 		}
-		id, err := s.TeamMatch.EnsureRequest(ctx, *team)
-		if err != nil {
-			s.Log.Error("team match ensure-request failed", "team", team.Name, "error", err)
-			continue
-		}
-		if id != nil {
-			pending = append(pending, *id)
-		}
+		pending = append(pending, s.TeamMatch.EnsureRequests(ctx, *team)...)
 	}
 	return pending
 }

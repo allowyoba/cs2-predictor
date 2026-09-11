@@ -65,7 +65,7 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	var settings *chat.Settings
 	var facts competition.MatchFacts
 	var haveFacts bool
-	var rankings map[common.TeamID]enrichment.TeamRanking
+	var rankings, hltvRankings map[common.TeamID]enrichment.TeamRanking
 	var homeForm, awayForm *enrichment.RecentForm
 	var h2h *enrichment.HeadToHead
 	group, gctx := errgroup.WithContext(ctx)
@@ -102,6 +102,15 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 				return nil
 			}
 			rankings = r
+			return nil
+		})
+		group.Go(func() error {
+			r, rankErr := g.enrichment.Rankings.FindRankings(gctx, []common.TeamID{match.FirstTeam.ID, match.SecondTeam.ID}, enrichment.SourceHLTV)
+			if rankErr != nil {
+				g.log.Warn("team ranking lookup failed, sending poll without HLTV line", "matchId", match.ID.Value, "error", rankErr)
+				return nil
+			}
+			hltvRankings = r
 			return nil
 		})
 	}
@@ -183,10 +192,11 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	question := composePollQuestion(firstName, firstRecord, secondName, secondRecord)
 
 	eventName := event.Tier.Badge() + escapeHTML(event.Name)
-	vrsLine := formatVRSCombined(rankings, match.FirstTeam, match.SecondTeam)
+	vrsLine := formatRankingCombined(rankings, match.FirstTeam, match.SecondTeam)
+	hltvLine := formatRankingCombined(hltvRankings, match.FirstTeam, match.SecondTeam)
 	formLine := formatForm(homeForm, awayForm)
 	h2hLine := formatH2H(h2h)
-	description := composePollDescription(g.texts, locale, eventName, stage, match.Format.Label(), dateWhen, timeWhen, vrsLine, formLine, h2hLine)
+	description := composePollDescription(g.texts, locale, eventName, stage, match.Format.Label(), dateWhen, timeWhen, vrsLine, hltvLine, formLine, h2hLine)
 
 	options := make([]map[string]string, len(poll.Options))
 	for i, o := range poll.Options {
@@ -308,11 +318,11 @@ func formatTeamRecord(b competition.TeamBalance) string {
 
 // composePollDescription builds the poll's multi-line context block: real
 // "\n" between lines (description, unlike question, honors them), each
-// logical block — tournament, stage/format, date/time, VRS, recent form,
-// head-to-head — on its own line, entirely omitted when it has nothing to
-// show. No separator character joins these blocks; every value that IS
-// present within one line joins with " · ".
-func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, stage, formatLabel, dateWhen, timeWhen, vrsLine, formLine, h2hLine string) string {
+// logical block — tournament, stage/format, date/time, VRS, HLTV, recent
+// form, head-to-head — on its own line, entirely omitted when it has
+// nothing to show. No separator character joins these blocks; every value
+// that IS present within one line joins with " · ".
+func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, stage, formatLabel, dateWhen, timeWhen, vrsLine, hltvLine, formLine, h2hLine string) string {
 	var lines []string
 	if eventName != "" {
 		lines = append(lines, "🏆 "+eventName)
@@ -325,6 +335,9 @@ func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, s
 	}
 	if vrsLine != "" {
 		lines = append(lines, texts.Get("poll.vrs", locale, vrsLine))
+	}
+	if hltvLine != "" {
+		lines = append(lines, texts.Get("poll.hltv", locale, hltvLine))
 	}
 	if formLine != "" {
 		lines = append(lines, texts.Get("poll.form", locale, formLine))
@@ -362,15 +375,18 @@ func rankingInts(rankings map[common.TeamID]enrichment.TeamRanking, first, secon
 	return firstVal, secondVal
 }
 
-// formatVRSCombined renders the poll's VRS line halves in the same
-// first/second order as the question's teams, joined by " · " — "#8 (1723)
-// · #121 (867)" — with team names never repeated (the question already
-// names them, and the order alone makes which is which unambiguous). The
-// whole line is "" when NEITHER side has any cached data, so the caller
-// omits it entirely; but once at least one side does, the other side shows
-// "N/A" rather than being silently dropped — dropping it would otherwise
-// leave a single bare value with no way to tell which team it belongs to.
-func formatVRSCombined(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
+// formatRankingCombined renders one ranking source's poll line halves (VRS,
+// HLTV, ...) in the same first/second order as the question's teams, joined
+// by " · " — "#8 (1723) · #121 (867)" — with team names never repeated (the
+// question already names them, and the order alone makes which is which
+// unambiguous). The whole line is "" when NEITHER side has any cached data
+// for this source, so the caller omits it entirely; but once at least one
+// side does, the other side shows "N/A" rather than being silently dropped —
+// dropping it would otherwise leave a single bare value with no way to tell
+// which team it belongs to. The caller passes a rankings map already scoped
+// to one enrichment.Source (see PollGateway.Send), so this same function
+// renders every source's line — no per-source variant needed.
+func formatRankingCombined(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
 	if first == nil || second == nil {
 		return ""
 	}
@@ -379,13 +395,13 @@ func formatVRSCombined(rankings map[common.TeamID]enrichment.TeamRanking, first,
 	if firstRank == nil && firstPoints == nil && secondRank == nil && secondPoints == nil {
 		return ""
 	}
-	return formatVRSSide(firstRank, firstPoints) + " · " + formatVRSSide(secondRank, secondPoints)
+	return formatRankingSide(firstRank, firstPoints) + " · " + formatRankingSide(secondRank, secondPoints)
 }
 
-// formatVRSSide renders one team's half of formatVRSCombined: "#rank
+// formatRankingSide renders one team's half of formatRankingCombined: "#rank
 // (points)" when both are cached, "#rank" or "(points)" alone when only one
 // is, or "N/A" when neither is cached for this team at all.
-func formatVRSSide(rank, points *int) string {
+func formatRankingSide(rank, points *int) string {
 	switch {
 	case rank != nil && points != nil:
 		return fmt.Sprintf("#%d (%d)", *rank, *points)
