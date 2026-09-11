@@ -95,8 +95,8 @@ jobs:
           LIQUIPEDIA_SYNC_INTERVAL: ${{ vars.LIQUIPEDIA_SYNC_INTERVAL }}
           HLTV_ENABLED: ${{ vars.HLTV_ENABLED }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-          HLTV_SYNC_INTERVAL: ${{ vars.HLTV_SYNC_INTERVAL }}
-          HLTV_MAX_TEAMS: ${{ vars.HLTV_MAX_TEAMS }}
+          APIFY_RANKING_CHECK_INTERVAL: ${{ vars.APIFY_RANKING_CHECK_INTERVAL }}
+          APIFY_MAX_TEAMS: ${{ vars.APIFY_MAX_TEAMS }}
           ANSIBLE_HOST_KEY_CHECKING: 'True'
         run: make deploy
 

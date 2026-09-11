@@ -14,7 +14,10 @@ import (
 
 func newTestProvider(t *testing.T, server *httptest.Server, maxTeams int) *Provider {
 	t.Helper()
-	config := Config{BaseURL: server.URL, ActorID: "paco_nassa~hltv-org-team-ranking", Token: "test-token", MaxTeams: maxTeams}
+	config := Config{
+		BaseURL: server.URL, ActorID: "paco_nassa~hltv-org-team-ranking", Token: "test-token", MaxTeams: maxTeams,
+		RankingType: "hltv", Source: enrichment.SourceHLTV,
+	}
 	return NewProvider(config, server.Client())
 }
 
@@ -160,5 +163,52 @@ func TestFetchRankings_HTTPErrorNeverExposesTheTokenInTheMessage(t *testing.T) {
 	}
 	if got := err.Error(); strings.Contains(got, "test-token") {
 		t.Fatalf("error message leaks the token: %q", got)
+	}
+}
+
+// DefaultConfig and DefaultValveConfig share every field except
+// RankingType/Source — this is what lets a single Provider implementation
+// serve both of the actor's ranking modes.
+func TestDefaultValveConfig_DiffersFromDefaultConfigOnlyByRankingTypeAndSource(t *testing.T) {
+	hltv := DefaultConfig("tok")
+	valve := DefaultValveConfig("tok")
+	if valve.RankingType != "valve" || valve.Source != enrichment.SourceValveVRS {
+		t.Fatalf("unexpected valve config: %+v", valve)
+	}
+	if hltv.RankingType != "hltv" || hltv.Source != enrichment.SourceHLTV {
+		t.Fatalf("unexpected hltv config: %+v", hltv)
+	}
+	valve.RankingType, hltv.RankingType = "", ""
+	valve.Source, hltv.Source = "", ""
+	if valve != hltv {
+		t.Fatalf("expected every other field to match: valve=%+v hltv=%+v", valve, hltv)
+	}
+}
+
+// FetchRankings must send whichever rankingType Config carries and tag
+// results with whichever Source Config carries — the actor's "valve" mode
+// output is otherwise byte-identical in shape to its "hltv" mode.
+func TestFetchRankings_ValveModeSendsValveRankingTypeAndTagsSourceValveVRS(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(sampleActorRunResponse))
+	}))
+	defer server.Close()
+
+	provider := NewProvider(DefaultValveConfig("test-token"), server.Client())
+	provider.config.BaseURL = server.URL
+	rankings, err := provider.FetchRankings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["rankingType"] != "valve" {
+		t.Fatalf("rankingType = %v, want valve", gotBody["rankingType"])
+	}
+	for _, r := range rankings {
+		if r.Source != enrichment.SourceValveVRS {
+			t.Fatalf("expected Source=VALVE_VRS, got %q", r.Source)
+		}
 	}
 }

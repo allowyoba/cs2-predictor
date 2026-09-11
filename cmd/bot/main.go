@@ -135,20 +135,51 @@ func run() error {
 			Snapshots: enrichmentRepo,
 			Lock:      clusterLock, Log: log,
 		}
+	}
+	// hltvRankingSync and vrsApifyRankingSync are a paired weekly fetch —
+	// both hit the same Apify actor, just in its two different ranking
+	// modes (see apifyhltv.DefaultConfig/DefaultValveConfig) — and share
+	// one ApifyRankingGate so both fire (or both stay quiet) together:
+	// HLTV's own Monday update, a running top-tier tournament, or one
+	// starting soon, capped to once a week per source regardless. VRS's
+	// job here writes to the exact same enrichment.SourceValveVRS as
+	// valveVRSSync above; that free GitHub-based job keeps running on its
+	// own frequent schedule as the fallback for the rest of the week.
+	var hltvRankingSync, vrsApifyRankingSync *app.RankingSync
+	if cfg.Enrichment.HLTVEnabled {
+		apifyGate := &app.ApifyRankingGate{State: enrichmentRepo, Catalog: catalog, Clock: clock, Log: log}
+
+		hltvConfig := apifyhltv.DefaultConfig(cfg.Enrichment.HLTVAPIToken)
+		hltvConfig.MaxTeams = cfg.Enrichment.ApifyMaxTeams
+		hltvRankingSync = &app.RankingSync{
+			Source:   enrichment.SourceHLTV,
+			Provider: apifyhltv.NewProvider(hltvConfig, httpClient),
+			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
+			Snapshots: enrichmentRepo,
+			Gate:      apifyGate,
+			Lock:      clusterLock, Log: log,
+		}
+
+		vrsApifyConfig := apifyhltv.DefaultValveConfig(cfg.Enrichment.HLTVAPIToken)
+		vrsApifyConfig.MaxTeams = cfg.Enrichment.ApifyMaxTeams
+		vrsApifyRankingSync = &app.RankingSync{
+			Source:   enrichment.SourceValveVRS,
+			Provider: apifyhltv.NewProvider(vrsApifyConfig, httpClient),
+			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
+			Snapshots: enrichmentRepo,
+			Gate:      apifyGate,
+			Lock:      clusterLock, Log: log,
+		}
+	}
+	// SourceValveVRS is registered once here, covering either or both of
+	// valveVRSSync (free, frequent) and vrsApifyRankingSync (paid, weekly)
+	// being the one(s) actually running — team-matching against VALVE_VRS
+	// only needs at least one of them producing data, not both.
+	if cfg.Enrichment.ValveVRSEnabled || cfg.Enrichment.HLTVEnabled {
 		enrichmentSources = append(enrichmentSources, enrichment.SourceValveVRS)
 		teamMatchSources = append(teamMatchSources, enrichment.SourceValveVRS)
 	}
-	var hltvRankingSync *app.RankingSync
 	if cfg.Enrichment.HLTVEnabled {
-		apifyConfig := apifyhltv.DefaultConfig(cfg.Enrichment.HLTVAPIToken)
-		apifyConfig.MaxTeams = cfg.Enrichment.HLTVMaxTeams
-		hltvRankingSync = &app.RankingSync{
-			Source:   enrichment.SourceHLTV,
-			Provider: apifyhltv.NewProvider(apifyConfig, httpClient),
-			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
-			Snapshots: enrichmentRepo,
-			Lock:      clusterLock, Log: log,
-		}
 		enrichmentSources = append(enrichmentSources, enrichment.SourceHLTV)
 		teamMatchSources = append(teamMatchSources, enrichment.SourceHLTV)
 	}
@@ -339,7 +370,10 @@ func run() error {
 			runBackground(cfg.Enrichment.ValveVRSSyncInterval, valveVRSSync.Dispatch)
 		}
 		if hltvRankingSync != nil {
-			runBackground(cfg.Enrichment.HLTVSyncInterval, hltvRankingSync.Dispatch)
+			runBackground(cfg.Enrichment.ApifyRankingCheckInterval, hltvRankingSync.Dispatch)
+		}
+		if vrsApifyRankingSync != nil {
+			runBackground(cfg.Enrichment.ApifyRankingCheckInterval, vrsApifyRankingSync.Dispatch)
 		}
 		if teamStatsSync != nil {
 			runBackground(cfg.Enrichment.GRIDSyncInterval, teamStatsSync.Dispatch)

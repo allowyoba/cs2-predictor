@@ -136,8 +136,8 @@
           LIQUIPEDIA_SYNC_INTERVAL={{ lookup('env', 'LIQUIPEDIA_SYNC_INTERVAL') | default('') }}
           HLTV_ENABLED={{ lookup('env', 'HLTV_ENABLED') | default('') }}
           APIFY_TOKEN={{ lookup('env', 'APIFY_TOKEN') | default('') }}
-          HLTV_SYNC_INTERVAL={{ lookup('env', 'HLTV_SYNC_INTERVAL') | default('') }}
-          HLTV_MAX_TEAMS={{ lookup('env', 'HLTV_MAX_TEAMS') | default('') }}
+          APIFY_RANKING_CHECK_INTERVAL={{ lookup('env', 'APIFY_RANKING_CHECK_INTERVAL') | default('') }}
+          APIFY_MAX_TEAMS={{ lookup('env', 'APIFY_MAX_TEAMS') | default('') }}
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
         mode: '0600'

@@ -31,11 +31,29 @@ type RankingSync struct {
 	State     enrichment.SyncStateRepository
 	Snapshots enrichment.SnapshotRepository
 	Lock      common.ClusterLock
-	Log       *slog.Logger
+	// Gate, if set, is consulted at the start of every Dispatch: a false
+	// result skips this tick's fetch entirely (no provider call, no
+	// snapshot/ranking writes, no success/failure recorded) without it
+	// being treated as an error. Nil always runs — the free/frequent
+	// sources (valvevrs, GRID, Liquipedia) leave this nil and keep their
+	// existing "every tick fetches" behavior; only the paid Apify-backed
+	// sources set one (see ApifyRankingGate).
+	Gate RankingSyncGate
+	Log  *slog.Logger
 }
 
 func (s *RankingSync) Dispatch(ctx context.Context) {
 	_, err := s.Lock.Execute(ctx, "cs2predictor:ranking-sync:"+string(s.Source), func(ctx context.Context) error {
+		if s.Gate != nil {
+			ok, err := s.Gate.ShouldRun(ctx, s.Source)
+			if err != nil {
+				s.Log.Warn("ranking sync gate check failed, skipping this tick", "source", s.Source, "error", err)
+				return nil
+			}
+			if !ok {
+				return nil
+			}
+		}
 		s.sync(ctx)
 		return nil
 	})

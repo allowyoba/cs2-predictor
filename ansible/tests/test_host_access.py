@@ -182,8 +182,8 @@ esac
                               "LIQUIPEDIA_SYNC_INTERVAL=\n"
                               "HLTV_ENABLED=\n"
                               "APIFY_TOKEN=\n"
-                              "HLTV_SYNC_INTERVAL=\n"
-                              "HLTV_MAX_TEAMS=\n")
+                              "APIFY_RANKING_CHECK_INTERVAL=\n"
+                              "APIFY_MAX_TEAMS=\n")
             self.assertFalse(Path(tmp, "deploy_key").exists())
             self.assertFalse(Path(tmp, "known_hosts").exists())
 
