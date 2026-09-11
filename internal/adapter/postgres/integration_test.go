@@ -899,6 +899,35 @@ func TestOutbox_PendingPublishedAndBackoff(t *testing.T) {
 	}
 }
 
+// A message that keeps failing must stop being returned by Pending once it
+// hits common.OutboxMaxAttempts — the cutoff app.OutboxDispatcher relies on
+// to know when to stop treating a failure as "will retry" and start
+// treating it as "gave up for good" (see its exhausted-metric logic).
+func TestOutbox_StopsBeingPendingOnceItHitsMaxAttempts(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	outbox := pg.NewOutbox(pool)
+
+	id, err := outbox.Enqueue(ctx, "MATCH_POLL", "poll-2", "telegram.match-result", `{"a":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range common.OutboxMaxAttempts {
+		if err := outbox.Failed(ctx, id, "still unavailable"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pending, err := outbox.Pending(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range pending {
+		if m.ID == id {
+			t.Fatalf("message hit %d attempts but is still pending: %+v", common.OutboxMaxAttempts, m)
+		}
+	}
+}
+
 // TestCompetitionRepository_FindMatchesBatchFetchesStageAndBothTeams covers
 // the join-based FindMatches/FindUnstartedMatches path directly (the main
 // end-to-end test above only ever fetches a single match via FindMatch):

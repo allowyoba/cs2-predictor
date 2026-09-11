@@ -34,6 +34,13 @@ type OutboxMessage struct {
 	Attempts   int
 }
 
+// OutboxMaxAttempts bounds how many times Failed can back off a message
+// before Pending stops returning it — a message that hits this cap goes
+// permanently quiet rather than erroring loudly, so callers that dispatch
+// (see app.OutboxDispatcher) must treat crossing it as its own observable
+// event (metric/log), not assume "no longer pending" means "resolved".
+const OutboxMaxAttempts = 20
+
 // Outbox is the transactional-outbox port. Enqueue must be called in the
 // same DB transaction as the domain write it announces.
 type Outbox interface {

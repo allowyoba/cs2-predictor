@@ -12,8 +12,8 @@ import (
 // Outbox implements common.Outbox against outbox_event:
 //   - Enqueue is a plain INSERT (call it inside RunInTx alongside the domain
 //     write it announces, via the same ctx, for exactly-once-enqueue).
-//   - Pending selects rows not yet published, under 20 attempts, whose
-//     next_attempt_at has arrived, ordered by occurred_at.
+//   - Pending selects rows not yet published, under common.OutboxMaxAttempts
+//     attempts, whose next_attempt_at has arrived, ordered by occurred_at.
 //   - Failed backs off next_attempt_at by min(300, 2^attempts) seconds,
 //     computed from the attempts value BEFORE increment (Postgres evaluates
 //     every SET clause's RHS against the pre-update row).
@@ -38,8 +38,8 @@ func (o *Outbox) Enqueue(ctx context.Context, aggregateType, aggregateID, eventT
 func (o *Outbox) Pending(ctx context.Context, limit int) ([]common.OutboxMessage, error) {
 	rows, err := executor(ctx, o.pool).Query(ctx,
 		`SELECT id, event_type, payload::text, occurred_at, attempts FROM outbox_event
-		 WHERE published_at IS NULL AND attempts < 20 AND next_attempt_at <= now()
-		 ORDER BY occurred_at LIMIT $1`, limit)
+		 WHERE published_at IS NULL AND attempts < $1 AND next_attempt_at <= now()
+		 ORDER BY occurred_at LIMIT $2`, common.OutboxMaxAttempts, limit)
 	if err != nil {
 		return nil, err
 	}
