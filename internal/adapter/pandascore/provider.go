@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/platform/common"
 )
 
 // Provider implements competition.DataProvider against the PandaScore API.
@@ -218,7 +219,7 @@ func fetchPages[T any](ctx context.Context, p *Provider, path string, maxPages i
 			return nil, err
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("pandascore returned HTTP %d for %s: %s", resp.StatusCode, pageURL, truncateForError(body))
+			return nil, fmt.Errorf("pandascore returned HTTP %d for %s: %s", resp.StatusCode, pageURL, common.TruncateForLog(body))
 		}
 		if len(body) == 0 {
 			body = []byte("[]")
@@ -247,13 +248,3 @@ func fetchPages[T any](ctx context.Context, p *Provider, path string, maxPages i
 	return result, nil
 }
 
-// truncateForError keeps an error-message body preview short and safe to
-// log (PandaScore error bodies are small JSON objects, but this guards
-// against an unexpectedly large or non-UTF8 response).
-func truncateForError(body []byte) string {
-	const max = 300
-	if len(body) > max {
-		body = body[:max]
-	}
-	return strings.ToValidUTF8(string(body), "�")
-}

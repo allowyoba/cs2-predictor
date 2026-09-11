@@ -28,10 +28,7 @@ type TeamAccuracy struct {
 }
 
 func (t TeamAccuracy) AccuracyPercent() int {
-	if t.Predictions <= 0 {
-		return 0
-	}
-	return (t.Correct*100 + t.Predictions/2) / t.Predictions
+	return accuracyPercent(t.Correct, t.Predictions)
 }
 
 // PeriodSummary is one window's worth of results, used in pairs to show
@@ -42,10 +39,7 @@ type PeriodSummary struct {
 }
 
 func (p PeriodSummary) AccuracyPercent() int {
-	if p.Predictions <= 0 {
-		return 0
-	}
-	return (p.Correct*100 + p.Predictions/2) / p.Predictions
+	return accuracyPercent(p.Correct, p.Predictions)
 }
 
 // PersonalInsights is the "how am I actually doing?" view: the plain
