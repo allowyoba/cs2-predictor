@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/platform/common"
 )
 
 // Provider implements enrichment.RankingProvider against Valve's public
@@ -204,7 +205,7 @@ func (p *Provider) listDir(ctx context.Context, year int) ([]contentEntry, error
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("valve vrs github api returned HTTP %d for %s: %s", resp.StatusCode, url, truncateBody(body))
+		return nil, fmt.Errorf("valve vrs github api returned HTTP %d for %s: %s", resp.StatusCode, url, common.TruncateForLog(body))
 	}
 	var entries []contentEntry
 	if err := json.Unmarshal(body, &entries); err != nil {
@@ -229,15 +230,7 @@ func (p *Provider) fetchTable(ctx context.Context, file dated) ([]row, error) {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("valve vrs raw content returned HTTP %d for %s: %s", resp.StatusCode, url, truncateBody(body))
+		return nil, fmt.Errorf("valve vrs raw content returned HTTP %d for %s: %s", resp.StatusCode, url, common.TruncateForLog(body))
 	}
 	return parseTable(string(body))
-}
-
-func truncateBody(body []byte) string {
-	const max = 300
-	if len(body) > max {
-		body = body[:max]
-	}
-	return strings.ToValidUTF8(string(body), "�")
 }
