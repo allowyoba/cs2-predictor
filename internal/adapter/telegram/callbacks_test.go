@@ -538,6 +538,35 @@ func TestSettingsLocaleCallback_DeniedForPlainMember(t *testing.T) {
 	}
 }
 
+// menu:settings and settings:moderators must deny a plain, non-privileged
+// group member exactly like every one of their own child actions already
+// does (settings:locale above, settings:timezone, moderators:add, ...) —
+// regression coverage for a gap where both routes had no guard at all and
+// so were reachable (including via a forged/replayed callback_data
+// naming a chat the caller has nothing to do with — Telegram doesn't bind
+// callback_data to the button actually tapped) with no check whatsoever.
+func TestMenuSettingsAndModeratorsCallback_DeniedForPlainMember(t *testing.T) {
+	for _, data := range []string{"menu:settings", "settings:moderators"} {
+		t.Run(data, func(t *testing.T) {
+			srv, calls := newRecordingServer(t)
+			defer srv.Close()
+			handler, chats := newTestHandler(t, srv)
+			chatID := common.ChatID{Value: -1}
+			_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+			// newTestHandler already wires a MEMBER-role membership by default.
+
+			cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Random"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+			if err := handler.handleCallback(context.Background(), cb); err != nil {
+				t.Fatal(err)
+			}
+			body := findSendMessageText(t, *calls)
+			if !strings.Contains(body, ru(t, "error.forbidden")) {
+				t.Fatalf("%s: expected the forbidden reply, got %q", data, body)
+			}
+		})
+	}
+}
+
 // findSendMessageText returns the text of the first sendMessage call, or
 // fails the test if there isn't one.
 func findSendMessageText(t *testing.T, calls []map[string]any) string {

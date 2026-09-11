@@ -95,7 +95,17 @@ var callbackRoutes = []callbackRoute{
 		return false, h.subscribedEvents(ctx, target, settings, cb.Message.Chat.Type == "private")
 	}},
 	{match: prefixed("events:view:"), handle: routeEventsView},
-	{match: exact("menu:settings"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	// guardManager mirrors the requireManager check routeMenuMain already
+	// runs before it will render this same screen's "⚙️ Settings" button
+	// for the DM panel — but that check only fired one hop up, in the
+	// parent route. A callback naming "menu:settings" directly (a forged/
+	// replayed callback_data reaching this route without going through
+	// menu:main first — Telegram doesn't cryptographically bind
+	// callback_data to the button actually tapped) skipped it entirely.
+	// Every one of this screen's own child actions already requires at
+	// least this bar (or the stricter guardPermission), so gating the
+	// parent screen the same way costs no legitimate moderator anything.
+	{match: exact("menu:settings"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return false, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 	}},
 	{match: exact("menu:upcoming"), handle: simple((*UpdateHandler).upcoming)},
@@ -148,7 +158,13 @@ var callbackRoutes = []callbackRoute{
 		return false, h.personalStats(ctx, notifTarget, settings, cb.From, common.EventID{Value: id})
 	}},
 	{match: exact("stats:events"), handle: simple((*UpdateHandler).eventStatsMenu)},
-	{match: exact("settings:moderators"), handle: simple((*UpdateHandler).moderatorsView)},
+	// guardManager (not the stricter guardTelegramAdmin the moderators:*
+	// mutation routes below use): seeing who the other moderators are is
+	// harmless for an existing moderator to know, but was previously
+	// reachable with no check at all — including via a forged/replayed
+	// callback_data naming an arbitrary chat this caller doesn't belong to
+	// — disclosing that chat's moderator roster (names, usernames, ids).
+	{match: exact("settings:moderators"), guard: guardManager, handle: simple((*UpdateHandler).moderatorsView)},
 	{match: exact("bulk:menu"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return false, h.bulkMenu(ctx, cb, target, settings)
 	}},
