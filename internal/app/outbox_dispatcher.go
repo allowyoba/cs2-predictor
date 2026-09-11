@@ -9,6 +9,20 @@ import (
 
 // OutboxDispatcher polls the outbox and fans each message out to whichever
 // publisher supports its type, marking a message failed if none do.
+//
+// dispatchOne calls Publish and then, on success, Outbox.Published as two
+// separate steps rather than one atomic action — a crash between them (the
+// message genuinely reached Telegram, but the process dies before the
+// UPDATE marking it published commits) leaves the message looking
+// unpublished, so the next Dispatch run sends it again. This is the
+// accepted tradeoff of at-least-once delivery over a non-transactional
+// external call: Publish can't be made part of the same DB transaction as
+// Published (it's an HTTP call to Telegram, not a database write), and
+// Telegram's own API has no per-message idempotency key to de-duplicate
+// against. Narrowing the crash window further (e.g. marking published
+// immediately before, rather than after, Publish) would trade this failure
+// mode for the opposite and strictly worse one — marking a message
+// published when it was never actually sent.
 type OutboxDispatcher struct {
 	Outbox     common.Outbox
 	Publishers []common.OutboxPublisher
