@@ -230,7 +230,14 @@ func run() error {
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
 		PendingUnsubscribes: pendingUnsubscribes, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations,
-		InboundLimiter: telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
+		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
+		TeamMatches:              enrichmentRepo,
+		TeamMatchHelpers:         enrichmentRepo,
+		TeamMatchOperators:       enrichmentRepo,
+		TeamRankings:             enrichmentRepo,
+		TeamIdentity:             enrichmentRepo,
+		TeamSnapshots:            enrichmentRepo,
+		TeamMatchOperatorChatIDs: cfg.TeamMatchOperatorChatIDs,
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 
@@ -269,6 +276,8 @@ func run() error {
 			telegram.NewUnsubscribeConfirmationPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewResultRecapPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewPollReminderPublisher(telegramClient, chats, texts, metrics),
+			telegram.NewTeamMatchAskPublisher(telegramClient, chats, texts, metrics),
+			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
 		},
 	}
 

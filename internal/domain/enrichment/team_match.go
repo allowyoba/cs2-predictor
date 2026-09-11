@@ -289,6 +289,19 @@ type TeamMatchHelperRepository interface {
 	SetOptedOut(ctx context.Context, userID common.UserID, optedOut bool) error
 }
 
+// TeamMatchOperatorRepository is the delegated tier of /team_matches
+// access: Config.TeamMatchOperatorChatIDs (root operators, fixed at deploy
+// time) are always allowed regardless of this repository's contents — this
+// only holds people a root operator appointed at runtime via
+// /team_match_admin, so access can be delegated without an environment
+// variable change.
+type TeamMatchOperatorRepository interface {
+	IsOperator(ctx context.Context, userID common.UserID) (bool, error)
+	AddOperator(ctx context.Context, userID, appointedBy common.UserID) error
+	RemoveOperator(ctx context.Context, userID common.UserID) error
+	ListOperators(ctx context.Context) ([]common.UserID, error)
+}
+
 // SnapshotRepository caches every team Valve's own ranking feed currently
 // reports (valve_vrs_snapshot), independent of whether any of them have
 // been matched to a local team — see this file's doc comment for why the

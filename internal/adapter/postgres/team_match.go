@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	_ enrichment.TeamMatchRepository       = (*EnrichmentRepository)(nil)
-	_ enrichment.TeamMatchHelperRepository = (*EnrichmentRepository)(nil)
-	_ enrichment.SnapshotRepository        = (*EnrichmentRepository)(nil)
+	_ enrichment.TeamMatchRepository         = (*EnrichmentRepository)(nil)
+	_ enrichment.TeamMatchHelperRepository   = (*EnrichmentRepository)(nil)
+	_ enrichment.TeamMatchOperatorRepository = (*EnrichmentRepository)(nil)
+	_ enrichment.SnapshotRepository          = (*EnrichmentRepository)(nil)
 )
 
 // --- enrichment.SnapshotRepository ---
@@ -284,4 +285,49 @@ func (r *EnrichmentRepository) SetOptedOut(ctx context.Context, userID common.Us
 		ON CONFLICT (user_id) DO UPDATE SET opted_out = excluded.opted_out`,
 		userID.Value, optedOut)
 	return err
+}
+
+// --- enrichment.TeamMatchOperatorRepository ---
+
+func (r *EnrichmentRepository) IsOperator(ctx context.Context, userID common.UserID) (bool, error) {
+	var exists bool
+	err := executor(ctx, r.pool).QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM team_match_operator WHERE user_id = $1)`, userID.Value).Scan(&exists)
+	return exists, err
+}
+
+func (r *EnrichmentRepository) AddOperator(ctx context.Context, userID, appointedBy common.UserID) error {
+	// The target may never have started a chat with the bot before being
+	// appointed — team_match_operator.user_id references telegram_user, so
+	// that row has to exist first (same pattern as AddModerator).
+	if err := ensureUser(ctx, executor(ctx, r.pool), userID); err != nil {
+		return err
+	}
+	_, err := executor(ctx, r.pool).Exec(ctx, `
+		INSERT INTO team_match_operator(user_id, appointed_by, appointed_at) VALUES ($1, $2, now())
+		ON CONFLICT (user_id) DO UPDATE SET appointed_by = excluded.appointed_by, appointed_at = excluded.appointed_at`,
+		userID.Value, appointedBy.Value)
+	return err
+}
+
+func (r *EnrichmentRepository) RemoveOperator(ctx context.Context, userID common.UserID) error {
+	_, err := executor(ctx, r.pool).Exec(ctx, `DELETE FROM team_match_operator WHERE user_id = $1`, userID.Value)
+	return err
+}
+
+func (r *EnrichmentRepository) ListOperators(ctx context.Context) ([]common.UserID, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx, `SELECT user_id FROM team_match_operator ORDER BY appointed_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []common.UserID
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, common.UserID{Value: id})
+	}
+	return out, rows.Err()
 }

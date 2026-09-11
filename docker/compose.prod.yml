@@ -44,6 +44,12 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?required}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?required}
       PANDASCORE_TOKEN: ${PANDASCORE_TOKEN:?required}
+      # Optional: the same comma-separated Telegram id list
+      # ansible/roles/notify_admins already DMs on a failed deploy — reused
+      # at runtime as the root /team_matches operator list (see
+      # app.Config.TeamMatchOperatorChatIDs). Empty is a valid, supported
+      # value (the feature simply has no root operators configured).
+      DEPLOY_NOTIFY_CHAT_IDS: ${DEPLOY_NOTIFY_CHAT_IDS:-}
     healthcheck:
       # /healthz/ready, not /healthz/live: the deploy waits on this, and
       # what it needs to know is that migrations ran and the database and

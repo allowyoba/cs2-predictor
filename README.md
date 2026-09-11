@@ -371,7 +371,9 @@ deploy.
 
 If a deploy fails, the bot can DM its own administrators about it directly — set `DEPLOY_NOTIFY_CHAT_IDS` (a
 comma-separated list of Telegram numeric IDs) as a GitHub environment variable and it'll happen automatically; leave
-it unset and nothing gets sent, quietly.
+it unset and nothing gets sent, quietly. The same list doubles at runtime as the root operator list for
+`/team_matches` (the Valve VRS team-identity review queue — see below): those IDs may run `/team_match_admin` to
+delegate reviewer access to others without touching this variable again.
 
 All of this — the exact GitHub secrets/variables needed, least-privilege sudo, image signing details, what's actually
 in a backup and how to restore one, the full Ansible role breakdown — is written up in much more depth in

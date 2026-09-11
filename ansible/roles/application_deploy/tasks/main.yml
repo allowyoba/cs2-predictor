@@ -125,6 +125,7 @@
           TELEGRAM_WEBHOOK_SECRET={{ lookup('env', 'TELEGRAM_WEBHOOK_SECRET') }}
           PANDASCORE_TOKEN={{ lookup('env', 'PANDASCORE_TOKEN') }}
           CADDY_DOMAIN={{ lookup('env', 'CADDY_DOMAIN') }}
+          DEPLOY_NOTIFY_CHAT_IDS={{ lookup('env', 'DEPLOY_NOTIFY_CHAT_IDS') | default('') }}
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
         mode: '0600'
