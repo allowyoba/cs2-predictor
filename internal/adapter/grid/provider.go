@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"cs2predictor/internal/domain/enrichment"
 )
 
@@ -158,6 +160,60 @@ func (p *Provider) seriesResult(ctx context.Context, seriesID, teamName string) 
 	return false, false, nil
 }
 
+// seriesResultBatch bounds how many seriesResult lookups collectSeriesResults
+// fires off concurrently per window (see its doc comment) — large enough to
+// cut wall-clock time substantially versus one sequential call per series,
+// small enough that a team GRID only needs a handful of the newest results
+// for doesn't still pay for hundreds of lookups it will never use.
+const seriesResultBatch = 10
+
+// collectSeriesResults walks seriesIDs in order (most-recent-first, per
+// findSeries), resolving each one via resultFn until sample reaches
+// sampleSize or seriesIDs runs out. Lookups within one window of up to
+// seriesResultBatch series run concurrently — not one sequential call per
+// series, which used to mean up to len(seriesIDs) round trips one after
+// another for a team GRID has a long history for — while still processing
+// windows in order and stopping early once enough samples are collected,
+// so it doesn't trade away the original "stop once we have enough" saving.
+func collectSeriesResults(ctx context.Context, seriesIDs []string, sampleSize int, resultFn func(ctx context.Context, id string) (won, ok bool, err error)) (wins, losses, sample int, err error) {
+	type outcome struct{ won, ok bool }
+	for start := 0; start < len(seriesIDs) && sample < sampleSize; start += seriesResultBatch {
+		window := seriesIDs[start:min(start+seriesResultBatch, len(seriesIDs))]
+
+		results := make([]outcome, len(window))
+		g, gctx := errgroup.WithContext(ctx)
+		for i, id := range window {
+			g.Go(func() error {
+				won, ok, err := resultFn(gctx, id)
+				if err != nil {
+					return err
+				}
+				results[i] = outcome{won: won, ok: ok}
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return 0, 0, 0, err
+		}
+
+		for _, r := range results {
+			if sample >= sampleSize {
+				break
+			}
+			if !r.ok {
+				continue
+			}
+			sample++
+			if r.won {
+				wins++
+			} else {
+				losses++
+			}
+		}
+	}
+	return wins, losses, sample, nil
+}
+
 // GetTeamStats implements enrichment.TeamStatsProvider: recent win/loss
 // record over the last sampleSize finished series GRID has for this team.
 func (p *Provider) GetTeamStats(ctx context.Context, team enrichment.TeamIdentity) (*enrichment.RecentForm, error) {
@@ -165,25 +221,11 @@ func (p *Provider) GetTeamStats(ctx context.Context, team enrichment.TeamIdentit
 	if err != nil {
 		return nil, err
 	}
-
-	wins, losses, sample := 0, 0, 0
-	for _, id := range seriesIDs {
-		if sample >= p.sampleSize {
-			break
-		}
-		won, ok, err := p.seriesResult(ctx, id, team.Name)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		sample++
-		if won {
-			wins++
-		} else {
-			losses++
-		}
+	wins, losses, sample, err := collectSeriesResults(ctx, seriesIDs, p.sampleSize, func(ctx context.Context, id string) (bool, bool, error) {
+		return p.seriesResult(ctx, id, team.Name)
+	})
+	if err != nil {
+		return nil, err
 	}
 	if sample == 0 {
 		return nil, nil
@@ -199,25 +241,11 @@ func (p *Provider) GetHeadToHead(ctx context.Context, teamA, teamB enrichment.Te
 	if err != nil {
 		return nil, err
 	}
-
-	aWins, bWins, sample := 0, 0, 0
-	for _, id := range seriesIDs {
-		if sample >= p.sampleSize {
-			break
-		}
-		aWon, ok, err := p.seriesResult(ctx, id, teamA.Name)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		sample++
-		if aWon {
-			aWins++
-		} else {
-			bWins++
-		}
+	aWins, bWins, sample, err := collectSeriesResults(ctx, seriesIDs, p.sampleSize, func(ctx context.Context, id string) (bool, bool, error) {
+		return p.seriesResult(ctx, id, teamA.Name)
+	})
+	if err != nil {
+		return nil, err
 	}
 	if sample == 0 {
 		return nil, nil
