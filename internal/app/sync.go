@@ -65,15 +65,26 @@ func (s *CompetitionSynchronization) DiscoverEvents(ctx context.Context) {
 		// this batch from being discovered — same per-item resilience as
 		// announceBigEvent/fanOutNewPolls below. Each event is independent
 		// and a retried next run safely reprocesses whatever didn't finish.
+		failed := 0
 		for _, event := range loaded {
 			if err := s.discoverOneEvent(ctx, event); err != nil {
 				s.Log.Error("event discovery failed for one event, continuing with the rest", "eventId", event.ID.Value, "error", err)
+				failed++
 				continue
 			}
 		}
-		s.Metrics.SyncRuns.WithLabelValues("events", "success").Inc()
+		// "partial" (rather than always "success") makes a run that silently
+		// dropped some events visible in metrics — without it, a dashboard/
+		// alert keyed on the failure label would never fire for this job no
+		// matter how many individual events failed, since the run itself
+		// always returns nil to guarded().
+		result := "success"
+		if failed > 0 {
+			result = "partial"
+		}
+		s.Metrics.SyncRuns.WithLabelValues("events", result).Inc()
 		s.Metrics.SyncEntities.WithLabelValues("events").Observe(float64(len(loaded)))
-		s.Log.Info("event catalog synchronized", "count", len(loaded))
+		s.Log.Info("event catalog synchronized", "count", len(loaded), "failed", failed)
 		return nil
 	})
 }
@@ -138,18 +149,27 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 		// processing failure must not stop every match ordered after it in
 		// this batch from being processed too.
 		loaded, err := s.Gateway.Matches(ctx, activeEvents)
+		failed := 0
 		for _, m := range loaded {
 			if procErr := s.processMatch(ctx, m); procErr != nil {
 				s.Log.Error("match processing failed for one match, continuing with the rest", "matchId", m.ID.Value, "error", procErr)
+				failed++
 				continue
 			}
 		}
 		if err != nil {
 			return err
 		}
-		s.Metrics.SyncRuns.WithLabelValues("matches", "success").Inc()
+		// "partial" (rather than always "success") makes a run that silently
+		// dropped some matches visible in metrics — see the identical
+		// comment in DiscoverEvents above.
+		result := "success"
+		if failed > 0 {
+			result = "partial"
+		}
+		s.Metrics.SyncRuns.WithLabelValues("matches", result).Inc()
 		s.Metrics.SyncEntities.WithLabelValues("matches").Observe(float64(len(loaded)))
-		s.Log.Info("global match snapshot synchronized", "events", len(activeEvents), "matches", len(loaded))
+		s.Log.Info("global match snapshot synchronized", "events", len(activeEvents), "matches", len(loaded), "failed", failed)
 		return nil
 	})
 }
@@ -158,7 +178,16 @@ func (s *CompetitionSynchronization) CloseDuePolls(ctx context.Context) {
 	s.guarded(ctx, "close-due-polls", func(ctx context.Context) error {
 		count, err := s.Predictions.CloseDue(ctx, s.Clock.Now())
 		if err != nil {
-			return err
+			if count == 0 {
+				return err
+			}
+			// Some polls closed even though others in this batch failed —
+			// same per-item resilience as DiscoverEvents/SynchronizeMatches
+			// above: a partial batch must not be reported as a failed run
+			// (guarded() would log/count it as a total failure), but the
+			// failures themselves must still be visible rather than
+			// silently swallowed.
+			s.Log.Error("closing due polls: some polls failed to close, continuing with the rest", "closed", count, "error", err)
 		}
 		if count > 0 {
 			s.Log.Info("closed due prediction polls", "count", count)
@@ -334,16 +363,26 @@ func (s *CompetitionSynchronization) fanOutNewPolls(ctx context.Context, incomin
 		return err
 	}
 	for _, chatID := range chatIDs {
+		// One chat's lookup failing (a transient DB blip) must not stop
+		// every chat ordered after it in chatIDs from getting this poll —
+		// same per-item resilience as announceBigEvent above. Unlike a
+		// failed Predictions.Create below, there's no later retry path for
+		// a chat skipped here: the trigger for this whole fan-out
+		// (incoming.ParticipantsKnown() flipping from false to true) is
+		// one-shot per match, so silently aborting the rest of chatIDs would
+		// permanently deny them this poll rather than just delaying it.
 		settings, err := s.Chats.Find(ctx, chatID)
 		if err != nil {
-			return err
+			s.Log.Error("chat lookup failed, skipping this chat's poll", "chatId", chatID.Value, "matchId", incoming.ID.Value, "error", err)
+			continue
 		}
 		if settings == nil {
 			continue
 		}
 		topic, err := s.Chats.EventTopic(ctx, chatID, incoming.EventID)
 		if err != nil {
-			return err
+			s.Log.Error("event topic lookup failed, skipping this chat's poll", "chatId", chatID.Value, "matchId", incoming.ID.Value, "error", err)
+			continue
 		}
 		if topic == nil {
 			topic = settings.DefaultTopicID

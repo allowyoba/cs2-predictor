@@ -193,6 +193,10 @@ func TestComposePollDescription_NoBlankLines(t *testing.T) {
 // --- formatRankingCombined / formatRankingSide ---
 
 func TestFormatRankingCombined_BothTeamsRankedAndPointed(t *testing.T) {
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank, secondRank := 8, 121
 	firstPoints, secondPoints := 1723, 867
@@ -200,35 +204,44 @@ func TestFormatRankingCombined_BothTeamsRankedAndPointed(t *testing.T) {
 		first:  {TeamID: first, GlobalRank: &firstRank, Points: &firstPoints},
 		second: {TeamID: second, GlobalRank: &secondRank, Points: &secondPoints},
 	}
-	got := formatRankingCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatRankingCombined(texts, common.LocaleEN, rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#8 (1723) · #121 (867)"; got != want {
 		t.Fatalf("formatRankingCombined = %q, want %q", got, want)
 	}
 }
 
 func TestFormatRankingCombined_RankOnlyOmitsParentheses(t *testing.T) {
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank, secondRank := 1, 3
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first:  {TeamID: first, GlobalRank: &firstRank},
 		second: {TeamID: second, GlobalRank: &secondRank},
 	}
-	got := formatRankingCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatRankingCombined(texts, common.LocaleEN, rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#1 · #3"; got != want {
 		t.Fatalf("formatRankingCombined = %q, want %q", got, want)
 	}
 }
 
-// If only one team has cached VRS data, the other side must show "N/A"
-// rather than being dropped — a bare "#1" with no second value would leave
-// the reader unable to tell which team it's for.
+// If only one team has cached VRS data, the other side must show the
+// localized "no data" placeholder rather than being dropped — a bare "#1"
+// with no second value would leave the reader unable to tell which team it's
+// for.
 func TestFormatRankingCombined_OneTeamUnrankedShowsNAForTheOtherSide(t *testing.T) {
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	first, second := common.NewTeamID(), common.NewTeamID()
 	firstRank := 1
 	rankings := map[common.TeamID]enrichment.TeamRanking{
 		first: {TeamID: first, GlobalRank: &firstRank},
 	}
-	got := formatRankingCombined(rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
+	got := formatRankingCombined(texts, common.LocaleEN, rankings, &competition.Team{ID: first}, &competition.Team{ID: second})
 	if want := "#1 · N/A"; got != want {
 		t.Fatalf("formatRankingCombined = %q, want %q", got, want)
 	}
@@ -238,17 +251,25 @@ func TestFormatRankingCombined_OneTeamUnrankedShowsNAForTheOtherSide(t *testing.
 }
 
 func TestFormatRankingCombined_NeitherTeamRankedOmitsLine(t *testing.T) {
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	first, second := common.NewTeamID(), common.NewTeamID()
-	if got := formatRankingCombined(nil, &competition.Team{ID: first}, &competition.Team{ID: second}); got != "" {
+	if got := formatRankingCombined(texts, common.LocaleEN, nil, &competition.Team{ID: first}, &competition.Team{ID: second}); got != "" {
 		t.Fatalf("formatRankingCombined = %q, want empty (line omitted)", got)
 	}
 }
 
 func TestFormatRankingCombined_NilTeamOmitsLine(t *testing.T) {
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	rank := 1
 	teamID := common.NewTeamID()
 	rankings := map[common.TeamID]enrichment.TeamRanking{teamID: {TeamID: teamID, GlobalRank: &rank}}
-	if got := formatRankingCombined(rankings, &competition.Team{ID: teamID}, nil); got != "" {
+	if got := formatRankingCombined(texts, common.LocaleEN, rankings, &competition.Team{ID: teamID}, nil); got != "" {
 		t.Fatalf("formatRankingCombined = %q, want empty when a side of the match is unknown", got)
 	}
 }
@@ -563,10 +584,10 @@ func TestSend_IncludesHLTVLineIndependentlyFromVRS(t *testing.T) {
 		enrichment.SourceHLTV:     {second.ID: {TeamID: second.ID, GlobalRank: &hltvRank}},
 	}}
 	sent := sendTestPoll(t, nil, PollEnrichmentSources{Rankings: rankings}, first, second)
-	if !strings.Contains(sent.description, "📈 VRS: #1 · N/A") {
+	if !strings.Contains(sent.description, "📈 VRS: #1 · Н/Д") {
 		t.Fatalf("expected the VRS line scoped to its own source only, got %q", sent.description)
 	}
-	if !strings.Contains(sent.description, "🌐 HLTV: N/A · #5") {
+	if !strings.Contains(sent.description, "🌐 HLTV: Н/Д · #5") {
 		t.Fatalf("expected the HLTV line scoped to its own source only, got %q", sent.description)
 	}
 }
