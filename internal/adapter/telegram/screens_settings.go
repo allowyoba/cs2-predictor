@@ -11,15 +11,14 @@ import (
 // The per-chat settings screens: preferences, moderators, and the record
 // of who changed what.
 
-func topTierToastText(settings chat.Settings) string {
-	label := ternary(settings.Locale == common.LocaleRU, "Турниры: ", "Tournaments: ")
-	return "✅ " + label + tournamentMode(settings.DefaultTopTierOnly, settings.Locale)
+func topTierToastText(texts *Texts, settings chat.Settings) string {
+	return texts.Get("settings.top_tier_toast", settings.Locale, tournamentMode(settings.DefaultTopTierOnly, settings.Locale))
 }
 
 func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, settings chat.Settings, dmContext bool) error {
 	text := bold(escapeHTML(h.Texts.Get("menu.settings", settings.Locale)))
-	language := ternary(settings.Locale == common.LocaleRU, "Русский", "English")
-	languageLabel := h.Texts.Get("settings.language_label", settings.Locale, language)
+	languageKey := ternary(settings.Locale == common.LocaleRU, "locale.russian", "locale.english")
+	languageLabel := h.Texts.Get("settings.language_label", settings.Locale, h.Texts.Get(languageKey, settings.Locale))
 	timezoneLabel := h.Texts.Get("settings.timezone_label", settings.Locale, settings.Timezone)
 	tournamentMode := h.Texts.Get("settings.tournaments_all", settings.Locale)
 	if settings.DefaultTopTierOnly {
@@ -80,7 +79,10 @@ func historyKindKey(kind string) string { return "history.kind." + kind }
 func (h *UpdateHandler) historyView(ctx context.Context, target replyTarget, settings chat.Settings) error {
 	back := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:settings")}}}
 	if h.AdminActions == nil {
-		return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("history.empty", settings.Locale)), &back)
+		// Distinct from "no history yet" (below): this deployment has no
+		// AdminActionLog wired at all, which is a configuration gap, not a
+		// chat that simply hasn't had any admin activity.
+		return newValidationError("admin action history is not configured")
 	}
 	actions, err := h.AdminActions.Recent(ctx, settings.ChatID, chat.AdminActionHistorySize)
 	if err != nil {

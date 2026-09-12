@@ -383,7 +383,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		if m.FirstTeam == nil && m.SecondTeam == nil {
 			continue
 		}
-		eventName := ternary(settings.Locale == common.LocaleRU, "Турнир", "Tournament")
+		eventName := h.Texts.Get("upcoming.default_tournament_name", settings.Locale)
 		if event, ok := byEvent[m.EventID]; ok {
 			eventName = event.Tier.Badge() + event.Name
 		}

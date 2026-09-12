@@ -527,7 +527,7 @@ func routeSettingsTopTier(h *UpdateHandler, ctx context.Context, cb *CallbackQue
 		return false, err
 	}
 	h.logAdminAction(ctx, settings.ChatID, &cb.From, "top_tier", tournamentMode(settings.DefaultTopTierOnly, settings.Locale))
-	toastText := topTierToastText(settings)
+	toastText := topTierToastText(h.Texts, settings)
 	if err := h.toast(ctx, cb.ID, toastText); err != nil {
 		return false, err
 	}
