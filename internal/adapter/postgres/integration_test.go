@@ -1454,6 +1454,9 @@ func TestScoringRepository_UserPredictionsReportsTheTeamBackedAndWhetherItWon(t 
 		if p.TeamName != "Spirit" {
 			t.Fatalf("team = %q, want the team whose win was predicted (Spirit)", p.TeamName)
 		}
+		if p.TeamID != spirit.ID {
+			t.Fatalf("teamID = %v, want Spirit's real id %v — grouping in teamAccuracy relies on this being a real, stable identity", p.TeamID, spirit.ID)
+		}
 	}
 	if !got[0].Correct || got[1].Correct {
 		t.Fatalf("correctness = %v/%v, want the 2:0 win right and the 0:2 loss wrong", got[0].Correct, got[1].Correct)

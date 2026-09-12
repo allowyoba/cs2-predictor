@@ -14,14 +14,22 @@ import (
 // pre-aggregated numbers, so the interesting parts (streaks, trends,
 // which team they read well) stay pure Go that can be tested without a
 // database.
+//
+// TeamID is the grouping key for teamAccuracy — TeamName is display-only.
+// Grouping by name would silently merge two different teams that happen to
+// share one (not rare among lower-tier orgs) and split one team's history
+// across two group entries the moment it's renamed; the id is stable
+// identity, the name is just what to print next to it.
 type UserPrediction struct {
 	PlayedAt time.Time
+	TeamID   common.TeamID
 	TeamName string
 	Correct  bool
 }
 
 // TeamAccuracy is how well someone reads one particular team.
 type TeamAccuracy struct {
+	TeamID      common.TeamID
 	TeamName    string
 	Correct     int
 	Predictions int
@@ -168,19 +176,20 @@ func recentForm(ordered []UserPrediction) []bool {
 	return form
 }
 
-// teamAccuracy ranks teams by how well the person reads them. Ties break
-// on sample size and then on name, so the same history always renders the
+// teamAccuracy ranks teams by how well the person reads them. Grouped by
+// TeamID, not TeamName (see UserPrediction's doc comment) — ties break on
+// sample size and then on name, so the same history always renders the
 // same order — a list that reshuffles between views reads as broken.
 func teamAccuracy(ordered []UserPrediction) []TeamAccuracy {
-	totals := map[string]*TeamAccuracy{}
+	totals := map[common.TeamID]*TeamAccuracy{}
 	for _, p := range ordered {
 		if p.TeamName == "" {
 			continue
 		}
-		entry, ok := totals[p.TeamName]
+		entry, ok := totals[p.TeamID]
 		if !ok {
-			entry = &TeamAccuracy{TeamName: p.TeamName}
-			totals[p.TeamName] = entry
+			entry = &TeamAccuracy{TeamID: p.TeamID, TeamName: p.TeamName}
+			totals[p.TeamID] = entry
 		}
 		entry.Predictions++
 		if p.Correct {

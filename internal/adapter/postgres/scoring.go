@@ -402,6 +402,7 @@ WITH picks AS (
        AND m.second_score IS NOT NULL
 )
 SELECT p.played_at,
+       p.predicted_team_id,
        COALESCE(t.name, ''),
        p.predicted_team_id = p.actual_team_id AS correct
   FROM picks p
@@ -419,7 +420,7 @@ SELECT p.played_at,
 	var out []scoring.UserPrediction
 	for rows.Next() {
 		var p scoring.UserPrediction
-		if err := rows.Scan(&p.PlayedAt, &p.TeamName, &p.Correct); err != nil {
+		if err := rows.Scan(&p.PlayedAt, &p.TeamID.Value, &p.TeamName, &p.Correct); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
