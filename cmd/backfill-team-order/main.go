@@ -79,6 +79,15 @@ var affectedMatches = []affectedMatch{
 	{id: "b40eac57-ea18-377b-a80a-90f1deea5f57", firstTeamName: "NIP", firstScore: 1, secondTeamName: "Sinners", secondScore: 2, currentPoints: 0, swapped: 2},
 	{id: "d74ce506-1bf9-33b3-9f92-34da8f549227", firstTeamName: "Strael-Bora", firstScore: 0, secondTeamName: "Fire Flux Esports", secondScore: 2, currentPoints: 0, swapped: 2},
 	{id: "db54c648-efb8-35bc-b29d-3b1b30295a88", firstTeamName: "5star", firstScore: 2, secondTeamName: "TheMongolz", secondScore: 0, currentPoints: 2, swapped: 12, description: "FISSURE PLAYGROUND Season 3 2026"},
+	// Found via direct confirmation from a chat operator ("G2 was first in
+	// the poll"), not the currentPoints/swapped heuristic above — that
+	// heuristic missed this one because, by chance, the small vote samples
+	// in both affected chats scored acceptably under the (buggy) unswapped
+	// interpretation (currentPoints 10 and 0 vs swapped 4 and 4). The score
+	// value itself (BetBoom 1, G2 2) was independently confirmed correct
+	// against PandaScore's live API; only the first/second team labeling
+	// was swapped relative to what the poll actually asked.
+	{id: "dcd6452e-d41a-30e3-9e97-d9aa9abfdfb5", firstTeamName: "BetBoom Team", firstScore: 1, secondTeamName: "G2", secondScore: 2, currentPoints: 10, swapped: 8, description: "FISSURE PLAYGROUND Season 3 2026"},
 }
 
 func main() {
