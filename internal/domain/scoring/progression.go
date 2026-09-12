@@ -19,6 +19,14 @@ type ProgressionPoint struct {
 	Points      int
 }
 
+// ProgressionMaxRows bounds how many recent per-vote point events a rating
+// chart is built from — unlike Leaderboard/UserBets, this reads one row per
+// vote across every participant in the chat rather than one row per person,
+// so a long-lived, active chat's "all time" chart could otherwise grow
+// without bound. Large enough that no real chat's chosen period gets
+// visibly truncated in practice.
+const ProgressionMaxRows = 20000
+
 // ProgressionRepository reads the raw match-by-match point events a rating
 // chart is built from, for every participant in chatID within period,
 // oldest first. Separate from the core Repository (like

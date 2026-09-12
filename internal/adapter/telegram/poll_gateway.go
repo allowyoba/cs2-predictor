@@ -192,8 +192,8 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	question := composePollQuestion(firstName, firstRecord, secondName, secondRecord)
 
 	eventName := event.Tier.Badge() + escapeHTML(event.Name)
-	vrsLine := formatRankingCombined(rankings, match.FirstTeam, match.SecondTeam)
-	hltvLine := formatRankingCombined(hltvRankings, match.FirstTeam, match.SecondTeam)
+	vrsLine := formatRankingCombined(g.texts, locale, rankings, match.FirstTeam, match.SecondTeam)
+	hltvLine := formatRankingCombined(g.texts, locale, hltvRankings, match.FirstTeam, match.SecondTeam)
 	formLine := formatForm(homeForm, awayForm)
 	h2hLine := formatH2H(h2h)
 	description := composePollDescription(g.texts, locale, eventName, stage, match.Format.Label(), dateWhen, timeWhen, vrsLine, hltvLine, formLine, h2hLine)
@@ -386,7 +386,7 @@ func rankingInts(rankings map[common.TeamID]enrichment.TeamRanking, first, secon
 // which team it belongs to. The caller passes a rankings map already scoped
 // to one enrichment.Source (see PollGateway.Send), so this same function
 // renders every source's line — no per-source variant needed.
-func formatRankingCombined(rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
+func formatRankingCombined(texts *Texts, locale common.LocaleCode, rankings map[common.TeamID]enrichment.TeamRanking, first, second *competition.Team) string {
 	if first == nil || second == nil {
 		return ""
 	}
@@ -395,13 +395,15 @@ func formatRankingCombined(rankings map[common.TeamID]enrichment.TeamRanking, fi
 	if firstRank == nil && firstPoints == nil && secondRank == nil && secondPoints == nil {
 		return ""
 	}
-	return formatRankingSide(firstRank, firstPoints) + " · " + formatRankingSide(secondRank, secondPoints)
+	return formatRankingSide(texts, locale, firstRank, firstPoints) + " · " + formatRankingSide(texts, locale, secondRank, secondPoints)
 }
 
 // formatRankingSide renders one team's half of formatRankingCombined: "#rank
 // (points)" when both are cached, "#rank" or "(points)" alone when only one
-// is, or "N/A" when neither is cached for this team at all.
-func formatRankingSide(rank, points *int) string {
+// is, or the localized "poll.no_data" placeholder when neither is cached for
+// this team at all — routed through texts.Get like every other user-facing
+// string here rather than a hardcoded English literal.
+func formatRankingSide(texts *Texts, locale common.LocaleCode, rank, points *int) string {
 	switch {
 	case rank != nil && points != nil:
 		return fmt.Sprintf("#%d (%d)", *rank, *points)
@@ -410,7 +412,7 @@ func formatRankingSide(rank, points *int) string {
 	case points != nil:
 		return fmt.Sprintf("(%d)", *points)
 	default:
-		return "N/A"
+		return texts.Get("poll.no_data", locale)
 	}
 }
 

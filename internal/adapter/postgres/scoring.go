@@ -240,17 +240,27 @@ func (r *ScoringRepository) PointsProgression(ctx context.Context, chatID common
 	}
 	clause, extraArgs := periodClause(period, zone)
 	args := append([]any{chatID.Value}, extraArgs...)
+	args = append(args, scoring.ProgressionMaxRows)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 
+	// The inner query takes the most recent ProgressionMaxRows points within
+	// period (newest first, so a cap never silently drops recent activity
+	// in favor of ancient history); the outer ORDER BY restores the
+	// oldest-first order the chart actually needs to draw a time series.
 	rows, err := executor(ctx, r.pool).Query(ctx, `
-		SELECT v.user_id, COALESCE(NULLIF(u.nickname, ''), u.display_name),
-		       COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
-		       COALESCE(a.points, 0)
-		  FROM prediction_vote v
-		  JOIN match_poll p ON p.id = v.poll_id
-		  JOIN esport_match m ON m.id = p.match_id
-		  JOIN telegram_user u ON u.id = v.user_id
-		  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
-		 WHERE p.chat_id = $1 AND m.status = 'FINISHED' AND m.first_score IS NOT NULL`+clause+`
+		SELECT * FROM (
+			SELECT v.user_id, COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
+			       COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
+			       COALESCE(a.points, 0) AS points
+			  FROM prediction_vote v
+			  JOIN match_poll p ON p.id = v.poll_id
+			  JOIN esport_match m ON m.id = p.match_id
+			  JOIN telegram_user u ON u.id = v.user_id
+			  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
+			 WHERE p.chat_id = $1 AND m.status = 'FINISHED' AND m.first_score IS NOT NULL`+clause+`
+			 ORDER BY played_at DESC
+			 LIMIT `+limitPlaceholder+`
+		) capped
 		 ORDER BY played_at ASC`, args...)
 	if err != nil {
 		return nil, err

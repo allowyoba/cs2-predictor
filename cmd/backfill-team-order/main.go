@@ -1,5 +1,14 @@
 // Command backfill-team-order is a one-off remediation for a real production
-// incident (2026-09-12): internal/app.reconcileTeamOrder fixed
+// incident (2026-09-12), now RETIRED: every match listed below has been
+// confirmed corrected against production (last verified 2026-09-12 — a
+// dry run reports every entry skipped, meaning matchesRecordedState no
+// longer matches any of them). It is kept here, and out of the production
+// Docker image (see docker/Dockerfile's history), purely as a reviewed
+// template for the next incident of this shape — do not `docker exec` this
+// against production expecting it to do anything; `go run` it locally
+// against a copy of the affected data instead if the list is ever extended.
+//
+// internal/app.reconcileTeamOrder fixed
 // PandaScore's opponents[] order being unstable across two fetches for the
 // same match going forward, but couldn't retroactively correct matches
 // already settled under a swapped team order before the fix existed — by
