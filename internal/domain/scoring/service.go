@@ -28,7 +28,7 @@ func (s *Service) Settle(ctx context.Context, event competition.Event, match com
 	if match.Score == nil {
 		return nil, fmt.Errorf("finished match must have a score")
 	}
-	actual := *match.Score
+	actual := realignToPollTeamOrder(*match.Score, match, poll)
 
 	var startedAt = match.ActualStartedAt
 	if startedAt == nil {
@@ -78,4 +78,24 @@ func (s *Service) Settle(ctx context.Context, event competition.Event, match com
 		return nil, err
 	}
 	return awards, nil
+}
+
+// realignToPollTeamOrder corrects for a team order that drifted between
+// this poll's creation and now: poll.Options was built from
+// match.FirstTeam/SecondTeam at creation time, but that's not guaranteed to
+// still be the current order (PandaScore's own opponents order is not
+// stable across two fetches of the same match — confirmed in production).
+// Swapping actual back onto the poll's own anchor here means every
+// vote/option comparison in Settle is correct regardless of what happened
+// to the shared match record since this poll was created. A poll saved
+// before this anchor existed (FirstTeamID/SecondTeamID both the zero
+// value) has nothing to check against, so it scores exactly as before.
+func realignToPollTeamOrder(actual competition.MatchScore, match competition.Match, poll prediction.Poll) competition.MatchScore {
+	if poll.FirstTeamID == (common.TeamID{}) || match.FirstTeam == nil || match.SecondTeam == nil {
+		return actual
+	}
+	if poll.FirstTeamID == match.SecondTeam.ID && poll.SecondTeamID == match.FirstTeam.ID {
+		return competition.MatchScore{First: actual.Second, Second: actual.First}
+	}
+	return actual
 }

@@ -1174,6 +1174,91 @@ func TestPredictionRepository_OpenPollsDueBatchFetchesOptionsPerPoll(t *testing.
 	}
 }
 
+// TestPredictionRepository_PollTeamAnchorRoundTripsAndIsWriteOnce covers the
+// fix for a real, repeated production incident: a poll's FirstTeamID/
+// SecondTeamID must survive exactly as saved through every read path
+// (FindPoll and the batch OpenPollsDue path both), and must never change on
+// a later SavePoll (e.g. the one that fills in TelegramMessageID right
+// after sending) — the whole point of the anchor is that it stays fixed
+// even if the match's own team order drifts afterward.
+func TestPredictionRepository_PollTeamAnchorRoundTripsAndIsWriteOnce(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+
+	chatID := common.ChatID{Value: -998}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Anchor Cup", ExternalID: "anchor-event", Status: competition.EventUpcoming, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	g2 := competition.Team{ID: common.NewTeamID(), Name: "G2", ExternalID: "anchor-team-g2"}
+	betboom := competition.Team{ID: common.NewTeamID(), Name: "BetBoom Team", ExternalID: "anchor-team-betboom"}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	now := time.Now().UTC()
+	match := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "anchor-match", Status: competition.MatchNotStarted,
+		Format: format, FirstTeam: &g2, SecondTeam: &betboom,
+	}
+	if _, err := catalog.SaveMatch(ctx, match); err != nil {
+		t.Fatal(err)
+	}
+
+	poll := prediction.Poll{
+		ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID, Status: prediction.PollOpen, ClosesAt: now,
+		FirstTeamID: g2.ID, SecondTeamID: betboom.ID,
+		Options: []prediction.Option{{Index: 0, Score: competition.MatchScore{First: 2, Second: 0}}},
+	}
+	saved, err := predictions.SavePoll(ctx, poll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.FirstTeamID != g2.ID || saved.SecondTeamID != betboom.ID {
+		t.Fatalf("SavePoll's own return value lost the anchor: %+v", saved)
+	}
+
+	found, err := predictions.FindPoll(ctx, poll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found == nil || found.FirstTeamID != g2.ID || found.SecondTeamID != betboom.ID {
+		t.Fatalf("FindPoll did not round-trip the anchor: %+v", found)
+	}
+
+	due, err := predictions.OpenPollsDue(ctx, now.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].FirstTeamID != g2.ID || due[0].SecondTeamID != betboom.ID {
+		t.Fatalf("OpenPollsDue's batch path did not round-trip the anchor: %+v", due)
+	}
+
+	// Simulate the real "fill in TelegramMessageID after sending" save —
+	// a different team anchor passed here must be silently ignored, not
+	// overwrite the original.
+	messageID := int64(123)
+	other := common.NewTeamID()
+	resent := found
+	resent.TelegramMessageID = &messageID
+	resent.FirstTeamID = other
+	if _, err := predictions.SavePoll(ctx, *resent); err != nil {
+		t.Fatal(err)
+	}
+	after, err := predictions.FindPoll(ctx, poll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.FirstTeamID != g2.ID {
+		t.Fatalf("a later SavePoll must not overwrite the original anchor, got %+v", after.FirstTeamID)
+	}
+	if after.TelegramMessageID == nil || *after.TelegramMessageID != messageID {
+		t.Fatalf("expected the later save's TelegramMessageID to still take effect, got %+v", after.TelegramMessageID)
+	}
+}
+
 func TestRetentionRepository_PrunesOnlyEligibleRows(t *testing.T) {
 	pool, ctx := newTestPool(t)
 	retention := pg.NewRetentionRepository(pool)

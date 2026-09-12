@@ -36,6 +36,47 @@ func TestMapMatch(t *testing.T) {
 	}
 }
 
+// TestMapMatch_TeamOrderIsStableRegardlessOfOpponentsArrayOrder is a
+// regression test for a repeated, real production incident: PandaScore's
+// own opponents[] order for the same match is not stable across two
+// fetches, which used to make mapMatch's FirstTeam/SecondTeam flip
+// depending on API response order — scoring predictions against the wrong
+// team's numbers whenever a poll was created from one fetch and the match
+// settled from a later, differently-ordered one. Sorting opponents by their
+// own (stable) ids makes the assignment a pure function of team identity,
+// so the same two teams always produce the same FirstTeam/SecondTeam no
+// matter which order the API happens to list them in this time.
+func TestMapMatch_TeamOrderIsStableRegardlessOfOpponentsArrayOrder(t *testing.T) {
+	beginAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	matchType := "best_of"
+	games := 3
+	base := matchDTO{
+		ID: 9, Name: strPtr("A vs B"), Status: "finished", BeginAt: &beginAt,
+		MatchType: &matchType, NumberOfGames: &games,
+		Serie:      namedDTO{ID: 4, Name: "Event"},
+		Tournament: &namedDTO{ID: 5, Name: "Final"},
+		Results:    []resultDTO{{TeamID: 1, Score: 2}, {TeamID: 2, Score: 1}},
+	}
+
+	aFirst := base
+	aFirst.Opponents = []opponentDTO{{Opponent: &namedDTO{ID: 1, Name: "A"}}, {Opponent: &namedDTO{ID: 2, Name: "B"}}}
+	bFirst := base
+	bFirst.Opponents = []opponentDTO{{Opponent: &namedDTO{ID: 2, Name: "B"}}, {Opponent: &namedDTO{ID: 1, Name: "A"}}}
+
+	m1 := mapMatch(aFirst)
+	m2 := mapMatch(bFirst)
+
+	if m1.FirstTeam == nil || m2.FirstTeam == nil || m1.FirstTeam.ID != m2.FirstTeam.ID {
+		t.Fatalf("FirstTeam differs depending on opponents[] order: %+v vs %+v", m1.FirstTeam, m2.FirstTeam)
+	}
+	if m1.SecondTeam == nil || m2.SecondTeam == nil || m1.SecondTeam.ID != m2.SecondTeam.ID {
+		t.Fatalf("SecondTeam differs depending on opponents[] order: %+v vs %+v", m1.SecondTeam, m2.SecondTeam)
+	}
+	if *m1.Score != *m2.Score {
+		t.Fatalf("score differs depending on opponents[] order: %+v vs %+v", m1.Score, m2.Score)
+	}
+}
+
 func TestMapMatch_MissingResultsEntryLeavesScoreUnset(t *testing.T) {
 	// A real incident: PandaScore's results[] aggregate can lag the match's
 	// own status flipping to "finished" (observed right after a BO3

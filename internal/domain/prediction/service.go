@@ -66,6 +66,13 @@ func (s *Service) Create(ctx context.Context, match competition.Match, chatID co
 		Options:  options,
 		Status:   PollOpen,
 		ClosesAt: *match.ScheduledAt,
+		// ParticipantsKnown (checked above) guarantees both are non-nil —
+		// this is the exact match snapshot gateway.Send below renders the
+		// poll's question and options from, so anchoring here is anchoring
+		// to what the poll actually says, not to whatever the match record
+		// happens to say later.
+		FirstTeamID:  match.FirstTeam.ID,
+		SecondTeamID: match.SecondTeam.ID,
 	}
 
 	stored, err := s.repo.SavePoll(ctx, draft)

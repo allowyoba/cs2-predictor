@@ -162,6 +162,19 @@ func mapMatch(dto matchDTO) competition.Match {
 			}
 		}
 	}
+	// PandaScore's own opponents[] order is not guaranteed stable across
+	// two fetches of the same match (confirmed in production — repeated
+	// incidents where a poll built from one fetch's order scored wrong
+	// against a later fetch's opposite order). Sorting by the teams' own
+	// (stable, provider-assigned) ids makes FirstTeam/SecondTeam a pure
+	// function of team identity, never of API response order, so the same
+	// two teams always map to the same First/Second regardless of how
+	// PandaScore happened to order them this time. This doesn't matter
+	// which team ends up "first" — nothing depends on that — only that it
+	// never changes for a given pair.
+	if len(opponents) == 2 && opponents[0].ID > opponents[1].ID {
+		opponents[0], opponents[1] = opponents[1], opponents[0]
+	}
 
 	var first, second *competition.Team
 	if len(opponents) >= 1 {
