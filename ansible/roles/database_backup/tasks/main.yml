@@ -102,6 +102,17 @@
               Set DB_BACKUP_S3_BUCKET, DB_BACKUP_S3_ACCESS_KEY_ID and DB_BACKUP_S3_SECRET_ACCESS_KEY to back up to S3
               (see ansible/README.md).
 
+        # Neither this role nor any other installs it — a real incident:
+        # the two tasks below assumed `aws` was already on the host and
+        # failed with a bare "command not found" (hidden by no_log, so it
+        # looked like a credentials/permission problem instead).
+        - name: Install the AWS CLI (needed for S3-compatible backup storage)
+          ansible.builtin.apt:
+            name: awscli
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
         - name: Ensure the bucket's lifecycle rule matches the configured retention
           # A declared lifecycle rule, not a manual prune loop: retention
           # holds even if a later deploy — the only thing that runs this
