@@ -128,3 +128,60 @@ func TestChartCallbackData_RoundTripsEveryPeriodKind(t *testing.T) {
 		}
 	}
 }
+
+func TestRankChartCallbackData_RoundTripsEveryPeriodKind(t *testing.T) {
+	eventID := common.NewEventID()
+	cases := []scoring.StatsPeriod{
+		scoring.AllTime(),
+		scoring.ForYear(2026),
+		scoring.ForMonth(2026, time.September),
+		scoring.ForEvent(eventID),
+	}
+	for _, period := range cases {
+		data := rankChartCallbackData(period)
+		if data == "" {
+			t.Fatalf("empty callback data for period %+v", period)
+		}
+	}
+}
+
+// TestSendRankChart_DrawsEveryoneWhenAskedFromTheGroupItself mirrors
+// TestSendProgressionChart_DrawsEveryoneWhenAskedFromTheGroupItself for the
+// rank-movement chart.
+func TestSendRankChart_DrawsEveryoneWhenAskedFromTheGroupItself(t *testing.T) {
+	handler, settings := newProgressionTestHandler(t)
+	base := time.Now()
+	prog := &progressionScoring{dataScoring: &dataScoring{}, points: []scoring.ProgressionPoint{
+		{UserID: common.UserID{Value: 1}, DisplayName: "Alex", PlayedAt: base, Points: 2},
+		{UserID: common.UserID{Value: 2}, DisplayName: "Sam", PlayedAt: base, Points: 1},
+	}}
+	handler.Scoring = prog
+	srv := newPhotoAcceptingServer(t)
+	handler.Client = NewClient(Config{BaseURL: srv.URL, Token: "test-token"}, srv.Client())
+
+	target := sendTarget(settings.ChatID, nil)
+	if err := handler.sendRankChart(context.Background(), target, settings, scoring.AllTime(), common.UserID{Value: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if prog.requestedChat != settings.ChatID {
+		t.Fatalf("expected PointsProgression to be scoped to the chat, got %+v", prog.requestedChat)
+	}
+}
+
+func TestSendRankChart_RepliesWithEmptyTextWhenNoData(t *testing.T) {
+	handler, settings := newProgressionTestHandler(t)
+	handler.Scoring = &progressionScoring{dataScoring: &dataScoring{}}
+
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler.Client = NewClient(Config{BaseURL: srv.URL, Token: "test-token"}, srv.Client())
+
+	target := sendTarget(settings.ChatID, nil)
+	if err := handler.sendRankChart(context.Background(), target, settings, scoring.AllTime(), common.UserID{Value: 1}); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := (*calls)[0]["text"].(string)
+	if text != ru(t, "chart.empty") {
+		t.Fatalf("expected the empty-chart message, got %q", text)
+	}
+}
