@@ -116,6 +116,11 @@ type UpdateHandler struct {
 	TeamRankings       enrichment.RankingRepository
 	TeamIdentity       enrichment.IdentityRepository
 	TeamSnapshots      enrichment.SnapshotRepository
+	// TournamentMetadata backs the Liquipedia region/series line on a
+	// tournament's own detail card (eventDetails) — nil (Liquipedia
+	// disabled) simply omits that line, same as any other optional
+	// enrichment source.
+	TournamentMetadata enrichment.TournamentMetadataRepository
 	// TeamMatchOperatorChatIDs are the root /team_matches operators
 	// (DEPLOY_NOTIFY_CHAT_IDS) — always allowed, and the only ones who may
 	// appoint/revoke the delegated tier in TeamMatchOperators via

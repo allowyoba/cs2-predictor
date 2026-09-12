@@ -205,6 +205,7 @@ func run() error {
 		TeamRankings:             enrichmentRepo,
 		TeamIdentity:             enrichmentRepo,
 		TeamSnapshots:            enrichmentRepo,
+		TournamentMetadata:       enrichmentRepo,
 		TeamMatchOperatorChatIDs: cfg.TeamMatchOperatorChatIDs,
 		ProviderGateway:          gateway,
 		EnrichmentState:          enrichmentRepo,
