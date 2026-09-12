@@ -90,6 +90,7 @@ func run() error {
 	dedup := pg.NewUpdateDeduplicator(pool)
 	pendingUnsubscribes := pg.NewPendingUnsubscribeRepository(pool)
 	retentionStore := pg.NewRetentionRepository(pool)
+	backupStatusRepo := pg.NewBackupStatusRepository(pool)
 	adminActions := pg.NewAdminActionRepository(pool)
 	invitations := pg.NewInvitationRepository(pool)
 	runTx := app.TxRunner(func(ctx context.Context, fn func(context.Context) error) error {
@@ -210,6 +211,7 @@ func run() error {
 		ProviderGateway:          gateway,
 		EnrichmentState:          enrichmentRepo,
 		EnrichmentSources:        enrichmentSources,
+		BackupStatus:             backupStatusRepo,
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 

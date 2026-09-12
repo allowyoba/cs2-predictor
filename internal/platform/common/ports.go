@@ -218,6 +218,27 @@ type RetentionRepository interface {
 	DeletePublishedOutboxExceeding(ctx context.Context, maxRows int) (int64, error)
 }
 
+// BackupRecord is one completed database backup. Nothing in this Go process
+// ever performs a backup — the deploy pipeline
+// (ansible/roles/database_backup) does, directly against the database
+// container, and writes one row here per successful run. SizeBytes is nil
+// when the deploy automation couldn't determine the compressed dump's size
+// (kept optional rather than 0, which would read as "an empty backup").
+type BackupRecord struct {
+	Label     string
+	Storage   string
+	SizeBytes *int64
+	CreatedAt time.Time
+}
+
+// BackupStatusRepository reads the backup history BackupRecord rows come
+// from — the admin-panel "is the backup actually running?" question this
+// bot can answer without an operator having to SSH in and check the deploy
+// logs or the bucket by hand.
+type BackupStatusRepository interface {
+	RecentBackups(ctx context.Context, limit int) ([]BackupRecord, error)
+}
+
 // NotificationKind names one of the private nudges a person can opt into.
 // The string values are the wire form used in callback data and stored
 // preference columns alike, so they must stay stable.
