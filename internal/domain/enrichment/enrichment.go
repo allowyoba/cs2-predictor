@@ -67,6 +67,19 @@ type TeamRanking struct {
 	Source       Source
 }
 
+// NewTeamRanking builds a TeamRanking from an already identity-resolved
+// RankedTeam — the exact same mapping whether the resolution came from the
+// scheduled sync (RankingSync) or from an operator/crowd confirming a
+// fuzzy match (TeamMatchService), so both call this instead of repeating
+// the struct literal.
+func NewTeamRanking(teamID common.TeamID, rt RankedTeam) TeamRanking {
+	return TeamRanking{
+		TeamID: teamID, GlobalRank: rt.GlobalRank, RegionalRank: rt.RegionalRank,
+		Region: rt.Region, Points: rt.Points, Roster: rt.Identity.Roster,
+		PublishedAt: rt.PublishedAt, Source: rt.Source,
+	}
+}
+
 // RecentForm is a team's win/loss record over its last sampled matches.
 type RecentForm struct {
 	Wins   int

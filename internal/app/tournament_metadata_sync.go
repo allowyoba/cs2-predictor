@@ -34,13 +34,7 @@ type TournamentMetadataSync struct {
 }
 
 func (s *TournamentMetadataSync) Dispatch(ctx context.Context) {
-	_, err := s.Lock.Execute(ctx, "cs2predictor:liquipedia-tournament-sync", func(ctx context.Context) error {
-		s.sync(ctx)
-		return nil
-	})
-	if err != nil {
-		s.Log.Error("liquipedia tournament sync dispatch failed", "error", err)
-	}
+	guardedDispatch(ctx, s.Lock, "cs2predictor:liquipedia-tournament-sync", s.Log, "liquipedia tournament", s.sync)
 }
 
 func (s *TournamentMetadataSync) sync(ctx context.Context) {
@@ -87,7 +81,7 @@ func (s *TournamentMetadataSync) sync(ctx context.Context) {
 		}
 	}
 
-	if attempted > 0 && succeeded == 0 && lastErr != nil {
+	if allAttemptsFailed(attempted, succeeded, lastErr) {
 		s.recordFailure(ctx, lastErr)
 		return
 	}
@@ -99,8 +93,5 @@ func (s *TournamentMetadataSync) sync(ctx context.Context) {
 }
 
 func (s *TournamentMetadataSync) recordFailure(ctx context.Context, err error) {
-	s.Log.Warn("liquipedia tournament sync failed, keeping cached data", "error", err)
-	if stateErr := s.State.RecordFailure(ctx, enrichment.SourceLiquipedia, err.Error()); stateErr != nil {
-		s.Log.Error("liquipedia sync state record-failure failed", "error", stateErr)
-	}
+	recordSyncFailure(ctx, s.State, enrichment.SourceLiquipedia, s.Log, "liquipedia tournament", err)
 }

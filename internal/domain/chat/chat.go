@@ -29,6 +29,11 @@ type Settings struct {
 	// "all"/"все" prefix on a given search still overrides it for that one
 	// search.
 	DefaultTopTierOnly bool
+	// AutoSubscribeTopTier, when set, subscribes this chat to a newly
+	// discovered S/A tier tournament immediately instead of only offering
+	// it via the proactive big-event-discovered notification — see
+	// CompetitionSynchronization.announceBigEvent.
+	AutoSubscribeTopTier bool
 }
 
 // DefaultTimezone is the fallback IANA zone for a chat that hasn't set one.

@@ -129,6 +129,18 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = nil
 	case data == "pstats:menu":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
+	case data == "hub:root":
+		err = h.startLanding(ctx, target, userID, locale)
+	case data == "hub:personal":
+		err = h.privateStatsMenu(ctx, target, userID, locale)
+	case data == "hub:manage":
+		err = h.managedChatsMenu(ctx, target, userID, locale)
+	case data == "hub:system":
+		err = h.systemToolsMenu(ctx, target, userID, locale)
+	case data == "hub:provider_status":
+		err = h.providerStatusView(ctx, target, userID, locale)
+	case data == "hub:team_match_operators":
+		err = h.listTeamMatchOperators(ctx, common.ChatID{Value: cb.Message.Chat.ID}, locale)
 	case data == "pstats:all":
 		err = h.renderPrivateStats(ctx, target, userID, locale, scoring.AllTime())
 	case data == "pstats:years":
@@ -331,14 +343,19 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		}
 	}
 
+	// Routed through handleCommandError just like the group callback path
+	// above: a known error type (chat.ErrAccessDenied, a validationError)
+	// gets its usual friendly reply, and — same fallback added there now —
+	// anything else at least tells the user something went wrong instead
+	// of leaving a tapped button with no visible response at all.
+	finalErr := h.handleCommandError(ctx, chat.Settings{ChatID: common.ChatID{Value: cb.Message.Chat.ID}, Locale: locale}, nil, data, err)
 	if answered {
-		return err
+		return finalErr
 	}
-	answerErr := h.answer(ctx, cb.ID)
-	if err != nil {
-		return err
+	if answerErr := h.answer(ctx, cb.ID); answerErr != nil && finalErr == nil {
+		loggerFrom(ctx, h.Log).Warn("answerCallbackQuery failed", "error", answerErr)
 	}
-	return answerErr
+	return finalErr
 }
 
 // tryDelegateToManagedChat handles a button tap using the group-chat admin

@@ -116,6 +116,11 @@ type UpdateHandler struct {
 	TeamRankings       enrichment.RankingRepository
 	TeamIdentity       enrichment.IdentityRepository
 	TeamSnapshots      enrichment.SnapshotRepository
+	// TournamentMetadata backs the Liquipedia region/series line on a
+	// tournament's own detail card (eventDetails) — nil (Liquipedia
+	// disabled) simply omits that line, same as any other optional
+	// enrichment source.
+	TournamentMetadata enrichment.TournamentMetadataRepository
 	// TeamMatchOperatorChatIDs are the root /team_matches operators
 	// (DEPLOY_NOTIFY_CHAT_IDS) — always allowed, and the only ones who may
 	// appoint/revoke the delegated tier in TeamMatchOperators via
@@ -291,6 +296,15 @@ func (h *UpdateHandler) Handle(ctx context.Context, update Update) error {
 	if actor, ok := updateActor(update); ok && !h.InboundLimiter.Allow(actor) {
 		log.Debug("inbound rate limit exceeded, dropping update", "userId", actor)
 		h.recordAdminAction("inbound_rate_limit", "dropped")
+		if update.CallbackQuery != nil {
+			// Otherwise the tapped button's own loading spinner sits there
+			// until the Telegram client's timeout — a bare ack (no text)
+			// at least tells the client the tap was received, even though
+			// this update itself is being dropped.
+			if ackErr := h.answer(ctx, update.CallbackQuery.ID); ackErr != nil {
+				log.Debug("failed to ack a throttled callback query", "error", ackErr)
+			}
+		}
 		return nil
 	}
 
@@ -488,8 +502,10 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		if token, ok := parseInvitationDeepLink(text); ok {
 			return h.openInvitationAccept(ctx, sendTarget(chatID, nil), userID, locale, token)
 		}
-		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
-	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"), strings.HasPrefix(text, "/stats"):
+		return h.startLanding(ctx, sendTarget(chatID, nil), userID, locale)
+	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"):
+		return h.startLanding(ctx, sendTarget(chatID, nil), userID, locale)
+	case strings.HasPrefix(text, "/stats"):
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/bets"):
 		return h.privateBetsMenu(ctx, sendTarget(chatID, nil), userID, locale, nil, 0, 0)
@@ -642,6 +658,14 @@ func (h *UpdateHandler) handleCommandError(ctx context.Context, settings chat.Se
 		loggerFrom(ctx, h.Log).Warn("command failed", "chatId", settings.ChatID.Value, "command", strings.SplitN(text, " ", 2)[0])
 		return h.sendText(ctx, settings.ChatID, h.Texts.Get("error.generic", settings.Locale), topicID)
 	}
+	// Anything else (a DB outage, a Telegram API failure, ...) is genuinely
+	// unexpected — the caller still un-claims dedup and lets Telegram retry
+	// by returning err below, but a tapped button or typed command must not
+	// look like it silently did nothing in the meantime. Best-effort: if
+	// even this reply fails, the original err still propagates unchanged.
+	if sendErr := h.sendText(ctx, settings.ChatID, h.Texts.Get("error.generic", settings.Locale), topicID); sendErr != nil {
+		loggerFrom(ctx, h.Log).Warn("failed to notify user of an unexpected error", "chatId", settings.ChatID.Value, "error", sendErr)
+	}
 	return err
 }
 
@@ -718,9 +742,9 @@ func (h *UpdateHandler) searchEvents(ctx context.Context, msg *Message, settings
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "events:add")})
 
 	header := bold(escapeHTML(query))
-	body := header + "\n\n" + ternary(settings.Locale == common.LocaleRU, "Выберите активный турнир:", "Choose an active tournament:")
+	body := header + "\n\n" + h.Texts.Get("events.search_pick_prompt", settings.Locale)
 	if len(found) == 0 {
-		body = header + "\n\n" + ternary(settings.Locale == common.LocaleRU, "Ничего не найдено среди активных турниров.", "No active tournaments found.")
+		body = header + "\n\n" + h.Texts.Get("events.search_empty", settings.Locale)
 	}
 	return h.sendTextWithKeyboard(ctx, replyChatID, body, InlineKeyboard{InlineKeyboard: rows}, msg.MessageThreadID)
 }
@@ -751,14 +775,14 @@ func (h *UpdateHandler) changeTimezone(ctx context.Context, msg *Message, settin
 	replyChatID := common.ChatID{Value: msg.Chat.ID}
 	loc, err := time.LoadLocation(value)
 	if err != nil {
-		return h.sendText(ctx, replyChatID, "⚠️ "+ternary(settings.Locale == common.LocaleRU, "Неизвестный часовой пояс: ", "Unknown timezone: ")+code(escapeHTML(value)), nil)
+		return h.sendText(ctx, replyChatID, h.Texts.Get("timezone.unknown", settings.Locale, code(escapeHTML(value))), nil)
 	}
 	settings.Timezone = loc.String()
 	if _, err := h.Chats.Save(ctx, settings); err != nil {
 		return err
 	}
 	h.logAdminAction(ctx, settings.ChatID, msg.From, "timezone", loc.String())
-	return h.sendText(ctx, replyChatID, "✅ "+ternary(settings.Locale == common.LocaleRU, "Часовой пояс: ", "Timezone: ")+code(escapeHTML(loc.String())), nil)
+	return h.sendText(ctx, replyChatID, h.Texts.Get("timezone.set_confirmed", settings.Locale, code(escapeHTML(loc.String()))), nil)
 }
 
 func (h *UpdateHandler) setTopic(ctx context.Context, msg *Message, settings chat.Settings) error {

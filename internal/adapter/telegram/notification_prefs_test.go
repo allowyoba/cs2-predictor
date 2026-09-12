@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -72,15 +71,21 @@ func TestNotifications_ToggleTurnsOneKindOnAndBackOff(t *testing.T) {
 	}
 }
 
+// An unknown notification kind is a validationError internally, but by the
+// time it reaches the caller it must already be handled — the same
+// handleCommandError treatment every callback error gets — not leaked out
+// raw: the person just gets a generic "couldn't complete that" reply.
 func TestNotifications_UnknownKindIsRejected(t *testing.T) {
-	server, _ := newRecordingServer(t)
+	server, calls := newRecordingServer(t)
 	defer server.Close()
 	handler, _ := newTestHandler(t, server)
 
 	err := handler.handlePrivateCallback(context.Background(), notifyCallback("notify:toggle:everything"))
-	var validation *validationError
-	if !errors.As(err, &validation) {
-		t.Fatalf("err = %v, want a validation error for an unknown kind", err)
+	if err != nil {
+		t.Fatalf("err = %v, want nil — a validationError must already be handled by handleCommandError", err)
+	}
+	if !strings.Contains(lastText(*calls), ru(t, "error.generic")) {
+		t.Fatalf("expected the generic error reply, got %q", lastText(*calls))
 	}
 }
 

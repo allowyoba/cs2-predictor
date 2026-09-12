@@ -142,6 +142,54 @@ func TestBigEventPublisher_SendsBadgedAnnouncementWithSubscribeButton(t *testing
 	}
 }
 
+// telegram.auto-subscribed shares BigEventPublisher with
+// telegram.big-event-discovered, but must render as an already-done fact
+// (an Unsubscribe escape hatch, not a Subscribe offer) since the chat was
+// already joined to the tournament by the time this is sent.
+func TestBigEventPublisher_AutoSubscribedRendersUnsubscribeNotSubscribe(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	chats := newFakeChats()
+	eventID := "22222222-2222-2222-2222-222222222222"
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+
+	pub := NewBigEventPublisher(client, chats, texts)
+	if !pub.Supports("telegram.auto-subscribed") {
+		t.Fatal("expected Supports(telegram.auto-subscribed) = true")
+	}
+
+	n := common.BigEventDiscoveredNotification{ChatID: -1, EventID: eventID, EventName: "IEM Katowice", Tier: "s"}
+	payload, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(context.Background(), common.OutboxMessage{Type: "telegram.auto-subscribed", Payload: string(payload)}); err != nil {
+		t.Fatal(err)
+	}
+
+	call := (*calls)[0]
+	text, _ := call["text"].(string)
+	if !strings.Contains(text, "автоматически") {
+		t.Fatalf("expected the auto-subscribed text, got %q", text)
+	}
+	labels := buttonLabels(t, call)
+	if len(labels) != 1 || labels[0] != ru(t, "events.unsubscribe") {
+		t.Fatalf("expected a single Unsubscribe button, got %v", labels)
+	}
+	markup, _ := call["reply_markup"].(map[string]any)
+	rows, _ := markup["inline_keyboard"].([]any)
+	firstRow, _ := rows[0].([]any)
+	firstBtn, _ := firstRow[0].(map[string]any)
+	if firstBtn["callback_data"] != "unsubscribe:"+eventID {
+		t.Fatalf("callback_data = %v, want %q", firstBtn["callback_data"], "unsubscribe:"+eventID)
+	}
+}
+
 // The teammatch.ask_question template already wraps both names in <b>; the
 // publisher must not bold the candidate name again on top of that.
 func TestTeamMatchAskPublisher_DoesNotDoubleWrapCandidateNameInBold(t *testing.T) {

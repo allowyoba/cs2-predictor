@@ -100,6 +100,21 @@ func TestHistoryView_ListsRecentChangesWithTheirAuthor(t *testing.T) {
 	}
 }
 
+// A deployment with no AdminActionLog wired at all (h.AdminActions == nil)
+// must be told that explicitly, not shown the same "no history yet" text a
+// chat with a real, empty log would see — those are different situations
+// and conflating them makes a missing feature look like a quiet chat.
+func TestHistoryView_NilAdminActionsIsDistinctFromAGenuinelyEmptyLog(t *testing.T) {
+	handler, _, settings, _ := setupHistoryTest(t)
+	handler.AdminActions = nil
+
+	data := "settings:history"
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{MessageID: 7, Chat: Chat{ID: -100, Type: "supergroup"}}, Data: &data}
+	if _, err := handler.routeCallback(context.Background(), cb, settings, data); err == nil {
+		t.Fatal("expected an error when AdminActions is not configured, not a silently-rendered empty screen")
+	}
+}
+
 func TestHistoryView_EmptyLogSaysSoInsteadOfRenderingAnEmptyList(t *testing.T) {
 	handler, _, settings, calls := setupHistoryTest(t)
 

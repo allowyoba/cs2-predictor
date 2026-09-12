@@ -165,11 +165,7 @@ func (s *TeamMatchService) autoAccept(ctx context.Context, teamID common.TeamID,
 	if err := s.Identity.SaveIdentity(ctx, teamID, source, externalID, best.Identity.Name, enrichment.ConfidenceFuzzyName); err != nil {
 		return err
 	}
-	return s.Rankings.SaveRanking(ctx, enrichment.TeamRanking{
-		TeamID: teamID, GlobalRank: best.GlobalRank, RegionalRank: best.RegionalRank,
-		Region: best.Region, Points: best.Points, Roster: best.Identity.Roster,
-		PublishedAt: best.PublishedAt, Source: source,
-	})
+	return s.Rankings.SaveRanking(ctx, enrichment.NewTeamRanking(teamID, best))
 }
 
 // bestSnapshotMatch scores name against every cached entry (already scoped

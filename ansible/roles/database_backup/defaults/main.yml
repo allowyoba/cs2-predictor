@@ -1,0 +1,34 @@
+---
+# Whether a database backup is required before this deploy proceeds. The
+# only sanctioned reason to disable it is a first install (see the "no
+# previous release" skip in tasks/main.yml, which fires automatically) —
+# turning this off any other time defeats the whole point of a mandatory
+# pre-deploy backup.
+db_backup_enabled: "{{ lookup('env', 'DB_BACKUP_ENABLED') | default('true', true) | bool }}"
+
+# How long a backup is kept before it's eligible for deletion — for "fs"
+# storage a straight file-age prune, for "s3" an actual bucket lifecycle
+# rule (so retention holds even if a later deploy is never run again).
+db_backup_retention_days: "{{ lookup('env', 'DB_BACKUP_RETENTION_DAYS') | default('5', true) | int }}"
+
+# "fs" (a local directory under app_dir) or "s3" (an S3-compatible bucket —
+# defaults to Yandex Cloud Object Storage's endpoint/region, since that's
+# this project's default provider; any other S3-compatible endpoint works
+# by overriding db_backup_s3_endpoint/db_backup_s3_region).
+db_backup_storage: "{{ lookup('env', 'DB_BACKUP_STORAGE') | default('fs', true) }}"
+
+db_backup_fs_root: "{{ app_dir }}/backups/database"
+
+db_backup_s3_endpoint: "{{ lookup('env', 'DB_BACKUP_S3_ENDPOINT') | default('https://storage.yandexcloud.net', true) }}"
+db_backup_s3_region: "{{ lookup('env', 'DB_BACKUP_S3_REGION') | default('ru-central1', true) }}"
+db_backup_s3_bucket: "{{ lookup('env', 'DB_BACKUP_S3_BUCKET') | default('', true) }}"
+db_backup_s3_prefix: "{{ lookup('env', 'DB_BACKUP_S3_PREFIX') | default('database/', true) }}"
+
+# The database itself, and which Compose service runs it — matches
+# docker/compose.prod.yml and the POSTGRES_USER/POSTGRES_DB baked into the
+# image (see docker/compose.yml's postgres service).
+db_backup_database_name: cs2predictor
+db_backup_database_user: cs2predictor
+db_backup_container_service: postgres
+
+db_backup_label: "db-{{ release_tag | default('adhoc') }}-{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"

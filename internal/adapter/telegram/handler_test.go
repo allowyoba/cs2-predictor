@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -291,6 +292,29 @@ func (fakeScoring) UserStats(context.Context, common.UserID, scoring.StatsPeriod
 }
 func (fakeScoring) UserChatStats(context.Context, common.UserID) ([]scoring.UserChatStanding, error) {
 	return nil, nil
+}
+
+// A genuinely unexpected error (not chat.ErrAccessDenied, not a
+// validationError — a DB outage, say) must still reach the user as a
+// generic reply instead of leaving a tapped button/typed command looking
+// like it silently did nothing, but the original error must still
+// propagate afterward so the caller's retry/dedup-release logic still
+// fires.
+func TestHandleCommandError_UnexpectedErrorGetsAGenericReplyButStillPropagates(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU}
+
+	original := errors.New("database is on fire")
+	err := handler.handleCommandError(context.Background(), settings, nil, "/whatever", original)
+
+	if !errors.Is(err, original) {
+		t.Fatalf("expected the original error to still propagate, got %v", err)
+	}
+	if !strings.Contains(lastText(*calls), ru(t, "error.generic")) {
+		t.Fatalf("expected a generic error reply sent to the user, got %q", lastText(*calls))
+	}
 }
 
 // --- test setup ---

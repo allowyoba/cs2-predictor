@@ -10,6 +10,7 @@ import (
 
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/domain/subscription"
 	"cs2predictor/internal/platform/common"
 )
@@ -320,6 +321,9 @@ func (h *UpdateHandler) eventDetails(ctx context.Context, target replyTarget, se
 	if tier := strings.ToUpper(strings.TrimSpace(string(event.Tier))); tier != "" && event.Tier != competition.TierUnranked {
 		lines = append(lines, h.Texts.Get("events.tier", settings.Locale, event.Tier.Badge()+tier))
 	}
+	if line := h.liquipediaLine(ctx, eventID, settings.Locale); line != "" {
+		lines = append(lines, line)
+	}
 
 	rows := [][]InlineButton{{button(h.Texts.Get("menu.stats", settings.Locale), cbStatsEvent(eventID))}}
 	if dmContext {
@@ -344,6 +348,33 @@ func (h *UpdateHandler) eventStatusText(status competition.EventStatus, locale c
 		key = "events.status_cancelled"
 	}
 	return h.Texts.Get(key, locale)
+}
+
+// liquipediaLine surfaces the region/series metadata Liquipedia already
+// caches for this tournament (see internal/app.TournamentMetadataSync) —
+// fetched and stored for a while but never actually shown anywhere until
+// now. Best-effort like every other optional enrichment source: a nil
+// repository, a lookup error, or simply no cached row yet all just omit
+// the line rather than fail the whole card.
+func (h *UpdateHandler) liquipediaLine(ctx context.Context, eventID common.EventID, locale common.LocaleCode) string {
+	if h.TournamentMetadata == nil {
+		return ""
+	}
+	meta, err := h.TournamentMetadata.FindTournamentMetadata(ctx, eventID, enrichment.SourceLiquipedia)
+	if err != nil || meta == nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if meta.Series != "" {
+		parts = append(parts, escapeHTML(meta.Series))
+	}
+	if meta.Region != "" {
+		parts = append(parts, escapeHTML(meta.Region))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return h.Texts.Get("events.liquipedia", locale, strings.Join(parts, " · "))
 }
 
 // upcoming lists the soonest matches across everything this chat is
@@ -383,7 +414,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		if m.FirstTeam == nil && m.SecondTeam == nil {
 			continue
 		}
-		eventName := ternary(settings.Locale == common.LocaleRU, "Турнир", "Tournament")
+		eventName := h.Texts.Get("upcoming.default_tournament_name", settings.Locale)
 		if event, ok := byEvent[m.EventID]; ok {
 			eventName = event.Tier.Badge() + event.Name
 		}
