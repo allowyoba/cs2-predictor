@@ -41,6 +41,21 @@
           {{ (compose_argv + ['exec', '-T', db_backup_container_service, 'pg_dump', '-U', db_backup_database_user, '-Fc', db_backup_database_name]) | map('quote') | join(' ') }}
           > {{ db_backup_staging.path | quote }}/{{ db_backup_label }}.dump
         executable: /bin/bash
+      environment:
+        # compose.prod.yml's bot service is `image: ${APP_IMAGE:?required}`
+        # — Compose refuses to interpolate the file at all without it, even
+        # for a read-only `exec` into the already-running previous release
+        # (this task runs before "Pull and install the release" below,
+        # which is the only other place APP_IMAGE gets set). The actual
+        # value doesn't matter for `exec` — it never resolves an image to
+        # start — so the previous release's own recorded image is enough;
+        # application_deploy_previous_image is only set when a previous
+        # release recorded one (see application_deploy/tasks/main.yml), so
+        # this falls back to the release being installed now for the one
+        # edge case that survives database_backup's own "not a first
+        # install" guard without it (an older deployment.json missing the
+        # image field).
+        APP_IMAGE: "{{ application_deploy_previous_image | default(app_image) }}"
       changed_when: true
 
     - name: Compress the dump
