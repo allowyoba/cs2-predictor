@@ -375,8 +375,12 @@ func NewBigEventPublisher(client *Client, chats chat.Repository, texts *Texts) *
 	return &BigEventPublisher{client: client, chats: chats, texts: texts}
 }
 
+// telegram.auto-subscribed shares this publisher (and the notification
+// payload shape) with telegram.big-event-discovered — same "a new S/A
+// tournament showed up" fact, just already acted on for a chat that opted
+// into AutoSubscribeTopTier rather than needing a tap to join.
 func (p *BigEventPublisher) Supports(eventType string) bool {
-	return eventType == "telegram.big-event-discovered"
+	return eventType == "telegram.big-event-discovered" || eventType == "telegram.auto-subscribed"
 }
 
 func (p *BigEventPublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
@@ -385,14 +389,20 @@ func (p *BigEventPublisher) Publish(ctx context.Context, message common.OutboxMe
 		return err
 	}
 	locale := resolveLocale(ctx, p.chats, common.ChatID{Value: n.ChatID})
-
 	badge := competition.EventTier(n.Tier).Badge()
-	text := p.texts.Get("bigevent.announcement", locale, badge+escapeHTML(n.EventName))
+
+	var text string
+	var btn InlineButton
+	if message.Type == "telegram.auto-subscribed" {
+		text = p.texts.Get("bigevent.auto_subscribed", locale, badge+escapeHTML(n.EventName))
+		btn = button(p.texts.Get("events.unsubscribe", locale), "unsubscribe:"+n.EventID)
+	} else {
+		text = p.texts.Get("bigevent.announcement", locale, badge+escapeHTML(n.EventName))
+		btn = button(p.texts.Get("bigevent.subscribe", locale), "subscribe:"+n.EventID)
+	}
 	payload := map[string]any{
 		"chat_id": n.ChatID, "text": text, "parse_mode": "HTML",
-		"reply_markup": InlineKeyboard{InlineKeyboard: [][]InlineButton{{
-			button(p.texts.Get("bigevent.subscribe", locale), "subscribe:"+n.EventID),
-		}}},
+		"reply_markup": InlineKeyboard{InlineKeyboard: [][]InlineButton{{btn}}},
 	}
 	if n.TopicID != nil {
 		payload["message_thread_id"] = *n.TopicID

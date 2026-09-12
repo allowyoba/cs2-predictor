@@ -198,6 +198,7 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("moderators:remove:do:"), guard: guardTelegramAdmin, handle: routeModeratorsRemoveDo},
 	{match: exact("settings:locale"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsLocale},
 	{match: exact("settings:top_tier"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsTopTier},
+	{match: exact("settings:auto_subscribe"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribe},
 	{match: prefixed("subscribe:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.subscribe(ctx, cb, target, settings, strings.TrimPrefix(data, "subscribe:"))
 	}},
@@ -529,6 +530,23 @@ func routeSettingsTopTier(h *UpdateHandler, ctx context.Context, cb *CallbackQue
 	h.logAdminAction(ctx, settings.ChatID, &cb.From, "top_tier", tournamentMode(settings.DefaultTopTierOnly, settings.Locale))
 	toastText := topTierToastText(h.Texts, settings)
 	if err := h.toast(ctx, cb.ID, toastText); err != nil {
+		return false, err
+	}
+	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
+}
+
+func routeSettingsAutoSubscribe(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	settings.AutoSubscribeTopTier = !settings.AutoSubscribeTopTier
+	if _, err := h.Chats.Save(ctx, settings); err != nil {
+		return false, err
+	}
+	state := "off"
+	toastKey := "settings.auto_subscribe_off"
+	if settings.AutoSubscribeTopTier {
+		state, toastKey = "on", "settings.auto_subscribe_on"
+	}
+	h.logAdminAction(ctx, settings.ChatID, &cb.From, "auto_subscribe", state)
+	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
 		return false, err
 	}
 	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")

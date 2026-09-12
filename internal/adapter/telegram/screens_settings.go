@@ -25,10 +25,16 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		tournamentMode = h.Texts.Get("settings.tournaments_top", settings.Locale)
 	}
 	topTierLabel := h.Texts.Get("settings.tournaments_label", settings.Locale, tournamentMode)
+	autoSubscribeState := h.Texts.Get("settings.auto_subscribe_off", settings.Locale)
+	if settings.AutoSubscribeTopTier {
+		autoSubscribeState = h.Texts.Get("settings.auto_subscribe_on", settings.Locale)
+	}
+	autoSubscribeLabel := h.Texts.Get("settings.auto_subscribe_label", settings.Locale, autoSubscribeState)
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
 		{button(languageLabel, "settings:locale")},
 		{button(timezoneLabel, "settings:timezone")},
 		{button(topTierLabel, "settings:top_tier")},
+		{button(autoSubscribeLabel, "settings:auto_subscribe")},
 		{button(h.Texts.Get("settings.moderators", settings.Locale), "settings:moderators")},
 		{button(h.Texts.Get("settings.history", settings.Locale), "settings:history")},
 	}}
@@ -67,7 +73,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // adding its kind here fails that test.
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
-	"top_tier", "event_topic", "moderator_added", "moderator_removed",
+	"top_tier", "auto_subscribe", "event_topic", "moderator_added", "moderator_removed",
 	"moderator_permissions_changed", "invitation_created", "invitation_revoked", "invitation_accepted",
 }
 

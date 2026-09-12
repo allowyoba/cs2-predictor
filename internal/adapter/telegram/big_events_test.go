@@ -111,6 +111,45 @@ func TestSettingsTopTierCallback_TogglesAndRequiresManager(t *testing.T) {
 	}
 }
 
+// Same shape as the top_tier toggle above, for "settings:auto_subscribe".
+func TestSettingsAutoSubscribeCallback_TogglesAndRequiresManager(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+
+	data := "settings:auto_subscribe"
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.AutoSubscribeTopTier {
+		t.Fatal("expected AutoSubscribeTopTier = true after one toggle")
+	}
+	if len(*calls) == 0 {
+		t.Fatal("expected the settings view to be re-rendered after toggling")
+	}
+
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleMember})
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	stillOn, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stillOn.AutoSubscribeTopTier {
+		t.Fatal("a plain member's toggle attempt must be denied, AutoSubscribeTopTier should remain true")
+	}
+}
+
 // TestSearchEvents_ChatDefaultAppliesUnlessExplicitlyOverridden verifies the
 // three-way precedence: a plain query uses the chat's DefaultTopTierOnly,
 // an explicit "top"/"топ" prefix forces it on, and "all"/"все" forces it

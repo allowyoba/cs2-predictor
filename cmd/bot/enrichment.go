@@ -115,7 +115,7 @@ func buildEnrichment(
 	if cfg.LiquipediaEnabled {
 		sync := &app.TournamentMetadataSync{
 			Provider: liquipedia.NewProvider(liquipedia.DefaultConfig(cfg.LiquipediaAPIKey), httpClient),
-			Catalog: catalog, Subscriptions: subscriptions,
+			Catalog:  catalog, Subscriptions: subscriptions,
 			Metadata: repo, State: repo, Lock: lock, Log: log,
 		}
 		b.Jobs = append(b.Jobs, backgroundJob{cfg.LiquipediaSyncInterval, sync.Dispatch})

@@ -70,9 +70,15 @@ func (f *fakeSyncCatalog) SaveMatch(_ context.Context, m competition.Match) (com
 // chats" filter.
 type fakeSyncSubs struct {
 	subscribedByEvent map[common.EventID][]common.ChatID
+	subscribed        []subscription.EventSubscription
+	subscribeErr      error
 }
 
 func (f *fakeSyncSubs) Subscribe(_ context.Context, s subscription.EventSubscription) (subscription.EventSubscription, error) {
+	if f.subscribeErr != nil {
+		return subscription.EventSubscription{}, f.subscribeErr
+	}
+	f.subscribed = append(f.subscribed, s)
 	return s, nil
 }
 func (f *fakeSyncSubs) Unsubscribe(context.Context, common.ChatID, common.EventID) error { return nil }
@@ -197,6 +203,68 @@ func TestDiscoverEvents_AnnouncesNewTopTierEventToActiveChatsNotYetSubscribed(t 
 	wantAggregateID := "-2:big-event:" + event.ID.Value.String()
 	if call.aggregateID != wantAggregateID {
 		t.Fatalf("aggregateID = %q, want %q", call.aggregateID, wantAggregateID)
+	}
+}
+
+// A chat with AutoSubscribeTopTier set skips the offer entirely: it's
+// actually subscribed, and told via a different ("auto-subscribed")
+// notification instead of the usual subscribe-button offer.
+func TestDiscoverEvents_AutoSubscribesChatsThatOptedIn(t *testing.T) {
+	event := topTierEvent("IEM Katowice")
+	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{event}}
+	catalog := newFakeSyncCatalog()
+	subs := &fakeSyncSubs{}
+	autoChat, plainChat := common.ChatID{Value: -1}, common.ChatID{Value: -2}
+	chats := &fakeSyncChats{active: []chat.Settings{
+		{ChatID: autoChat, Active: true, AutoSubscribeTopTier: true},
+		{ChatID: plainChat, Active: true},
+	}}
+	outbox := &fakeSyncOutbox{}
+	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
+
+	sync.DiscoverEvents(context.Background())
+
+	if len(subs.subscribed) != 1 || subs.subscribed[0].ChatID != autoChat || subs.subscribed[0].EventID != event.ID {
+		t.Fatalf("expected exactly one auto-subscribe call for the opted-in chat, got %+v", subs.subscribed)
+	}
+	if len(outbox.enqueued) != 2 {
+		t.Fatalf("expected 2 notifications (one per chat), got %d: %+v", len(outbox.enqueued), outbox.enqueued)
+	}
+	byChat := map[string]string{}
+	for _, call := range outbox.enqueued {
+		byChat[call.aggregateID] = call.eventType
+	}
+	if byChat["-1:big-event:"+event.ID.Value.String()] != "telegram.auto-subscribed" {
+		t.Fatalf("expected the auto-subscribed event type for the opted-in chat, got %+v", byChat)
+	}
+	if byChat["-2:big-event:"+event.ID.Value.String()] != "telegram.big-event-discovered" {
+		t.Fatalf("expected the usual offer event type for the plain chat, got %+v", byChat)
+	}
+}
+
+// A Subscribe failure for one auto-subscribing chat must not stop the rest
+// of the batch (a different chat, or a plain offer) from being processed —
+// same per-item resilience as an outbox enqueue failure already gets.
+func TestDiscoverEvents_AutoSubscribeFailureDoesNotStopTheRestOfTheBatch(t *testing.T) {
+	event := topTierEvent("IEM Katowice")
+	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{event}}
+	catalog := newFakeSyncCatalog()
+	subs := &fakeSyncSubs{subscribeErr: errors.New("db unavailable")}
+	failingChat, plainChat := common.ChatID{Value: -1}, common.ChatID{Value: -2}
+	chats := &fakeSyncChats{active: []chat.Settings{
+		{ChatID: failingChat, Active: true, AutoSubscribeTopTier: true},
+		{ChatID: plainChat, Active: true},
+	}}
+	outbox := &fakeSyncOutbox{}
+	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
+
+	sync.DiscoverEvents(context.Background())
+
+	if len(outbox.enqueued) != 1 {
+		t.Fatalf("expected only the plain chat's offer to be enqueued, got %+v", outbox.enqueued)
+	}
+	if outbox.enqueued[0].aggregateID != "-2:big-event:"+event.ID.Value.String() {
+		t.Fatalf("expected the plain chat's notification, got %+v", outbox.enqueued[0])
 	}
 }
 

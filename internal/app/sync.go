@@ -264,6 +264,19 @@ func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event
 		if alreadySubscribed[settings.ChatID] {
 			continue
 		}
+		// AutoSubscribeTopTier skips the offer entirely and just joins the
+		// chat to the tournament — still announced, but as a fait accompli
+		// ("auto-subscribed") rather than a "want to add this?" the chat
+		// would otherwise have to tap through every single time a new S/A
+		// tournament shows up.
+		eventType, notifyType := "telegram.big-event-discovered", "big event discovered"
+		if settings.AutoSubscribeTopTier {
+			if _, err := s.Subscriptions.Subscribe(ctx, subscription.EventSubscription{ChatID: settings.ChatID, EventID: event.ID}); err != nil {
+				s.Log.Error("auto-subscribe failed", "chatId", settings.ChatID.Value, "eventId", event.ID.Value, "error", err)
+				continue
+			}
+			eventType, notifyType = "telegram.auto-subscribed", "auto-subscribed"
+		}
 		n := common.BigEventDiscoveredNotification{
 			ChatID: settings.ChatID.Value, TopicID: settings.DefaultTopicID,
 			EventID: event.ID.Value.String(), EventName: event.Name, Tier: string(event.Tier),
@@ -273,11 +286,11 @@ func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event
 			return err
 		}
 		aggregateID := fmt.Sprintf("%d:big-event:%s", settings.ChatID.Value, event.ID.Value)
-		if _, err := s.Outbox.Enqueue(ctx, "TELEGRAM_CHAT", aggregateID, "telegram.big-event-discovered", string(payload)); err != nil {
+		if _, err := s.Outbox.Enqueue(ctx, "TELEGRAM_CHAT", aggregateID, eventType, string(payload)); err != nil {
 			// One chat's enqueue failure (a transient DB blip) shouldn't
 			// stop the rest of the batch from being notified — same
 			// per-item resilience as fanOutNewPolls below.
-			s.Log.Error("big event announcement enqueue failed", "chatId", settings.ChatID.Value, "eventId", event.ID.Value, "error", err)
+			s.Log.Error(notifyType+" announcement enqueue failed", "chatId", settings.ChatID.Value, "eventId", event.ID.Value, "error", err)
 			continue
 		}
 	}

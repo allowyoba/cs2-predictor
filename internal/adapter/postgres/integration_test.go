@@ -864,6 +864,38 @@ func TestChatRepository_DefaultTopTierOnlyRoundTrips(t *testing.T) {
 	}
 }
 
+// TestChatRepository_AutoSubscribeTopTierRoundTrips covers the
+// auto_subscribe_top_tier column (migration 0029) the same way its sibling
+// above covers default_top_tier_only.
+func TestChatRepository_AutoSubscribeTopTierRoundTrips(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	chatID := common.ChatID{Value: -889}
+
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AutoSubscribeTopTier {
+		t.Fatal("expected AutoSubscribeTopTier to default to false")
+	}
+
+	got.AutoSubscribeTopTier = true
+	if _, err := chats.Save(ctx, *got); err != nil {
+		t.Fatal(err)
+	}
+	got, err = chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AutoSubscribeTopTier {
+		t.Fatal("expected AutoSubscribeTopTier = true after saving it as true")
+	}
+}
+
 // TestOutbox_PendingPublishedAndBackoff verifies the enqueue -> pending ->
 // published lifecycle, and that Failed schedules a future retry (so a
 // second Pending call right after a failure doesn't return the same
