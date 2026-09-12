@@ -153,6 +153,9 @@ environment; `webhook.yml` uses only the connection-related ones (`APP_USER` is 
 | `LIQUIPEDIA_API_KEY`    | Secret   | Optional. Written into the server `.env`; required only once `LIQUIPEDIA_ENABLED=true` |
 | `HLTV_ENABLED`, `APIFY_RANKING_CHECK_INTERVAL`, `APIFY_MAX_TEAMS` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
 | `APIFY_TOKEN`           | Secret   | Optional. Written into the server `.env`; required only once `HLTV_ENABLED=true` |
+| `DB_BACKUP_ENABLED`, `DB_BACKUP_RETENTION_DAYS`, `DB_BACKUP_STORAGE` | Variable | Optional. Read directly by Ansible, not written to `.env`; unset defaults to enabled, 5 days, filesystem — see "Database backups" below |
+| `DB_BACKUP_S3_ENDPOINT`, `DB_BACKUP_S3_REGION`, `DB_BACKUP_S3_BUCKET`, `DB_BACKUP_S3_PREFIX` | Variable | Optional, only used when `DB_BACKUP_STORAGE=s3`; endpoint/region default to Yandex Cloud Object Storage |
+| `DB_BACKUP_S3_ACCESS_KEY_ID`, `DB_BACKUP_S3_SECRET_ACCESS_KEY` | Secret   | Required only once `DB_BACKUP_STORAGE=s3` |
 
 These five are the one exception to "no application secret transits GitHub Actions": deploy needs to *guarantee*
 `.env` exists on the target with correct content, ownership and mode, not depend on someone having created it by hand
@@ -248,6 +251,25 @@ production environment" above. They aren't a real secret (just Telegram numeric 
 @userinfobot), and keeping them out of `.env` means `notify_admins` never needs `.env` to exist at all when nobody is
 configured to be notified — useful before a VM has been fully provisioned. `DEPLOY_NOTIFY_CHAT_IDS` may freely contain
 spaces after the commas; each ID is trimmed.
+
+## Database backups
+
+`application_deploy` runs the `database_backup` role immediately after `configuration_backup` and before the new
+`.env` is written — a `pg_dump -Fc` of the *previous* release's still-running Postgres container, taken before
+anything about the deploy changes. A failed backup fails the deploy the same way a failed configuration backup does
+(same outer `rescue`/`always`, so the deployment lock is always released); nothing is pulled, installed, or health-checked
+until it succeeds. The one exception is a genuine first install — there's no previous database to back up yet, so the
+role skips itself when no `deployment.json` from an earlier deploy exists.
+
+Every setting defaults safely with nothing configured: backups are enabled, kept for 5 days, and stored under
+`<APP_PATH>/backups/database` on the VM's own filesystem (`ansible/roles/database_backup/defaults/main.yml`). Set
+`DB_BACKUP_STORAGE=s3` to upload to an S3-compatible bucket instead — `DB_BACKUP_S3_ENDPOINT`/`DB_BACKUP_S3_REGION`
+default to Yandex Cloud Object Storage (`https://storage.yandexcloud.net`, `ru-central1`), this project's default
+provider, but any S3-compatible endpoint works by overriding them. S3 retention is enforced as a real bucket
+lifecycle rule (`aws s3api put-bucket-lifecycle-configuration`, re-applied every deploy) rather than a manual prune,
+so it holds even if backups stop running; filesystem retention prunes `*.dump.gz` files older than
+`DB_BACKUP_RETENTION_DAYS` on every run instead. `DB_BACKUP_S3_ACCESS_KEY_ID`/`DB_BACKUP_S3_SECRET_ACCESS_KEY` are
+required once S3 storage is selected — the deploy fails fast with a clear message if either is missing.
 
 ## Deployment flow
 

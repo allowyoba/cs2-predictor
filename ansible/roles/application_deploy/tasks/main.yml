@@ -113,6 +113,16 @@
           - "{{ app_dir }}/docker-compose.yml"
           - "{{ app_dir }}/docker-compose.yaml"
 
+    - name: Back up the database before deploying
+      # Mandatory before any release install (see database_backup's own
+      # skip-notice for the one exception: a first install has no
+      # database yet). Runs after the configuration backup and before
+      # anything about the running release changes, and inherits this
+      # block's own rescue/always — a failed database backup stops the
+      # deploy exactly like a failed configuration backup does.
+      ansible.builtin.include_role:
+        name: database_backup
+
     - name: Write the application environment file from GitHub-managed secrets
       # Runs after the backup above, so a previous manually-managed .env
       # (or last deploy's) is still recoverable — see the "Server

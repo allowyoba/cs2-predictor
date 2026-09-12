@@ -9,9 +9,12 @@ FROM python:3.12-slim
 # (deploy.yml/webhook.yml/notify_failure.yml all become app_user, not
 # root) — without it, Ansible cannot safely hand the become_user read
 # access to the temp files it creates as the connecting user. Production
-# hosts need this package too; see ansible/README.md.
+# hosts need this package too; see ansible/README.md. gzip: not guaranteed
+# present on python:3.12-slim's minimal base, and test_database_backup.py
+# actually gzips a (stubbed) database dump rather than mocking that step
+# away too.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tar openssh-server openssh-client sudo python3 acl \
+    tar gzip openssh-server openssh-client sudo python3 acl \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /tmp/requirements.txt
 RUN pip --no-cache-dir install -r /tmp/requirements.txt

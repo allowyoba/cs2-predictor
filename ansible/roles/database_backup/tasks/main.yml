@@ -1,0 +1,140 @@
+---
+# Runs from application_deploy, immediately after configuration_backup and
+# before anything about the running release changes — a failed backup here
+# stops the deploy exactly the same way a failed configuration backup does
+# (see application_deploy/tasks/main.yml's outer rescue/always). Skipped
+# only when there's genuinely no database to back up yet (a first install —
+# application_deploy_previous_raw, set by the caller, only succeeds once a
+# previous deployment.json exists) or when explicitly disabled.
+- name: Skip database backup (disabled, or no previous release to back up)
+  ansible.builtin.debug:
+    msg: >-
+      Database backup skipped:
+      {{ 'disabled via DB_BACKUP_ENABLED' if not db_backup_enabled else 'no previous release (first install)' }}
+  when: not db_backup_enabled or not (application_deploy_previous_raw is succeeded)
+
+- name: Back up the database before deploying
+  when: db_backup_enabled and (application_deploy_previous_raw is succeeded)
+  block:
+    - name: Allocate a private staging directory for the dump
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: cs2predictor-db-backup-
+      register: db_backup_staging
+
+    - name: Fix the backup label for this run
+      # db_backup_label's default embeds lookup('pipe', 'date ...'), which
+      # re-runs on every dereference — without pinning it to a fact here,
+      # the dump/gzip/move/upload tasks below would each compute a
+      # different timestamp and never agree on one filename.
+      ansible.builtin.set_fact:
+        db_backup_label: "{{ db_backup_label }}"
+
+    - name: Dump the database to a compressed custom-format file
+      # -Fc (custom format) is pg_restore-ready and already compressed by
+      # pg_dump itself at its default level; the extra gzip pass below is
+      # for the filename/transport convention (a plain .gz any tool can
+      # decompress), not because -Fc needs it.
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          {{ (compose_argv + ['exec', '-T', db_backup_container_service, 'pg_dump', '-U', db_backup_database_user, '-Fc', db_backup_database_name]) | map('quote') | join(' ') }}
+          > {{ db_backup_staging.path | quote }}/{{ db_backup_label }}.dump
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Compress the dump
+      ansible.builtin.command:
+        argv: [gzip, "{{ db_backup_staging.path }}/{{ db_backup_label }}.dump"]
+      changed_when: true
+
+    - name: Store the compressed dump on the filesystem
+      when: db_backup_storage == 'fs'
+      block:
+        - name: Create the filesystem backup root
+          ansible.builtin.file:
+            path: "{{ db_backup_fs_root }}"
+            state: directory
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: '0700'
+
+        - name: Move the dump into the backup root
+          ansible.builtin.copy:
+            src: "{{ db_backup_staging.path }}/{{ db_backup_label }}.dump.gz"
+            dest: "{{ db_backup_fs_root }}/{{ db_backup_label }}.dump.gz"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: '0600'
+            remote_src: true
+
+        - name: Prune filesystem backups older than the retention window
+          ansible.builtin.shell:
+            cmd: "find {{ db_backup_fs_root | quote }} -maxdepth 1 -name '*.dump.gz' -mtime +{{ db_backup_retention_days }} -delete"
+            executable: /bin/bash
+          changed_when: false
+
+    - name: Upload the compressed dump to S3-compatible storage
+      when: db_backup_storage == 's3'
+      block:
+        - name: Require S3 configuration
+          ansible.builtin.assert:
+            that:
+              - db_backup_s3_bucket | length > 0
+              - lookup('env', 'DB_BACKUP_S3_ACCESS_KEY_ID') | length > 0
+              - lookup('env', 'DB_BACKUP_S3_SECRET_ACCESS_KEY') | length > 0
+            fail_msg: >-
+              Set DB_BACKUP_S3_BUCKET, DB_BACKUP_S3_ACCESS_KEY_ID and DB_BACKUP_S3_SECRET_ACCESS_KEY to back up to S3
+              (see ansible/README.md).
+
+        - name: Ensure the bucket's lifecycle rule matches the configured retention
+          # A declared lifecycle rule, not a manual prune loop: retention
+          # holds even if a later deploy — the only thing that runs this
+          # role — never happens again for a while. Re-applied every
+          # deploy so a changed DB_BACKUP_RETENTION_DAYS actually takes
+          # effect instead of only affecting backups uploaded after the
+          # change.
+          ansible.builtin.command:
+            argv:
+              - aws
+              - s3api
+              - put-bucket-lifecycle-configuration
+              - --endpoint-url
+              - "{{ db_backup_s3_endpoint }}"
+              - --bucket
+              - "{{ db_backup_s3_bucket }}"
+              - --lifecycle-configuration
+              - "{{ {'Rules': [{'ID': 'cs2predictor-db-backup-retention', 'Status': 'Enabled', 'Filter': {'Prefix': db_backup_s3_prefix}, 'Expiration': {'Days': db_backup_retention_days | int}}]} | to_json }}"
+          environment:
+            AWS_ACCESS_KEY_ID: "{{ lookup('env', 'DB_BACKUP_S3_ACCESS_KEY_ID') }}"
+            AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'DB_BACKUP_S3_SECRET_ACCESS_KEY') }}"
+            AWS_DEFAULT_REGION: "{{ db_backup_s3_region }}"
+          changed_when: true
+          no_log: true
+
+        - name: Upload the dump
+          ansible.builtin.command:
+            argv:
+              - aws
+              - s3
+              - cp
+              - "{{ db_backup_staging.path }}/{{ db_backup_label }}.dump.gz"
+              - "s3://{{ db_backup_s3_bucket }}/{{ db_backup_s3_prefix }}{{ db_backup_label }}.dump.gz"
+              - --endpoint-url
+              - "{{ db_backup_s3_endpoint }}"
+          environment:
+            AWS_ACCESS_KEY_ID: "{{ lookup('env', 'DB_BACKUP_S3_ACCESS_KEY_ID') }}"
+            AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'DB_BACKUP_S3_SECRET_ACCESS_KEY') }}"
+            AWS_DEFAULT_REGION: "{{ db_backup_s3_region }}"
+          changed_when: true
+          no_log: true
+
+    - name: Report the backup outcome
+      ansible.builtin.debug:
+        msg: "Database backup complete: {{ db_backup_label }}.dump.gz ({{ db_backup_storage }})"
+  always:
+    - name: Remove the local staging directory
+      ansible.builtin.file:
+        path: "{{ db_backup_staging.path }}"
+        state: absent
+      when: db_backup_staging is defined and db_backup_staging.path is defined

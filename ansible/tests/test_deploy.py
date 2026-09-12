@@ -1,10 +1,12 @@
 """Run in an isolated Linux container as root; Docker commands are stubbed."""
+import gzip
 import json
 import os
 from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
+import time
 import unittest
 
 
@@ -25,6 +27,11 @@ class DeploymentTest(unittest.TestCase):
         docker = self.bin / "docker"
         # MOCK_FAIL_UP_IMAGE: "up" fails only when APP_IMAGE matches it, so
         # a rollback to a different image can still succeed.
+        # MOCK_FAIL_DB_BACKUP: "exec ... pg_dump" fails when set, so the
+        # database_backup role's failure path can be exercised without a
+        # real Postgres. Otherwise "exec ... pg_dump" writes deterministic
+        # fake dump bytes to stdout, so the compressed file that lands in
+        # the backup destination is non-empty and inspectable.
         docker.write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
 case "$*" in
@@ -34,9 +41,23 @@ case "$*" in
       exit 1
     fi
     ;;
+  *pg_dump*)
+    if [ -n "${MOCK_FAIL_DB_BACKUP:-}" ]; then
+      exit 1
+    fi
+    printf 'fake-database-dump'
+    ;;
 esac
 ''')
         docker.chmod(0o755)
+        # aws is stubbed for the S3 backup-storage tests only; it logs its
+        # own invocations separately from docker's log so assertions on
+        # one never have to filter out the other.
+        aws = self.bin / "aws"
+        aws.write_text('''#!/bin/sh
+printf '%s\\n' "$*" >> "$MOCK_AWS_LOG"
+''')
+        aws.chmod(0o755)
         self.new_image = "ghcr.io/example/app@sha256:" + "a" * 64
         self.previous_image = "ghcr.io/example/app@sha256:" + "b" * 64
         self.new_env_values = {
@@ -62,7 +83,8 @@ esac
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],
                         REGISTRY_USER="test", REGISTRY_TOKEN="private-token",
-                        MOCK_DOCKER_LOG=str(self.root / "docker.log"), **self.new_env_values)
+                        MOCK_DOCKER_LOG=str(self.root / "docker.log"),
+                        MOCK_AWS_LOG=str(self.root / "aws.log"), **self.new_env_values)
         self.vars = {
             "app_dir": str(self.app), "app_user": "root",
             "backup_root": str(self.backups), "deploy_lock": str(self.lock),
@@ -191,6 +213,87 @@ esac
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(self.lock.exists())
         self.assertFalse(self.backups.exists())
+
+    def write_previous_deployment(self):
+        # A previous deployment.json is what makes the database_backup
+        # role treat this as "not a first install" — see
+        # application_deploy_previous_raw in application_deploy/tasks.
+        (self.app / "deployment.json").write_text(json.dumps({"tag": "v1.0.0", "image": self.previous_image}))
+
+    def db_backup_dir(self):
+        return self.app / "backups" / "database"
+
+    def test_database_backup_skipped_on_a_first_install(self):
+        # setUp leaves no deployment.json, so there's genuinely nothing to
+        # back up yet.
+        result = self.run_deploy()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(self.db_backup_dir().exists())
+
+    def test_database_backup_defaults_to_the_filesystem(self):
+        self.write_previous_deployment()
+        result = self.run_deploy()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        dumps = list(self.db_backup_dir().glob("*.dump.gz"))
+        self.assertEqual(len(dumps), 1, result.stdout)
+        with gzip.open(dumps[0]) as f:
+            self.assertEqual(f.read(), b"fake-database-dump")
+        self.assertEqual(dumps[0].stat().st_mode & 0o777, 0o600)
+
+    def test_database_backup_prunes_files_past_the_retention_window(self):
+        self.write_previous_deployment()
+        backup_dir = self.db_backup_dir()
+        backup_dir.mkdir(parents=True)
+        stale = backup_dir / "db-v0.9.0-20000101T000000Z.dump.gz"
+        stale.write_bytes(gzip.compress(b"ancient-dump"))
+        old_time = time.time() - (6 * 86400)
+        os.utime(stale, (old_time, old_time))
+        result = self.run_deploy()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(stale.exists())
+        self.assertEqual(len(list(backup_dir.glob("*.dump.gz"))), 1)
+
+    def test_database_backup_failure_blocks_the_deploy(self):
+        self.write_previous_deployment()
+        self.env["MOCK_FAIL_DB_BACKUP"] = "1"
+        result = self.run_deploy()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(self.lock.exists())
+        self.assertNotIn("pull", (self.root / "docker.log").read_text())
+        self.assertEqual((self.app / ".env").read_text(), "SECRET=do-not-log-this\n")
+
+    def test_database_backup_can_be_disabled(self):
+        self.write_previous_deployment()
+        self.env["DB_BACKUP_ENABLED"] = "false"
+        result = self.run_deploy()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(self.db_backup_dir().exists())
+
+    def test_database_backup_uploads_to_s3_with_yandex_cloud_defaults(self):
+        self.write_previous_deployment()
+        self.env.update({
+            "DB_BACKUP_STORAGE": "s3",
+            "DB_BACKUP_S3_BUCKET": "cs2predictor-backups",
+            "DB_BACKUP_S3_ACCESS_KEY_ID": "AKIDEXAMPLE",
+            "DB_BACKUP_S3_SECRET_ACCESS_KEY": "s3cr3t",
+        })
+        result = self.run_deploy()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(self.db_backup_dir().exists())
+        aws_log = (self.root / "aws.log").read_text()
+        self.assertIn("put-bucket-lifecycle-configuration", aws_log)
+        self.assertIn("https://storage.yandexcloud.net", aws_log)
+        self.assertIn("s3 cp", aws_log)
+        self.assertIn("s3://cs2predictor-backups/database/", aws_log)
+        self.assertNotIn("s3cr3t", result.stdout)
+
+    def test_database_backup_to_s3_requires_credentials(self):
+        self.write_previous_deployment()
+        self.env["DB_BACKUP_STORAGE"] = "s3"
+        result = self.run_deploy()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("DB_BACKUP_S3_BUCKET", result.stdout)
+        self.assertFalse(self.lock.exists())
 
 
 if __name__ == "__main__":
