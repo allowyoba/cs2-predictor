@@ -68,11 +68,11 @@ func TestComposePollDescription_FullExampleMatchesSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "FISSURE PLAYGROUND Season 3 2026", "Group A", "BO3", "10.09", "15:00 MSK", "#8 (1723) · #121 (867)", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "FISSURE PLAYGROUND Season 3 2026", "Group A", "BO3", "10.09", "15:00 MSK", "#8 (1723) · #121 (867)", "30.08", "", "", "", "")
 	want := "🏆 FISSURE PLAYGROUND Season 3 2026\n" +
 		"🎯 Group A · BO3\n" +
 		"🕒 10.09 · 15:00 MSK\n" +
-		"📈 VRS: #8 (1723) · #121 (867)"
+		"📈 VRS (30.08): #8 (1723) · #121 (867)"
 	if got != want {
 		t.Fatalf("composePollDescription = %q, want %q", got, want)
 	}
@@ -83,7 +83,7 @@ func TestComposePollDescription_MissingStageKeepsOnlyFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "BO3", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "BO3", "", "", "", "", "", "", "", "")
 	if want := "🏆 Major\n🎯 BO3"; got != want {
 		t.Fatalf("composePollDescription = %q, want %q", got, want)
 	}
@@ -94,7 +94,7 @@ func TestComposePollDescription_MissingFormatKeepsOnlyStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "", "", "", "", "", "", "", "", "")
 	if want := "🏆 Major\n🎯 Group A"; got != want {
 		t.Fatalf("composePollDescription = %q, want %q", got, want)
 	}
@@ -105,7 +105,7 @@ func TestComposePollDescription_MissingStageAndFormatOmitsTheWholeLine(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "", "", "")
 	if strings.Contains(got, "🎯") {
 		t.Fatalf("expected no 🎯 line when both stage and format are missing, got %q", got)
 	}
@@ -116,7 +116,7 @@ func TestComposePollDescription_MissingTournamentOmitsItsLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "", "Group A", "BO3", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "", "Group A", "BO3", "", "", "", "", "", "", "", "")
 	if strings.Contains(got, "🏆") {
 		t.Fatalf("expected no 🏆 line when the tournament name is empty, got %q", got)
 	}
@@ -127,7 +127,7 @@ func TestComposePollDescription_MissingDateTimeOmitsItsLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "", "", "")
 	if strings.Contains(got, "🕒") {
 		t.Fatalf("expected no 🕒 line when date/time are both empty, got %q", got)
 	}
@@ -138,7 +138,7 @@ func TestComposePollDescription_MissingVRSOmitsItsLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "", "", "", "", "", "", "", "", "", "")
 	if strings.Contains(got, "VRS") {
 		t.Fatalf("expected no VRS line when the caller passed an empty vrsLine, got %q", got)
 	}
@@ -149,7 +149,7 @@ func TestComposePollDescription_EverythingEmptyProducesEmptyString(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "", "", "", ""); got != "" {
+	if got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "", "", "", "", "", ""); got != "" {
 		t.Fatalf("composePollDescription = %q, want empty", got)
 	}
 }
@@ -159,7 +159,7 @@ func TestComposePollDescription_IncludesFormAndH2HAfterVRS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "#1 (1993) · #3 (1908)", "", "4–1 · 3–2", "6–4")
+	got := composePollDescription(texts, common.LocaleRU, "", "", "", "", "", "#1 (1993) · #3 (1908)", "", "", "", "4–1 · 3–2", "6–4")
 	lines := strings.Split(got, "\n")
 	if len(lines) != 3 {
 		t.Fatalf("expected exactly 3 lines (VRS, form, H2H), got %v", lines)
@@ -176,7 +176,7 @@ func TestComposePollDescription_NoBlankLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "BO3", "10.09", "15:00 MSK", "#1 (1993) · #3 (1908)", "", "4–1 · 3–2", "6–4")
+	got := composePollDescription(texts, common.LocaleRU, "Major", "Group A", "BO3", "10.09", "15:00 MSK", "#1 (1993) · #3 (1908)", "", "", "", "4–1 · 3–2", "6–4")
 	if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n") {
 		t.Fatalf("expected no leading/trailing newline, got %q", got)
 	}
@@ -475,7 +475,7 @@ func TestSend_QuestionNeverContainsVRS(t *testing.T) {
 	if strings.Contains(sent.question, "VRS") || strings.Contains(sent.question, "#1") {
 		t.Fatalf("expected no VRS in question, got %q", sent.question)
 	}
-	if !strings.Contains(sent.description, "VRS: #1 · #3") {
+	if !strings.Contains(sent.description, "VRS") || !strings.Contains(sent.description, "#1 · #3") {
 		t.Fatalf("expected the VRS line in description instead, got %q", sent.description)
 	}
 }
@@ -584,11 +584,33 @@ func TestSend_IncludesHLTVLineIndependentlyFromVRS(t *testing.T) {
 		enrichment.SourceHLTV:     {second.ID: {TeamID: second.ID, GlobalRank: &hltvRank}},
 	}}
 	sent := sendTestPoll(t, nil, PollEnrichmentSources{Rankings: rankings}, first, second)
-	if !strings.Contains(sent.description, "📈 VRS: #1 · Н/Д") {
+	if !strings.Contains(sent.description, "📈 VRS") || !strings.Contains(sent.description, "#1 · Н/Д") {
 		t.Fatalf("expected the VRS line scoped to its own source only, got %q", sent.description)
 	}
-	if !strings.Contains(sent.description, "🌐 HLTV: Н/Д · #5") {
+	if !strings.Contains(sent.description, "🌐 HLTV") || !strings.Contains(sent.description, "Н/Д · #5") {
 		t.Fatalf("expected the HLTV line scoped to its own source only, got %q", sent.description)
+	}
+}
+
+// TestSend_RankingLinesShowTheirLastUpdateDate covers a real user-facing
+// request: a cached ranking's freshness matters for how much to trust it,
+// so the source label carries a "DD.MM" date next to it whenever the
+// ranking has one — "VRS (30.08)", not a bare "VRS".
+func TestSend_RankingLinesShowTheirLastUpdateDate(t *testing.T) {
+	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
+	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
+	vrsRank, hltvRank := 1, 5
+	publishedAt := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
+	rankings := &fakeRankingRepository{bySource: map[enrichment.Source]map[common.TeamID]enrichment.TeamRanking{
+		enrichment.SourceValveVRS: {first.ID: {TeamID: first.ID, GlobalRank: &vrsRank, PublishedAt: publishedAt}},
+		enrichment.SourceHLTV:     {second.ID: {TeamID: second.ID, GlobalRank: &hltvRank, PublishedAt: publishedAt}},
+	}}
+	sent := sendTestPoll(t, nil, PollEnrichmentSources{Rankings: rankings}, first, second)
+	if !strings.Contains(sent.description, "VRS (30.08)") {
+		t.Fatalf("expected the VRS line to carry its last-update date, got %q", sent.description)
+	}
+	if !strings.Contains(sent.description, "HLTV (30.08)") {
+		t.Fatalf("expected the HLTV line to carry its last-update date, got %q", sent.description)
 	}
 }
 

@@ -194,9 +194,15 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	eventName := event.Tier.Badge() + escapeHTML(event.Name)
 	vrsLine := formatRankingCombined(g.texts, locale, rankings, match.FirstTeam, match.SecondTeam)
 	hltvLine := formatRankingCombined(g.texts, locale, hltvRankings, match.FirstTeam, match.SecondTeam)
+	var vrsUpdated, hltvUpdated string
+	if match.FirstTeam != nil && match.SecondTeam != nil {
+		vrsUpdated = rankingUpdatedLabel(rankings, match.FirstTeam.ID, match.SecondTeam.ID, loc)
+		hltvUpdated = rankingUpdatedLabel(hltvRankings, match.FirstTeam.ID, match.SecondTeam.ID, loc)
+	}
 	formLine := formatForm(homeForm, awayForm)
 	h2hLine := formatH2H(h2h)
-	description := composePollDescription(g.texts, locale, eventName, stage, match.Format.Label(), dateWhen, timeWhen, vrsLine, hltvLine, formLine, h2hLine)
+	description := composePollDescription(g.texts, locale, eventName, stage, match.Format.Label(), dateWhen, timeWhen,
+		vrsLine, vrsUpdated, hltvLine, hltvUpdated, formLine, h2hLine)
 
 	options := make([]map[string]string, len(poll.Options))
 	for i, o := range poll.Options {
@@ -322,7 +328,8 @@ func formatTeamRecord(b competition.TeamBalance) string {
 // form, head-to-head — on its own line, entirely omitted when it has
 // nothing to show. No separator character joins these blocks; every value
 // that IS present within one line joins with " · ".
-func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, stage, formatLabel, dateWhen, timeWhen, vrsLine, hltvLine, formLine, h2hLine string) string {
+func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, stage, formatLabel, dateWhen, timeWhen,
+	vrsLine, vrsUpdated, hltvLine, hltvUpdated, formLine, h2hLine string) string {
 	var lines []string
 	if eventName != "" {
 		lines = append(lines, "🏆 "+eventName)
@@ -334,10 +341,10 @@ func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, s
 		lines = append(lines, "🕒 "+when)
 	}
 	if vrsLine != "" {
-		lines = append(lines, texts.Get("poll.vrs", locale, vrsLine))
+		lines = append(lines, texts.Get("poll.vrs", locale, rankingSourceLabel(texts, locale, "poll.vrs_source", vrsUpdated), vrsLine))
 	}
 	if hltvLine != "" {
-		lines = append(lines, texts.Get("poll.hltv", locale, hltvLine))
+		lines = append(lines, texts.Get("poll.hltv", locale, rankingSourceLabel(texts, locale, "poll.hltv_source", hltvUpdated), hltvLine))
 	}
 	if formLine != "" {
 		lines = append(lines, texts.Get("poll.form", locale, formLine))
@@ -346,6 +353,35 @@ func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, s
 		lines = append(lines, texts.Get("poll.h2h", locale, h2hLine))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// rankingSourceLabel appends the ranking's last-update date to its source
+// name ("VRS (30.08)") when known — knowing how fresh a cached ranking is
+// matters for how much weight to put on it, and this is the only place
+// that information reaches the poll at all. updated is "" for a source
+// with no cached data for either team (formatRankingCombined already
+// returns "" for the whole line in that case, so the caller never asks).
+func rankingSourceLabel(texts *Texts, locale common.LocaleCode, sourceKey, updated string) string {
+	name := texts.Get(sourceKey, locale)
+	if updated == "" {
+		return name
+	}
+	return fmt.Sprintf("%s (%s)", name, updated)
+}
+
+// rankingUpdatedLabel renders whichever side has a cached ranking's
+// PublishedAt as "DD.MM" in loc — the two sides sync together in practice,
+// so either one answers "how fresh is this source's data" for the whole
+// line; "" when neither side has one (formatRankingCombined already
+// omitted the line in that case).
+func rankingUpdatedLabel(rankings map[common.TeamID]enrichment.TeamRanking, first, second common.TeamID, loc *time.Location) string {
+	if r, ok := rankings[first]; ok && !r.PublishedAt.IsZero() {
+		return r.PublishedAt.In(loc).Format("02.01")
+	}
+	if r, ok := rankings[second]; ok && !r.PublishedAt.IsZero() {
+		return r.PublishedAt.In(loc).Format("02.01")
+	}
+	return ""
 }
 
 // joinNonEmpty joins only the non-empty values in parts with " · " — "" if
