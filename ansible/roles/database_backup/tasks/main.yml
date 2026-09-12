@@ -198,6 +198,13 @@
             "INSERT INTO db_backup_log(label, storage, size_bytes) VALUES ('" + db_backup_label + "', '" + db_backup_storage + "', " + (db_backup_dump_stat.stat.size | string) + ")"
           ]) | map('quote') | join(' ') }}
         executable: /bin/bash
+      environment:
+        # Same requirement as "Dump the database to a compressed
+        # custom-format file" above, for the same reason — see that task's
+        # own comment: Compose won't interpolate compose.prod.yml (and so
+        # won't run `exec` into any service) without APP_IMAGE set, even
+        # though this exec never starts the bot service itself.
+        APP_IMAGE: "{{ application_deploy_previous_image | default(app_image) }}"
       changed_when: true
 
     - name: Report the backup outcome
