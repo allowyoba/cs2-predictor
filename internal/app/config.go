@@ -104,14 +104,22 @@ type EnrichmentConfig struct {
 }
 
 // RetentionConfig bounds how long the traffic-driven tables keep rows (see
-// RetentionSweep). A zero duration disables the sweep for that table, which
-// is the escape hatch if an operator wants to keep everything.
+// RetentionSweep). A zero duration disables the TTL sweep for that table,
+// which is the escape hatch if an operator wants to keep everything; a zero
+// MaxRows likewise disables the row-count cap for the two tables that have
+// one.
 type RetentionConfig struct {
 	Interval            time.Duration
 	ProcessedUpdatesTTL time.Duration
 	PublishedOutboxTTL  time.Duration
 	ResolvedRequestsTTL time.Duration
 	AdminActionsTTL     time.Duration
+
+	// ProcessedUpdatesMaxRows/PublishedOutboxMaxRows are a hard row-count
+	// backstop under the TTL above — see the doc comment where these are
+	// parsed in LoadConfig for why a time window alone isn't enough at scale.
+	ProcessedUpdatesMaxRows int
+	PublishedOutboxMaxRows  int
 }
 
 // WebhookRateLimitConfig bounds the rate of accepted /telegram/webhook
@@ -397,19 +405,40 @@ func LoadConfig() (Config, error) {
 	if cfg.PollReminderParticipantWindow, err = envDuration("POLL_REMINDER_PARTICIPANT_WINDOW", 60*24*time.Hour); err != nil {
 		return Config{}, err
 	}
-	if cfg.Retention.Interval, err = envDuration("RETENTION_SWEEP_INTERVAL", 6*time.Hour); err != nil {
+	// Sweep interval and the two traffic-driven TTLs (dedup ledger, published
+	// outbox) were tightened from their original 6h/48h/14d defaults as part
+	// of a deliberate size-stabilization pass: at higher chat counts, a
+	// time-window retention policy's steady-state size scales with traffic
+	// volume, not just with time, so a shorter window directly caps how big
+	// that steady state gets. Neither value has any correctness cost — a
+	// dedup row only has to outlive Telegram's own webhook retry window (well
+	// under 24h in practice), and a published outbox row past its first few
+	// days is pure debugging convenience, not something anything reads back.
+	if cfg.Retention.Interval, err = envDuration("RETENTION_SWEEP_INTERVAL", 2*time.Hour); err != nil {
 		return Config{}, err
 	}
-	if cfg.Retention.ProcessedUpdatesTTL, err = envDuration("RETENTION_PROCESSED_UPDATES_TTL", 48*time.Hour); err != nil {
+	if cfg.Retention.ProcessedUpdatesTTL, err = envDuration("RETENTION_PROCESSED_UPDATES_TTL", 24*time.Hour); err != nil {
 		return Config{}, err
 	}
-	if cfg.Retention.PublishedOutboxTTL, err = envDuration("RETENTION_PUBLISHED_OUTBOX_TTL", 14*24*time.Hour); err != nil {
+	if cfg.Retention.PublishedOutboxTTL, err = envDuration("RETENTION_PUBLISHED_OUTBOX_TTL", 5*24*time.Hour); err != nil {
 		return Config{}, err
 	}
 	if cfg.Retention.ResolvedRequestsTTL, err = envDuration("RETENTION_RESOLVED_REQUESTS_TTL", 30*24*time.Hour); err != nil {
 		return Config{}, err
 	}
 	if cfg.Retention.AdminActionsTTL, err = envDuration("RETENTION_ADMIN_ACTIONS_TTL", 90*24*time.Hour); err != nil {
+		return Config{}, err
+	}
+	// MaxRows are a hard backstop under the TTL above, not the primary
+	// control: whichever of "older than the TTL" or "beyond the row cap"
+	// triggers first wins, so a genuine traffic surge (well beyond the ×100
+	// chat-count growth these were sized for) still can't grow either table
+	// without bound between sweeps. Generous on purpose — sized to comfortably
+	// exceed realistic steady-state volume, not to actively trim it.
+	if cfg.Retention.ProcessedUpdatesMaxRows, err = envInt("RETENTION_PROCESSED_UPDATES_MAX_ROWS", 500_000); err != nil {
+		return Config{}, err
+	}
+	if cfg.Retention.PublishedOutboxMaxRows, err = envInt("RETENTION_PUBLISHED_OUTBOX_MAX_ROWS", 200_000); err != nil {
 		return Config{}, err
 	}
 

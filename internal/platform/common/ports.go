@@ -206,6 +206,16 @@ type RetentionRepository interface {
 	DeletePublishedOutboxBefore(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteResolvedUnsubscribesBefore(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteAdminActionsBefore(ctx context.Context, cutoff time.Time) (int64, error)
+
+	// DeleteProcessedUpdatesExceeding/DeletePublishedOutboxExceeding are the
+	// row-count backstop under the TTL-based deletes above: keep at most
+	// maxRows of the most recent rows, regardless of how young the rest are.
+	// A time window alone caps how long rows live, not how big the table
+	// gets in between sweeps at high traffic volume — this caps that
+	// directly. maxRows <= 0 disables it, same "keep everything" escape
+	// hatch the TTL fields use.
+	DeleteProcessedUpdatesExceeding(ctx context.Context, maxRows int) (int64, error)
+	DeletePublishedOutboxExceeding(ctx context.Context, maxRows int) (int64, error)
 }
 
 // NotificationKind names one of the private nudges a person can opt into.

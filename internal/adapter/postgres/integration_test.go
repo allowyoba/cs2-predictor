@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -1318,6 +1319,86 @@ func TestRetentionRepository_PrunesOnlyEligibleRows(t *testing.T) {
 	}
 	if deletedOutbox != 1 {
 		t.Fatalf("deleted %d published outbox rows, want 1", deletedOutbox)
+	}
+}
+
+// TestRetentionRepository_RowCountCapKeepsOnlyTheNewestRows covers the
+// row-count backstop added alongside the TTL sweep: it must keep exactly
+// the newest maxRows rows regardless of how young the deleted ones are —
+// unlike the TTL delete, age plays no part in which rows survive.
+func TestRetentionRepository_RowCountCapKeepsOnlyTheNewestRows(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	retention := pg.NewRetentionRepository(pool)
+	dedup := pg.NewUpdateDeduplicator(pool)
+	outbox := pg.NewOutbox(pool)
+
+	// Five dedup rows, all fresh (well within any TTL), timestamped an hour
+	// apart so their relative order is unambiguous.
+	for i := int64(1); i <= 5; i++ {
+		if _, err := dedup.Claim(ctx, 2000+i); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx,
+			`UPDATE processed_telegram_update SET processed_at = now() - ($2 * interval '1 hour') WHERE update_id = $1`,
+			2000+i, 5-i); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deleted, err := retention.DeleteProcessedUpdatesExceeding(ctx, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted %d rows, want exactly the 2 oldest beyond the cap of 3", deleted)
+	}
+	// The 3 newest (2003, 2004, 2005) must survive; the 2 oldest (2001, 2002)
+	// must not — re-claiming an id that survived must report "already seen".
+	for id, wantClaimed := range map[int64]bool{2001: true, 2002: true, 2003: false, 2004: false, 2005: false} {
+		claimed, err := dedup.Claim(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if claimed != wantClaimed {
+			t.Fatalf("update %d: claimed=%v, want %v", id, claimed, wantClaimed)
+		}
+	}
+
+	// maxRows <= 0 is the "keep everything" escape hatch, not "cap at zero".
+	if _, err := dedup.Claim(ctx, 3001); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err = retention.DeleteProcessedUpdatesExceeding(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted %d rows with maxRows<=0, want 0 (cap disabled)", deleted)
+	}
+
+	// Same behavior for published outbox rows: only unpublished-never-
+	// touched and published-beyond-the-cap distinctions matter, not age.
+	var ids []uuid.UUID
+	for i := 0; i < 4; i++ {
+		id, err := outbox.Enqueue(ctx, "chat", fmt.Sprintf("-%d", i+1), "telegram.match-result", "{}")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	for i, id := range ids {
+		if _, err := pool.Exec(ctx,
+			`UPDATE outbox_event SET published_at = now() - ($2 * interval '1 hour') WHERE id = $1`,
+			id, len(ids)-i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deletedOutbox, err := retention.DeletePublishedOutboxExceeding(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deletedOutbox != 2 {
+		t.Fatalf("deleted %d published outbox rows, want exactly the 2 oldest beyond the cap of 2", deletedOutbox)
 	}
 }
 
