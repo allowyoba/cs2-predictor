@@ -16,6 +16,15 @@ import (
 // The leaderboard screens: period pickers, the standings themselves, and
 // one person's own numbers within a chat.
 
+// statsBreakdown renders "(exact-outcome-wrong)": how many predictions
+// nailed the exact score, how many got only the winner right, and how many
+// missed entirely — exact+outcome+wrong always sums to total. Shown next to
+// a participant's points everywhere a leaderboard renders one, so the total
+// is never the only visible number.
+func statsBreakdown(exact, correct, total int) string {
+	return fmt.Sprintf("(%d-%d-%d)", exact, correct-exact, total-correct)
+}
+
 func parseYearMonth(s string) (int, time.Month, error) {
 	t, err := time.Parse("2006-01", s)
 	if err != nil {
@@ -159,9 +168,9 @@ func (h *UpdateHandler) personalStats(ctx context.Context, target replyTarget, s
 	}
 	for _, s := range standings {
 		if s.UserID.Value == from.ID {
-			text := fmt.Sprintf("%s\n%s · %s · %s/%s",
+			text := fmt.Sprintf("%s\n%s · %s %s",
 				bold(escapeHTML(s.DisplayName)), code(fmt.Sprintf("#%d", s.Rank)), code(strconv.Itoa(s.Points)),
-				code(strconv.Itoa(s.ExactPredictions)), code(strconv.Itoa(s.Predictions)))
+				code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)))
 			return h.respond(ctx, target, managedScreenContext(target, settings, text), h.statsExit(settings.Locale, "stats:events"))
 		}
 	}
@@ -193,7 +202,8 @@ func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID) str
 		if s.UserID == viewer {
 			viewerMark = " · 👤"
 		}
-		fmt.Fprintf(&b, "%s %s%s · %s%s", prefix, bold(escapeHTML(name)), movement, code(strconv.Itoa(s.Points)), viewerMark)
+		fmt.Fprintf(&b, "%s %s%s · %s %s%s", prefix, bold(escapeHTML(name)), movement, code(strconv.Itoa(s.Points)),
+			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), viewerMark)
 	}
 	return b.String()
 }
@@ -266,6 +276,16 @@ func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scori
 		},
 		{button(statsFilterLabel(period.Kind == scoring.PeriodEvent, h.Texts.Get("stats.event", settings.Locale)), "stats:events")},
 	}
+	// Match-by-match results only make sense scoped to one tournament — a
+	// month or a year can span many, so these two buttons only show on an
+	// event-scoped leaderboard.
+	if period.Kind == scoring.PeriodEvent {
+		rows = append(rows, []InlineButton{
+			button(h.Texts.Get("evbets.mine_button", settings.Locale), eventBetsMineCallback(period.EventID)),
+			button(h.Texts.Get("evbets.pick_button", settings.Locale), eventParticipantPickerCallback(period.EventID, 0)),
+		})
+	}
+	rows = append(rows, []InlineButton{button(h.Texts.Get("chart.button", settings.Locale), chartCallbackData(period))})
 	if nav := paginationRow(page, totalPages, h.Texts.Get("stats.page", settings.Locale, page+1, totalPages), func(p int) string {
 		return leaderboardPageData(period, p, backData)
 	}); nav != nil {
@@ -319,7 +339,8 @@ func (h *UpdateHandler) renderLeaderboard(ctx context.Context, target replyTarge
 		if movement != "" {
 			movement = " " + italic(movement)
 		}
-		body += "\n\n────────\n" + h.Texts.Get("stats.you", settings.Locale, viewerStanding.Rank, viewerStanding.Points, movement)
+		breakdown := statsBreakdown(viewerStanding.ExactPredictions, viewerStanding.CorrectPredictions, viewerStanding.Predictions)
+		body += "\n\n────────\n" + h.Texts.Get("stats.you", settings.Locale, viewerStanding.Rank, viewerStanding.Points, movement, breakdown)
 	}
 
 	periodName, err := h.periodName(ctx, settings, period)

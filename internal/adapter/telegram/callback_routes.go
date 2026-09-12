@@ -158,6 +158,18 @@ var callbackRoutes = []callbackRoute{
 		return false, h.personalStats(ctx, notifTarget, settings, cb.From, common.EventID{Value: id})
 	}},
 	{match: exact("stats:events"), handle: simple((*UpdateHandler).eventStatsMenu)},
+	{match: prefixed("stats:evbets:me:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:evbets:me:"))
+		if err != nil {
+			return false, newValidationError("invalid event id")
+		}
+		eventID := common.EventID{Value: id}
+		viewer := common.UserID{Value: cb.From.ID}
+		return false, h.renderEventBets(ctx, target, settings, eventID, viewer, "", viewer, "stats:event:"+id.String())
+	}},
+	{match: prefixed("stats:evbets:u:"), handle: routeEventBetsForUser},
+	{match: prefixed("stats:evpick:"), handle: routeEventParticipantPicker},
+	{match: prefixed("stats:chart:"), handle: routeStatsChart},
 	// guardManager (not the stricter guardTelegramAdmin the moderators:*
 	// mutation routes below use): seeing who the other moderators are is
 	// harmless for an existing moderator to know, but was previously
@@ -328,6 +340,104 @@ func routeStatsPageEvent(h *UpdateHandler, ctx context.Context, target replyTarg
 		return false, newValidationError("invalid event leaderboard page")
 	}
 	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForEvent(common.EventID{Value: id}), "stats:events", viewer, page)
+}
+
+// routeEventBetsForUser handles "stats:evbets:u:<eventId>:<userId>" — an
+// arbitrary participant picked off routeEventParticipantPicker's list, as
+// opposed to "stats:evbets:me:<eventId>"'s always-the-viewer shortcut. The
+// subject's display name for the title comes from the same event
+// leaderboard the picker itself was built from, so a stale/forged userId
+// that never actually appears in it just renders an empty screen rather
+// than guessing a name.
+func routeEventBetsForUser(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	parts := strings.Split(strings.TrimPrefix(data, "stats:evbets:u:"), ":")
+	if len(parts) != 2 {
+		return false, newValidationError("invalid participant bets callback")
+	}
+	id, idErr := uuid.Parse(parts[0])
+	userVal, userErr := strconv.ParseInt(parts[1], 10, 64)
+	if idErr != nil || userErr != nil {
+		return false, newValidationError("invalid participant bets callback")
+	}
+	eventID := common.EventID{Value: id}
+	subject := common.UserID{Value: userVal}
+	viewer := common.UserID{Value: cb.From.ID}
+
+	standings, err := h.Scoring.Leaderboard(ctx, settings.ChatID, scoring.ForEvent(eventID))
+	if err != nil {
+		return false, err
+	}
+	var subjectName string
+	for _, s := range standings {
+		if s.UserID == subject {
+			subjectName = s.DisplayName
+			break
+		}
+	}
+	backData := eventParticipantPickerCallback(eventID, 0)
+	return false, h.renderEventBets(ctx, target, settings, eventID, subject, subjectName, viewer, backData)
+}
+
+func routeEventParticipantPicker(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	parts := strings.Split(strings.TrimPrefix(data, "stats:evpick:"), ":")
+	if len(parts) != 2 {
+		return false, newValidationError("invalid participant picker callback")
+	}
+	id, idErr := uuid.Parse(parts[0])
+	page, pageErr := strconv.Atoi(parts[1])
+	if idErr != nil || pageErr != nil || page < 0 {
+		return false, newValidationError("invalid participant picker callback")
+	}
+	eventID := common.EventID{Value: id}
+	return false, h.renderEventParticipantPicker(ctx, target, settings, eventID, page, "stats:event:"+id.String())
+}
+
+// routeStatsChart parses "stats:chart:<kind>[:...]" — the same period
+// encoding leaderboardPageData already uses for pagination, minus the page
+// number a chart has no use for — and renders/uploads that period's rating
+// chart. Whether it's drawn for everyone or just the caller follows the
+// same personal-vs-group signal sendProgressionChart itself resolves.
+func routeStatsChart(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	parts := strings.Split(strings.TrimPrefix(data, "stats:chart:"), ":")
+	if len(parts) == 0 {
+		return false, newValidationError("invalid chart callback")
+	}
+	viewer := common.UserID{Value: cb.From.ID}
+	var period scoring.StatsPeriod
+	switch parts[0] {
+	case "a":
+		period = scoring.AllTime()
+	case "y":
+		if len(parts) != 2 {
+			return false, newValidationError("invalid chart callback")
+		}
+		year, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return false, newValidationError("invalid chart callback")
+		}
+		period = scoring.ForYear(year)
+	case "m":
+		if len(parts) != 2 {
+			return false, newValidationError("invalid chart callback")
+		}
+		year, month, err := parseYearMonth(parts[1])
+		if err != nil {
+			return false, newValidationError("invalid chart callback")
+		}
+		period = scoring.ForMonth(year, month)
+	case "e":
+		if len(parts) != 2 {
+			return false, newValidationError("invalid chart callback")
+		}
+		id, err := uuid.Parse(parts[1])
+		if err != nil {
+			return false, newValidationError("invalid chart callback")
+		}
+		period = scoring.ForEvent(common.EventID{Value: id})
+	default:
+		return false, newValidationError("invalid chart callback")
+	}
+	return false, h.sendProgressionChart(ctx, target, settings, period, viewer)
 }
 
 func routeStatsYear(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {

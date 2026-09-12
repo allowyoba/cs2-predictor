@@ -108,7 +108,8 @@ func (h *UpdateHandler) listTeamMatchOperators(ctx context.Context, chatID commo
 	for _, id := range operators {
 		fmt.Fprintf(&b, "\n• <code>%d</code>", id.Value)
 	}
-	return h.sendText(ctx, chatID, b.String(), nil)
+	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "hub:system")}}}
+	return h.sendTextWithKeyboard(ctx, chatID, b.String(), kb, nil)
 }
 
 // teamMatchQueueMenu lists pending review requests, best-score first (the

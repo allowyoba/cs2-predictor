@@ -228,6 +228,48 @@ func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatI
 	return scoring.DenseRank(out), nil
 }
 
+// PointsProgression returns every settled prediction's contribution to the
+// chat's rating within period, oldest first — the raw material a rating
+// chart cumulates client-side per participant. Reuses periodClause exactly
+// as Leaderboard does, so a chart and its leaderboard are always scoped
+// identically.
+func (r *ScoringRepository) PointsProgression(ctx context.Context, chatID common.ChatID, period scoring.StatsPeriod) ([]scoring.ProgressionPoint, error) {
+	zone, err := r.chatTimezone(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	clause, extraArgs := periodClause(period, zone)
+	args := append([]any{chatID.Value}, extraArgs...)
+
+	rows, err := executor(ctx, r.pool).Query(ctx, `
+		SELECT v.user_id, COALESCE(NULLIF(u.nickname, ''), u.display_name),
+		       COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
+		       COALESCE(a.points, 0)
+		  FROM prediction_vote v
+		  JOIN match_poll p ON p.id = v.poll_id
+		  JOIN esport_match m ON m.id = p.match_id
+		  JOIN telegram_user u ON u.id = v.user_id
+		  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
+		 WHERE p.chat_id = $1 AND m.status = 'FINISHED' AND m.first_score IS NOT NULL`+clause+`
+		 ORDER BY played_at ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []scoring.ProgressionPoint
+	for rows.Next() {
+		var p scoring.ProgressionPoint
+		var userVal int64
+		if err := rows.Scan(&userVal, &p.DisplayName, &p.PlayedAt, &p.Points); err != nil {
+			return nil, err
+		}
+		p.UserID = common.UserID{Value: userVal}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 const userStatsQuery = scoringAggregateSelect + `
 	  FROM prediction_vote v
 	  JOIN match_poll p ON p.id = v.poll_id
@@ -415,6 +457,60 @@ func (r *ScoringRepository) UserBets(ctx context.Context, userID common.UserID, 
 		   AND ($2::bigint IS NULL OR c.id = $2)
 		 ORDER BY played_at DESC
 		 LIMIT $3`, userID.Value, chatFilter, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []scoring.UserBet
+	for rows.Next() {
+		var b scoring.UserBet
+		var predictedFirst, predictedSecond, actualFirst, actualSecond int
+		if err := rows.Scan(&b.PlayedAt, &b.ChatID.Value, &b.ChatTitle, &b.FirstTeamName, &b.SecondTeamName,
+			&predictedFirst, &predictedSecond, &actualFirst, &actualSecond, &b.Points); err != nil {
+			return nil, err
+		}
+		b.PredictedScore = competition.MatchScore{First: predictedFirst, Second: predictedSecond}
+		b.ActualScore = competition.MatchScore{First: actualFirst, Second: actualSecond}
+		b.Correct = b.PredictedScore.Outcome() == b.ActualScore.Outcome()
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// UserBetsForEvent is UserBets narrowed to one chat and one tournament, and
+// ordered oldest-first instead of newest-first — a tournament table reads
+// naturally match by match in the order they were played, unlike a "recent
+// activity" feed.
+func (r *ScoringRepository) UserBetsForEvent(ctx context.Context, userID common.UserID, chatID common.ChatID, eventID common.EventID, limit int) ([]scoring.UserBet, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx, `
+		SELECT COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
+		       c.id, c.title,
+		       COALESCE(t1.name, ''), COALESCE(t2.name, ''),
+		       po.first_score, po.second_score,
+		       m.first_score, m.second_score,
+		       COALESCE(a.points, 0)
+		  FROM prediction_vote v
+		  JOIN match_poll p ON p.id = v.poll_id
+		  JOIN telegram_chat c ON c.id = p.chat_id
+		  JOIN poll_option po ON po.poll_id = v.poll_id AND po.option_index = v.option_index
+		  JOIN esport_match m ON m.id = p.match_id
+		  LEFT JOIN match_team mt1 ON mt1.match_id = m.id AND mt1.position = 1
+		  LEFT JOIN match_team mt2 ON mt2.match_id = m.id AND mt2.position = 2
+		  LEFT JOIN team t1 ON t1.id = mt1.team_id
+		  LEFT JOIN team t2 ON t2.id = mt2.team_id
+		  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
+		 WHERE v.user_id = $1
+		   AND c.id = $2
+		   AND m.event_id = $3
+		   AND m.status = 'FINISHED'
+		   AND m.first_score IS NOT NULL
+		   AND m.second_score IS NOT NULL
+		 ORDER BY played_at ASC
+		 LIMIT $4`, userID.Value, chatID.Value, eventID.Value, limit)
 	if err != nil {
 		return nil, err
 	}

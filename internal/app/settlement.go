@@ -131,6 +131,7 @@ func (s *ResultSettlementService) settleOne(ctx context.Context, event competiti
 		standings = append(standings, common.StandingNotification{
 			UserID: st.UserID.Value, DisplayName: st.DisplayName, Rank: st.Rank,
 			PreviousRank: previousRank, Points: st.Points, PointsDelta: deltas[st.UserID],
+			ExactPredictions: st.ExactPredictions, CorrectPredictions: st.CorrectPredictions, Predictions: st.Predictions,
 		})
 	}
 

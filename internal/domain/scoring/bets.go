@@ -41,4 +41,11 @@ type PersonalBetsRepository interface {
 	// of them, newest first. chatID narrows the result to one chat when
 	// non-nil, or every chat they've played in when nil.
 	UserBets(ctx context.Context, userID common.UserID, chatID *common.ChatID, limit int) ([]UserBet, error)
+	// UserBetsForEvent returns userID's settled bets within one chat and one
+	// tournament only, oldest first (unlike UserBets' newest-first) so a
+	// reader follows the tournament chronologically match by match. Backs
+	// both "my results in this tournament" and, for an arbitrary userID
+	// picked off the leaderboard, "this participant's results" — same data,
+	// same rendering, just a different subject.
+	UserBetsForEvent(ctx context.Context, userID common.UserID, chatID common.ChatID, eventID common.EventID, limit int) ([]UserBet, error)
 }

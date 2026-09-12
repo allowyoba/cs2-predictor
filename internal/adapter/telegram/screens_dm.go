@@ -21,12 +21,12 @@ import (
 // user may have since lost the rights that put them here); a stale one
 // simply fails openManagedChat's live recheck with a clear denial rather
 // than silently doing nothing.
-func (h *UpdateHandler) managedChatsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+func (h *UpdateHandler) managedChatsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode, backData string) error {
 	chats, err := h.Chats.ManagedChats(ctx, userID)
 	if err != nil {
 		return err
 	}
-	back := []InlineButton{h.backButton(locale, "pstats:menu")}
+	back := []InlineButton{h.backButton(locale, backData)}
 	if len(chats) == 0 {
 		return h.respond(ctx, target, h.Texts.Get("dm.no_managed_chats", locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
 	}
@@ -76,24 +76,52 @@ const privateChatsPageSize = 8
 // managing chats, notifications, language and their display name. The
 // locale is the user's own, independent of any group chat's setting, and
 // the language button re-renders this screen with the other one.
+// hasHubAccess mirrors startLanding's own condition for showing the
+// mode-switcher hub at all: a plain voter with no managed chat and no
+// operator rights has nowhere the hub would send them back to, so no back
+// button is added (the previous, correct behavior for the common case).
+// Anyone who could have reached this screen via hub:personal must be able
+// to get back to it — this is exactly the dead end reported in production:
+// an operator opening the hub's personal-stats panel had no way back to the
+// hub at all.
+func (h *UpdateHandler) hasHubAccess(ctx context.Context, userID common.UserID) (bool, error) {
+	chats, err := h.Chats.ManagedChats(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return len(chats) > 0 || h.isTeamMatchOperator(ctx, userID), nil
+}
+
 func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
 	personal, err := h.personalScoring()
 	if err != nil {
 		return err
 	}
+	hubAccess, err := h.hasHubAccess(ctx, userID)
+	if err != nil {
+		return err
+	}
+	var backRow []InlineButton
+	if hubAccess {
+		backRow = []InlineButton{h.backButton(locale, "hub:root")}
+	}
+
 	available, err := personal.AvailableUserMonths(ctx, userID)
 	if err != nil {
 		return err
 	}
 	if len(available) == 0 {
-		kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
+		rows := [][]InlineButton{
 			{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
 			{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
 			{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 			{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
 			{button(h.Texts.Get("menu.help", locale), "pstats:help")},
-		}}
-		return h.respond(ctx, target, h.Texts.Get("private.stats_empty", locale), &kb)
+		}
+		if backRow != nil {
+			rows = append(rows, backRow)
+		}
+		return h.respond(ctx, target, h.Texts.Get("private.stats_empty", locale), &InlineKeyboard{InlineKeyboard: rows})
 	}
 
 	latest := available[0]
@@ -107,6 +135,9 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
 		{button(h.Texts.Get("menu.help", locale), "pstats:help")},
+	}
+	if backRow != nil {
+		rows = append(rows, backRow)
 	}
 	return h.respond(ctx, target, h.Texts.Get("private.stats_choose", locale), &InlineKeyboard{InlineKeyboard: rows})
 }

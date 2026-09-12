@@ -1499,6 +1499,192 @@ func TestScoringRepository_UserBetsReportsScorelinesAndFiltersByChat(t *testing.
 	}
 }
 
+// TestScoringRepository_UserBetsForEventFiltersByTournamentAndOrdersOldestFirst
+// covers the tournament-results table: two events in the same chat must not
+// leak into each other, and — unlike UserBets' newest-first "recent
+// activity" ordering — a tournament reads chronologically, oldest match
+// first.
+func TestScoringRepository_UserBetsForEventFiltersByTournamentAndOrdersOldestFirst(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	chatID := common.ChatID{Value: -200790}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Event bets chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	eventA := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Cup A", ExternalID: "evbets-event-a", Status: competition.EventRunning, StartsAt: &now, Provider: "PANDASCORE"}
+	eventB := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Cup B", ExternalID: "evbets-event-b", Status: competition.EventRunning, StartsAt: &now, Provider: "PANDASCORE"}
+	for _, e := range []competition.Event{eventA, eventB} {
+		if _, err := catalog.SaveEvent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	options := make([]prediction.Option, 0)
+	for i, s := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: s})
+	}
+	spirit := competition.Team{ID: common.NewTeamID(), Name: "Spirit", ExternalID: "evbets-team-1"}
+	navi := competition.Team{ID: common.NewTeamID(), Name: "NAVI", ExternalID: "evbets-team-2"}
+	voter := common.UserID{Value: 78}
+
+	seed := func(eventID common.EventID, external string, messageID int64, playedAt time.Time) {
+		actual := competition.MatchScore{First: 2, Second: 0}
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: eventID, ExternalID: external,
+			FirstTeam: &spirit, SecondTeam: &navi,
+			ScheduledAt: &playedAt, ActualStartedAt: &playedAt, Status: competition.MatchFinished,
+			Format: format, Score: &actual,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := "evbets-poll-" + external
+		poll := prediction.Poll{
+			ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID,
+			TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: playedAt,
+		}
+		saved, err := predictions.SavePoll(ctx, poll)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{
+			PollID: saved.ID, UserID: voter, OptionIndex: 0, DisplayName: "Alex", VotedAt: playedAt.Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Two matches in event A (oldest first when read back), one in event B.
+	seed(eventA.ID, "evbets-match-a1", 41, now.Add(-2*time.Hour))
+	seed(eventA.ID, "evbets-match-a2", 42, now.Add(-time.Hour))
+	seed(eventB.ID, "evbets-match-b1", 43, now.Add(-3*time.Hour))
+
+	got, err := scoringRepo.UserBetsForEvent(ctx, voter, chatID, eventA.ID, scoring.UserBetsMaxRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d bets for event A, want 2 (event B's match must not leak in): %+v", len(got), got)
+	}
+	if !got[0].PlayedAt.Before(got[1].PlayedAt) {
+		t.Fatalf("event bets are not oldest-first: %+v", got)
+	}
+}
+
+// TestScoringRepository_PointsProgressionOrdersEventsAndSumsPerUser is the
+// raw material a rating chart cumulates client-side: one row per settled
+// prediction, oldest first, so two participants' interleaved match
+// histories come back correctly ordered and separable by user id.
+func TestScoringRepository_PointsProgressionOrdersEventsAndSumsPerUser(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	chatID := common.ChatID{Value: -200795}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Progression chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Progression Cup", ExternalID: "progression-event", Status: competition.EventRunning, StartsAt: &now, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	options := make([]prediction.Option, 0)
+	for i, s := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: s})
+	}
+	spirit := competition.Team{ID: common.NewTeamID(), Name: "Spirit", ExternalID: "progression-team-1"}
+	navi := competition.Team{ID: common.NewTeamID(), Name: "NAVI", ExternalID: "progression-team-2"}
+	alex := common.UserID{Value: 81}
+	sam := common.UserID{Value: 82}
+
+	seed := func(external string, messageID int64, playedAt time.Time, actual competition.MatchScore, alexOption, samOption, alexPoints, samPoints int) {
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: external,
+			FirstTeam: &spirit, SecondTeam: &navi,
+			ScheduledAt: &playedAt, ActualStartedAt: &playedAt, Status: competition.MatchFinished,
+			Format: format, Score: &actual,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := "progression-poll-" + external
+		poll := prediction.Poll{
+			ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID,
+			TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: playedAt,
+		}
+		saved, err := predictions.SavePoll(ctx, poll)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: alex, OptionIndex: alexOption, DisplayName: "Alex", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: sam, OptionIndex: samOption, DisplayName: "Sam", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		var awards []scoring.Award
+		if alexPoints > 0 {
+			awards = append(awards, scoring.Award{ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: alex, Points: alexPoints, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt})
+		}
+		if samPoints > 0 {
+			awards = append(awards, scoring.Award{ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: sam, Points: samPoints, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt})
+		}
+		if len(awards) > 0 {
+			if err := scoringRepo.ReplaceAwards(ctx, saved.ID, awards); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	exact := optionIndexFor(options, competition.MatchScore{First: 2, Second: 0})
+	wrong := optionIndexFor(options, competition.MatchScore{First: 0, Second: 2})
+	// Match 1 (earliest): Alex predicts right (+3), Sam wrong (+0).
+	seed("progression-match-1", 51, now.Add(-2*time.Hour), competition.MatchScore{First: 2, Second: 0}, exact, wrong, 3, 0)
+	// Match 2 (latest): reversed — Sam catches up, Alex doesn't score.
+	seed("progression-match-2", 52, now.Add(-time.Hour), competition.MatchScore{First: 0, Second: 2}, wrong, exact, 0, 3)
+
+	rows, err := scoringRepo.PointsProgression(ctx, chatID, scoring.AllTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("got %d progression rows, want 4 (2 matches x 2 users): %+v", len(rows), rows)
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i].PlayedAt.Before(rows[i-1].PlayedAt) {
+			t.Fatalf("progression rows are not oldest-first: %+v", rows)
+		}
+	}
+	var alexTotal, samTotal int
+	for _, r := range rows {
+		switch r.UserID {
+		case alex:
+			alexTotal += r.Points
+		case sam:
+			samTotal += r.Points
+		default:
+			t.Fatalf("unexpected user id in progression row: %+v", r)
+		}
+	}
+	if alexTotal != 3 || samTotal != 3 {
+		t.Fatalf("alexTotal=%d samTotal=%d, want 3/3 (each won exactly one match)", alexTotal, samTotal)
+	}
+}
+
 // optionIndexFor finds the poll option index matching score s, so the test
 // can vote for a specific predicted scoreline by name instead of a bare
 // index into format.PossibleScores()'s own ordering.

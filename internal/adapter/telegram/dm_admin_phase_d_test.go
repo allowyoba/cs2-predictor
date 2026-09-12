@@ -119,6 +119,78 @@ func TestMatchResultPublisher_FallsBackToCallbackButtonWhenBotUsernameEmpty(t *t
 	}
 }
 
+// TestMatchResultPublisher_RendersPredictionBreakdown covers the
+// "(exact-outcome-wrong)" addition next to each standing's points: a
+// notification carrying stale (zero-value) prediction counts would silently
+// render "(0-0-0)" for everyone, so this pins the real values through.
+func TestMatchResultPublisher_RendersPredictionBreakdown(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	chats := newFakeChats()
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+
+	pub := NewMatchResultPublisher(client, chats, texts, "")
+	eventID := common.NewEventID()
+	n := common.MatchResultNotification{
+		ChatID: -1, EventID: eventID.Value.String(), EventName: "Major", Format: "BO3",
+		FirstTeam: "Spirit", SecondTeam: "NAVI", Score: "2-0",
+		Standings: []common.StandingNotification{
+			{UserID: 1, DisplayName: "Voter", Rank: 1, Points: 9, ExactPredictions: 2, CorrectPredictions: 5, Predictions: 8},
+		},
+	}
+	payload, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(context.Background(), common.OutboxMessage{Payload: string(payload)}); err != nil {
+		t.Fatal(err)
+	}
+
+	text, _ := (*calls)[0]["text"].(string)
+	if !strings.Contains(text, "(2-3-3)") {
+		t.Fatalf("expected the prediction breakdown (2-3-3) in the message, got %q", text)
+	}
+}
+
+func TestEventFinishedPublisher_RendersPredictionBreakdown(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	chats := newFakeChats()
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+
+	pub := NewEventFinishedPublisher(client, chats, texts)
+	n := common.EventFinishedNotification{
+		ChatID: -1, EventName: "Major",
+		Standings: []common.StandingNotification{
+			{UserID: 1, DisplayName: "Winner", Rank: 1, Points: 20, ExactPredictions: 4, CorrectPredictions: 6, Predictions: 10},
+		},
+	}
+	payload, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(context.Background(), common.OutboxMessage{Payload: string(payload)}); err != nil {
+		t.Fatal(err)
+	}
+
+	text, _ := (*calls)[0]["text"].(string)
+	if !strings.Contains(text, "(4-2-4)") {
+		t.Fatalf("expected the prediction breakdown (4-2-4) in the message, got %q", text)
+	}
+}
+
 func TestPrivateMessage_PersonalStatsDeepLinkRendersEventRank(t *testing.T) {
 	server, calls := newRecordingServer(t)
 	defer server.Close()

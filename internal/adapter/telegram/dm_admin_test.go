@@ -189,7 +189,7 @@ func TestManagedChatsMenu_ListsChatsFromTheIndex(t *testing.T) {
 	_, _ = chats.Save(context.Background(), chatB)
 	_ = chats.RecordManaged(context.Background(), chatA.ChatID, userID)
 
-	err := handler.managedChatsMenu(context.Background(), sendTarget(common.ChatID{Value: 42}, nil), userID, common.LocaleRU)
+	err := handler.managedChatsMenu(context.Background(), sendTarget(common.ChatID{Value: 42}, nil), userID, common.LocaleRU, "pstats:menu")
 	if err != nil {
 		t.Fatal(err)
 	}

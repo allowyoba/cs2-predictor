@@ -134,6 +134,7 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 			notificationStandings[i] = common.StandingNotification{
 				UserID: st.UserID.Value, DisplayName: st.DisplayName, Rank: st.Rank,
 				PreviousRank: nil, Points: st.Points, PointsDelta: 0,
+				ExactPredictions: st.ExactPredictions, CorrectPredictions: st.CorrectPredictions, Predictions: st.Predictions,
 			}
 		}
 		notification := common.EventFinishedNotification{ChatID: chatID.Value, TopicID: topicID, EventName: event.Name, Standings: notificationStandings}
