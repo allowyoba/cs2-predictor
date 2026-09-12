@@ -285,7 +285,10 @@ func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scori
 			button(h.Texts.Get("evbets.pick_button", settings.Locale), eventParticipantPickerCallback(period.EventID, 0)),
 		})
 	}
-	rows = append(rows, []InlineButton{button(h.Texts.Get("chart.button", settings.Locale), chartCallbackData(period))})
+	rows = append(rows, []InlineButton{
+		button(h.Texts.Get("chart.button", settings.Locale), chartCallbackData(period)),
+		button(h.Texts.Get("chart.rank_button", settings.Locale), rankChartCallbackData(period)),
+	})
 	if nav := paginationRow(page, totalPages, h.Texts.Get("stats.page", settings.Locale, page+1, totalPages), func(p int) string {
 		return leaderboardPageData(period, p, backData)
 	}); nav != nil {

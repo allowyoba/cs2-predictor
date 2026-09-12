@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"math"
 	"sort"
+	"strconv"
 	"sync"
 
 	stdfnt "golang.org/x/image/font"
@@ -140,6 +141,97 @@ func buildChartSeries(points []scoring.ProgressionPoint, singleUser *common.User
 	return order, byUser
 }
 
+// buildRankSeries turns the same time-ordered flat list of scoring events
+// buildChartSeries uses into one leaderboard-position line per participant
+// instead of a cumulative-points one. Every voter of the same match shares
+// exactly one PlayedAt (see ProgressionRepository), so consecutive points
+// sharing a timestamp are grouped into one "step" — the standings are
+// recomputed once per step, after that whole match's points have been
+// added, the same way the real leaderboard updates once a match settles,
+// not once per individual vote within it.
+//
+// Rank at each step follows scoring.DenseRank's own rule (a tie shares a
+// rank; the next distinct total's rank does not skip ahead) over every
+// participant with a cumulative total so far — not just whoever is in this
+// particular step — since someone who hasn't predicted in a while is still
+// on the board and still has a place to show. DenseRank additionally
+// breaks ties on exact-score/prediction counts that ProgressionPoint
+// doesn't carry; here a tie breaks on user id instead, purely for a stable
+// draw order — it never changes the rank NUMBER itself, only which of two
+// equal-points users is drawn "above" the other in the underlying data.
+//
+// Y is stored as the negative rank (1st place = -1) rather than the rank
+// itself: gonum/plot draws larger Y values higher, and negating is the
+// simplest way to get "1st place at the top" out of that without fighting
+// the library's own axis orientation. buildRankChart's custom tick marker
+// relabels those negative values back to the positive rank a reader
+// expects to see.
+func buildRankSeries(points []scoring.ProgressionPoint, singleUser *common.UserID) (order []common.UserID, byUser map[common.UserID]*chartSeries) {
+	totals := map[common.UserID]int{}
+	names := map[common.UserID]string{}
+	byUser = make(map[common.UserID]*chartSeries)
+	order = make([]common.UserID, 0)
+
+	type standing struct {
+		userID common.UserID
+		total  int
+	}
+
+	step := 0
+	for i := 0; i < len(points); {
+		j := i + 1
+		for j < len(points) && points[j].PlayedAt.Equal(points[i].PlayedAt) {
+			j++
+		}
+		step++
+		for _, pt := range points[i:j] {
+			totals[pt.UserID] += pt.Points
+			names[pt.UserID] = pt.DisplayName
+		}
+		i = j
+
+		standings := make([]standing, 0, len(totals))
+		for uid, total := range totals {
+			standings = append(standings, standing{uid, total})
+		}
+		sort.SliceStable(standings, func(a, b int) bool {
+			if standings[a].total != standings[b].total {
+				return standings[a].total > standings[b].total
+			}
+			return standings[a].userID.Value < standings[b].userID.Value
+		})
+
+		rank := 0
+		var previousTotal *int
+		for _, s := range standings {
+			if previousTotal == nil || s.total != *previousTotal {
+				rank++
+				total := s.total
+				previousTotal = &total
+			}
+			if singleUser != nil && s.userID != *singleUser {
+				continue
+			}
+			series, ok := byUser[s.userID]
+			if !ok {
+				series = &chartSeries{name: names[s.userID]}
+				byUser[s.userID] = series
+				order = append(order, s.userID)
+			}
+			series.xys = append(series.xys, plotter.XY{X: float64(step), Y: float64(-rank)})
+			series.final = -rank
+		}
+	}
+
+	// Best (closest to 1st place) first — same convention buildChartSeries
+	// uses for points, just in the negated rank space described above.
+	sort.SliceStable(order, func(i, j int) bool { return byUser[order[i]].final > byUser[order[j]].final })
+	if singleUser == nil && len(order) > chartMaxSeries {
+		order = order[:chartMaxSeries]
+	}
+	return order, byUser
+}
+
 func styleChartAxes(p *plot.Plot) {
 	for _, axis := range []*plot.Axis{&p.X, &p.Y} {
 		axis.Label.TextStyle.Color = chartMuted
@@ -227,9 +319,46 @@ func buildProgressionChart(points []scoring.ProgressionPoint, title, xLabel, yLa
 	if len(order) == 0 {
 		return nil, errors.New("no settled predictions to chart")
 	}
+	p := newChartPlot(title, xLabel, yLabel)
+	if err := drawChartSeries(p, order, byUser, singleUser); err != nil {
+		return nil, err
+	}
+	return renderChartPNG(p)
+}
 
+// buildRankChart is buildProgressionChart's sibling for leaderboard
+// position instead of cumulative points — same figure, same "one line per
+// participant, best first" drawing (drawChartSeries doesn't care what the
+// Y axis actually measures), built from buildRankSeries instead of
+// buildChartSeries. The only real difference is the Y axis itself: ranks
+// are stored negative (see buildRankSeries) so 1st place plots at the top,
+// which means the default numeric tick labels would read "-1, -2, -3, ..."
+// instead of "1, 2, 3, ...". The custom ticker below is the fix — it
+// negates each tick's label back to the rank a reader actually expects.
+func buildRankChart(points []scoring.ProgressionPoint, title, xLabel, yLabel string, singleUser *common.UserID) ([]byte, error) {
+	order, byUser := buildRankSeries(points, singleUser)
+	if len(order) == 0 {
+		return nil, errors.New("no settled predictions to chart")
+	}
+	p := newChartPlot(title, xLabel, yLabel)
+	p.Y.Tick.Marker = plot.TickerFunc(func(min, max float64) []plot.Tick {
+		var ticks []plot.Tick
+		for v := int(math.Ceil(min)); v <= int(math.Floor(max)); v++ {
+			ticks = append(ticks, plot.Tick{Value: float64(v), Label: strconv.Itoa(-v)})
+		}
+		return ticks
+	})
+	if err := drawChartSeries(p, order, byUser, singleUser); err != nil {
+		return nil, err
+	}
+	return renderChartPNG(p)
+}
+
+// newChartPlot builds the styled, empty canvas both chart kinds share —
+// background, title, axis labels/styling, and the grid — before either
+// draws its own series onto it.
+func newChartPlot(title, xLabel, yLabel string) *plot.Plot {
 	registerChartFont()
-
 	p := plot.New()
 	p.BackgroundColor = chartBackground
 	p.Title.Text = title
@@ -239,14 +368,23 @@ func buildProgressionChart(points []scoring.ProgressionPoint, title, xLabel, yLa
 	p.Y.Label.Text = yLabel
 	styleChartAxes(p)
 	addChartGrid(p)
+	return p
+}
 
-	// End-of-line labels instead of a boxed legend: gonum/plot draws a
-	// Legend inside the same canvas as the data with no automatic reserved
-	// gutter, so with more than a couple of series it either overlaps the
-	// lines or gets clipped past the image edge — exactly the "collision"
-	// this chart must avoid. Naming each line at its own endpoint needs no
-	// color-matching lookup from a separate box either, which reads faster
-	// on a phone screen than a traditional legend would.
+// drawChartSeries adds every participant's line — and, in group mode, its
+// end-of-line label — to p. Shared by buildProgressionChart and
+// buildRankChart: both draw the exact same shape of figure (a handful of
+// XY lines, best-first, labeled at their own endpoint), they just disagree
+// on what a line's Y values mean.
+//
+// End-of-line labels instead of a boxed legend: gonum/plot draws a Legend
+// inside the same canvas as the data with no automatic reserved gutter, so
+// with more than a couple of series it either overlaps the lines or gets
+// clipped past the image edge — exactly the "collision" this chart must
+// avoid. Naming each line at its own endpoint needs no color-matching
+// lookup from a separate box either, which reads faster on a phone screen
+// than a traditional legend would.
+func drawChartSeries(p *plot.Plot, order []common.UserID, byUser map[common.UserID]*chartSeries, singleUser *common.UserID) error {
 	minY, maxY, maxX := chartDataBounds(order, byUser)
 	var endYByOrderIdx map[int]float64
 	if singleUser == nil {
@@ -271,7 +409,7 @@ func buildProgressionChart(points []scoring.ProgressionPoint, title, xLabel, yLa
 		s := byUser[uid]
 		line, pts, err := plotter.NewLinePoints(s.xys)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		col := chartPalette[i%len(chartPalette)]
 		line.LineStyle = draw.LineStyle{Color: col, Width: vg.Points(2.5)}
@@ -290,13 +428,18 @@ func buildProgressionChart(points []scoring.ProgressionPoint, title, xLabel, yLa
 	if singleUser == nil {
 		labels, err := plotter.NewLabels(plotter.XYLabels{XYs: labelPts, Labels: labelNames})
 		if err != nil {
-			return nil, err
+			return err
 		}
 		labels.TextStyle = labelStyles
 		labels.Offset = vg.Point{X: vg.Points(8)}
 		p.Add(labels)
 	}
+	return nil
+}
 
+// renderChartPNG encodes the finished plot at a fixed size — both chart
+// kinds are sent as a Telegram photo the same way, so they share one size.
+func renderChartPNG(p *plot.Plot) ([]byte, error) {
 	writerTo, err := p.WriterTo(9*vg.Inch, 5*vg.Inch, "png")
 	if err != nil {
 		return nil, err

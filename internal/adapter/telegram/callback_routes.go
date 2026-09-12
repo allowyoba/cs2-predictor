@@ -170,6 +170,7 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("stats:evbets:u:"), handle: routeEventBetsForUser},
 	{match: prefixed("stats:evpick:"), handle: routeEventParticipantPicker},
 	{match: prefixed("stats:chart:"), handle: routeStatsChart},
+	{match: prefixed("stats:rankchart:"), handle: routeStatsRankChart},
 	// guardManager (not the stricter guardTelegramAdmin the moderators:*
 	// mutation routes below use): seeing who the other moderators are is
 	// harmless for an existing moderator to know, but was previously
@@ -392,52 +393,70 @@ func routeEventParticipantPicker(h *UpdateHandler, ctx context.Context, cb *Call
 	return false, h.renderEventParticipantPicker(ctx, target, settings, eventID, page, "stats:event:"+id.String())
 }
 
-// routeStatsChart parses "stats:chart:<kind>[:...]" — the same period
-// encoding leaderboardPageData already uses for pagination, minus the page
-// number a chart has no use for — and renders/uploads that period's rating
-// chart. Whether it's drawn for everyone or just the caller follows the
-// same personal-vs-group signal sendProgressionChart itself resolves.
-func routeStatsChart(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-	parts := strings.Split(strings.TrimPrefix(data, "stats:chart:"), ":")
+// parseChartPeriod parses the "<kind>[:...]" tail both stats:chart: and
+// stats:rankchart: share — the same period encoding leaderboardPageData
+// already uses for pagination, minus the page number neither chart has a
+// use for.
+func parseChartPeriod(parts []string) (scoring.StatsPeriod, error) {
 	if len(parts) == 0 {
-		return false, newValidationError("invalid chart callback")
+		return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 	}
-	viewer := common.UserID{Value: cb.From.ID}
-	var period scoring.StatsPeriod
 	switch parts[0] {
 	case "a":
-		period = scoring.AllTime()
+		return scoring.AllTime(), nil
 	case "y":
 		if len(parts) != 2 {
-			return false, newValidationError("invalid chart callback")
+			return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 		}
 		year, err := strconv.Atoi(parts[1])
 		if err != nil {
-			return false, newValidationError("invalid chart callback")
+			return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 		}
-		period = scoring.ForYear(year)
+		return scoring.ForYear(year), nil
 	case "m":
 		if len(parts) != 2 {
-			return false, newValidationError("invalid chart callback")
+			return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 		}
 		year, month, err := parseYearMonth(parts[1])
 		if err != nil {
-			return false, newValidationError("invalid chart callback")
+			return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 		}
-		period = scoring.ForMonth(year, month)
+		return scoring.ForMonth(year, month), nil
 	case "e":
 		if len(parts) != 2 {
-			return false, newValidationError("invalid chart callback")
+			return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 		}
 		id, err := uuid.Parse(parts[1])
 		if err != nil {
-			return false, newValidationError("invalid chart callback")
+			return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 		}
-		period = scoring.ForEvent(common.EventID{Value: id})
+		return scoring.ForEvent(common.EventID{Value: id}), nil
 	default:
-		return false, newValidationError("invalid chart callback")
+		return scoring.StatsPeriod{}, newValidationError("invalid chart callback")
 	}
+}
+
+// routeStatsChart renders/uploads a period's rating (cumulative points)
+// chart. Whether it's drawn for everyone or just the caller follows the
+// same personal-vs-group signal sendProgressionChart itself resolves.
+func routeStatsChart(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	period, err := parseChartPeriod(strings.Split(strings.TrimPrefix(data, "stats:chart:"), ":"))
+	if err != nil {
+		return false, err
+	}
+	viewer := common.UserID{Value: cb.From.ID}
 	return false, h.sendProgressionChart(ctx, target, settings, period, viewer)
+}
+
+// routeStatsRankChart is routeStatsChart's sibling for the leaderboard
+// position (rank movement) chart.
+func routeStatsRankChart(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	period, err := parseChartPeriod(strings.Split(strings.TrimPrefix(data, "stats:rankchart:"), ":"))
+	if err != nil {
+		return false, err
+	}
+	viewer := common.UserID{Value: cb.From.ID}
+	return false, h.sendRankChart(ctx, target, settings, period, viewer)
 }
 
 func routeStatsYear(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
