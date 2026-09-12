@@ -778,6 +778,32 @@ func TestStop_TreatsAlreadyClosedAsSuccess(t *testing.T) {
 	}
 }
 
+// TestStop_TreatsCantBeStoppedAsSuccess is a regression test for a real
+// production incident: Telegram uses "poll can't be stopped" for the exact
+// same already-closed condition "poll has already been closed" covers, and
+// the un-caught wording left CloseDue retrying the same handful of stuck
+// polls on every single tick, indefinitely, since a stop() that returned an
+// error never let close() persist the local CLOSED status.
+func TestStop_TreatsCantBeStoppedAsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: poll can't be stopped"}`))
+	}))
+	defer server.Close()
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := NewPollGateway(client, &dataCatalog{}, newFakeChats(), texts, slog.Default(), PollEnrichmentSources{})
+	messageID := int64(42)
+	poll := prediction.Poll{ID: common.NewPollID(), ChatID: common.ChatID{Value: -1}, TelegramMessageID: &messageID}
+	if err := gateway.Close(context.Background(), poll); err != nil {
+		t.Fatalf("expected 'poll can't be stopped' to be treated as success, got %v", err)
+	}
+}
+
 func TestStop_PropagatesOtherErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

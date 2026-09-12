@@ -100,9 +100,14 @@ func (e *APIError) IsEditUnavailable() bool {
 // auto-closed via sendPoll's close_date — expected, not a real failure,
 // once a poll carries its own close_date (see PollGateway.Send): the
 // scheduled close job's own stopPoll call can lose the race to Telegram's
-// own timer and arrive after it already closed the poll.
+// own timer and arrive after it already closed the poll. Telegram uses (at
+// least) two different wordings for this — "poll has already been closed"
+// and "poll can't be stopped" — confirmed in production: a poll matching
+// only the first wording left CloseDue retrying the same stuck poll every
+// tick indefinitely, since it never counted as success and so never
+// persisted the local CLOSED status.
 func (e *APIError) IsPollAlreadyClosed() bool {
-	return e.isDescriptionContains("poll has already been closed")
+	return e.isDescriptionContains("poll has already been closed", "poll can't be stopped")
 }
 
 // Client is the single generic Bot API caller — every Bot API method goes

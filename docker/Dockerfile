@@ -54,6 +54,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
     -o /out/cs2predictor ./cmd/bot
 
+# One-off maintenance binaries (see cmd/backfill-team-order's own doc
+# comment) — never run by the container's own ENTRYPOINT, only invoked by
+# an operator via `docker exec` against a running container, which already
+# has the production DATABASE_URL/DATABASE_USER/DATABASE_PASSWORD in its
+# environment. Shipping it in the same image means no separate build or
+# file transfer is ever needed to run a maintenance job against production.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -o /out/backfill-team-order ./cmd/backfill-team-order
+
 FROM alpine:3.24
 
 # curl backs the HEALTHCHECK below, ca-certificates the outbound HTTPS
@@ -65,6 +75,7 @@ RUN apk upgrade --no-cache && \
 
 WORKDIR /app
 COPY --from=build /out/cs2predictor /app/cs2predictor
+COPY --from=build /out/backfill-team-order /app/backfill-team-order
 USER app
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
