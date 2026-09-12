@@ -231,10 +231,12 @@ func run() error {
 
 	retention := &app.RetentionSweep{
 		Store: retentionStore, Lock: clusterLock, Clock: clock, Log: log,
-		ProcessedUpdatesTTL: cfg.Retention.ProcessedUpdatesTTL,
-		PublishedOutboxTTL:  cfg.Retention.PublishedOutboxTTL,
-		ResolvedRequestsTTL: cfg.Retention.ResolvedRequestsTTL,
-		AdminActionsTTL:     cfg.Retention.AdminActionsTTL,
+		ProcessedUpdatesTTL:     cfg.Retention.ProcessedUpdatesTTL,
+		PublishedOutboxTTL:      cfg.Retention.PublishedOutboxTTL,
+		ResolvedRequestsTTL:     cfg.Retention.ResolvedRequestsTTL,
+		AdminActionsTTL:         cfg.Retention.AdminActionsTTL,
+		ProcessedUpdatesMaxRows: cfg.Retention.ProcessedUpdatesMaxRows,
+		PublishedOutboxMaxRows:  cfg.Retention.PublishedOutboxMaxRows,
 	}
 
 	dispatcher := &app.OutboxDispatcher{

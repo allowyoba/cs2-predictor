@@ -63,6 +63,47 @@ func (r *RetentionRepository) DeleteResolvedUnsubscribesBefore(ctx context.Conte
 	return tag.RowsAffected(), nil
 }
 
+// DeleteProcessedUpdatesExceeding keeps at most maxRows of the newest dedup
+// rows — the row-count backstop under DeleteProcessedUpdatesBefore's TTL
+// (see RetentionRepository's doc comment). Finding the maxRows-th newest
+// row's timestamp and deleting everything strictly older reuses the same
+// indexed-by-processed_at delete DeleteProcessedUpdatesBefore already does,
+// rather than a separate deletion strategy; the OFFSET subquery costs one
+// index-ordered scan capped at maxRows rows, not a scan of the table.
+func (r *RetentionRepository) DeleteProcessedUpdatesExceeding(ctx context.Context, maxRows int) (int64, error) {
+	if maxRows <= 0 {
+		return 0, nil
+	}
+	tag, err := executor(ctx, r.pool).Exec(ctx, `
+		DELETE FROM processed_telegram_update
+		 WHERE processed_at < COALESCE(
+		   (SELECT processed_at FROM processed_telegram_update ORDER BY processed_at DESC OFFSET ($1 - 1) LIMIT 1),
+		   '-infinity'::timestamptz)`, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeletePublishedOutboxExceeding is DeleteProcessedUpdatesExceeding's sibling
+// for published outbox rows — unpublished rows are never touched, same as
+// DeletePublishedOutboxBefore.
+func (r *RetentionRepository) DeletePublishedOutboxExceeding(ctx context.Context, maxRows int) (int64, error) {
+	if maxRows <= 0 {
+		return 0, nil
+	}
+	tag, err := executor(ctx, r.pool).Exec(ctx, `
+		DELETE FROM outbox_event
+		 WHERE published_at IS NOT NULL
+		   AND published_at < COALESCE(
+		     (SELECT published_at FROM outbox_event WHERE published_at IS NOT NULL ORDER BY published_at DESC OFFSET ($1 - 1) LIMIT 1),
+		     '-infinity'::timestamptz)`, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // DeleteAdminActionsBefore trims the per-chat change history. Only the
 // newest AdminActionHistorySize entries are ever displayed, so anything
 // past the window is kept purely for a "what happened last month?"
