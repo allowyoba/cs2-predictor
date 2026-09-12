@@ -72,7 +72,8 @@ func TestComposePollDescription_FullExampleMatchesSpec(t *testing.T) {
 	want := "🏆 FISSURE PLAYGROUND Season 3 2026\n" +
 		"🎯 Group A · BO3\n" +
 		"🕒 10.09 · 15:00 MSK\n" +
-		"📈 VRS (30.08): #8 (1723) · #121 (867)"
+		"📈 VRS: #8 (1723) · #121 (867)\n" +
+		"🕓 Обновлено: 30.08"
 	if got != want {
 		t.Fatalf("composePollDescription = %q, want %q", got, want)
 	}
@@ -592,11 +593,12 @@ func TestSend_IncludesHLTVLineIndependentlyFromVRS(t *testing.T) {
 	}
 }
 
-// TestSend_RankingLinesShowTheirLastUpdateDate covers a real user-facing
-// request: a cached ranking's freshness matters for how much to trust it,
-// so the source label carries a "DD.MM" date next to it whenever the
-// ranking has one — "VRS (30.08)", not a bare "VRS".
-func TestSend_RankingLinesShowTheirLastUpdateDate(t *testing.T) {
+// TestSend_RankingsUpdatedFooter_SameDateCollapsesToOneLine covers a real
+// user-facing request: a cached ranking's freshness matters for how much
+// to trust it, shown as one closing footer line rather than repeating a
+// "(30.08)" next to every ranking line — when VRS and HLTV synced on the
+// same date (the common case), that's a single "🕓 Обновлено: 30.08".
+func TestSend_RankingsUpdatedFooter_SameDateCollapsesToOneLine(t *testing.T) {
 	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
 	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
 	vrsRank, hltvRank := 1, 5
@@ -606,11 +608,29 @@ func TestSend_RankingLinesShowTheirLastUpdateDate(t *testing.T) {
 		enrichment.SourceHLTV:     {second.ID: {TeamID: second.ID, GlobalRank: &hltvRank, PublishedAt: publishedAt}},
 	}}
 	sent := sendTestPoll(t, nil, PollEnrichmentSources{Rankings: rankings}, first, second)
-	if !strings.Contains(sent.description, "VRS (30.08)") {
-		t.Fatalf("expected the VRS line to carry its last-update date, got %q", sent.description)
+	if !strings.Contains(sent.description, "🕓 Обновлено: 30.08") {
+		t.Fatalf("expected a single rankings-updated footer line, got %q", sent.description)
 	}
-	if !strings.Contains(sent.description, "HLTV (30.08)") {
-		t.Fatalf("expected the HLTV line to carry its last-update date, got %q", sent.description)
+	if strings.Contains(sent.description, "VRS 30.08") || strings.Contains(sent.description, "HLTV 30.08") {
+		t.Fatalf("expected the same date to collapse to one bare date, not name each source, got %q", sent.description)
+	}
+}
+
+// TestSend_RankingsUpdatedFooter_DifferentDatesNamesEachSource covers the
+// less common case where VRS and HLTV synced on different days — the
+// footer must then say which date belongs to which source rather than
+// picking one arbitrarily.
+func TestSend_RankingsUpdatedFooter_DifferentDatesNamesEachSource(t *testing.T) {
+	first := competition.Team{ID: common.NewTeamID(), Name: "Spirit"}
+	second := competition.Team{ID: common.NewTeamID(), Name: "NAVI"}
+	vrsRank, hltvRank := 1, 5
+	rankings := &fakeRankingRepository{bySource: map[enrichment.Source]map[common.TeamID]enrichment.TeamRanking{
+		enrichment.SourceValveVRS: {first.ID: {TeamID: first.ID, GlobalRank: &vrsRank, PublishedAt: time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)}},
+		enrichment.SourceHLTV:     {second.ID: {TeamID: second.ID, GlobalRank: &hltvRank, PublishedAt: time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)}},
+	}}
+	sent := sendTestPoll(t, nil, PollEnrichmentSources{Rankings: rankings}, first, second)
+	if !strings.Contains(sent.description, "VRS 30.08") || !strings.Contains(sent.description, "HLTV 28.08") {
+		t.Fatalf("expected each source named next to its own date, got %q", sent.description)
 	}
 }
 

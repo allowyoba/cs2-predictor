@@ -341,10 +341,10 @@ func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, s
 		lines = append(lines, "🕒 "+when)
 	}
 	if vrsLine != "" {
-		lines = append(lines, texts.Get("poll.vrs", locale, rankingSourceLabel(texts, locale, "poll.vrs_source", vrsUpdated), vrsLine))
+		lines = append(lines, texts.Get("poll.vrs", locale, vrsLine))
 	}
 	if hltvLine != "" {
-		lines = append(lines, texts.Get("poll.hltv", locale, rankingSourceLabel(texts, locale, "poll.hltv_source", hltvUpdated), hltvLine))
+		lines = append(lines, texts.Get("poll.hltv", locale, hltvLine))
 	}
 	if formLine != "" {
 		lines = append(lines, texts.Get("poll.form", locale, formLine))
@@ -352,21 +352,37 @@ func composePollDescription(texts *Texts, locale common.LocaleCode, eventName, s
 	if h2hLine != "" {
 		lines = append(lines, texts.Get("poll.h2h", locale, h2hLine))
 	}
+	// A single footer note rather than cluttering each ranking line with its
+	// own "(30.08)" — one place to see how fresh the data above is, which
+	// reads cleaner than repeating the same (usually identical) date twice.
+	if updated := rankingUpdatedFooter(texts, locale, vrsUpdated, hltvUpdated); updated != "" {
+		lines = append(lines, updated)
+	}
 	return strings.Join(lines, "\n")
 }
 
-// rankingSourceLabel appends the ranking's last-update date to its source
-// name ("VRS (30.08)") when known — knowing how fresh a cached ranking is
-// matters for how much weight to put on it, and this is the only place
-// that information reaches the poll at all. updated is "" for a source
-// with no cached data for either team (formatRankingCombined already
-// returns "" for the whole line in that case, so the caller never asks).
-func rankingSourceLabel(texts *Texts, locale common.LocaleCode, sourceKey, updated string) string {
-	name := texts.Get(sourceKey, locale)
-	if updated == "" {
-		return name
+// rankingUpdatedFooter renders one closing line reporting when the
+// VRS/HLTV rankings shown above were last refreshed — "" when neither
+// source had a cached ranking to date at all. The common case (both
+// sources synced together) collapses to one date; if they genuinely
+// differ, both are named so the line is never misleading about which
+// ranking is which age.
+func rankingUpdatedFooter(texts *Texts, locale common.LocaleCode, vrsUpdated, hltvUpdated string) string {
+	switch {
+	case vrsUpdated == "" && hltvUpdated == "":
+		return ""
+	// Only one source present, or both present but in sync: nothing to
+	// disambiguate, so name no source and just state the date.
+	case vrsUpdated == "" || hltvUpdated == "" || vrsUpdated == hltvUpdated:
+		date := vrsUpdated
+		if date == "" {
+			date = hltvUpdated
+		}
+		return texts.Get("poll.rankings_updated", locale, date)
+	default:
+		return texts.Get("poll.rankings_updated", locale,
+			texts.Get("poll.vrs_source", locale)+" "+vrsUpdated+" · "+texts.Get("poll.hltv_source", locale)+" "+hltvUpdated)
 	}
-	return fmt.Sprintf("%s (%s)", name, updated)
 }
 
 // rankingUpdatedLabel renders whichever side has a cached ranking's
