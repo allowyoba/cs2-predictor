@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/domain/prediction"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -168,6 +170,28 @@ func teamMatchTestHandler(t *testing.T) (*UpdateHandler, *[]map[string]any, *fak
 	return handler, calls, requests, operators
 }
 
+// keyboardLabels extracts every button's visible text across all calls —
+// findKeyboardButtons only returns callback_data/urls, not the label text.
+func keyboardLabels(calls []map[string]any) []string {
+	var labels []string
+	for _, c := range calls {
+		kb, ok := c["reply_markup"].(map[string]any)
+		if !ok {
+			continue
+		}
+		rows, _ := kb["inline_keyboard"].([]any)
+		for _, row := range rows {
+			for _, btn := range row.([]any) {
+				b := btn.(map[string]any)
+				if s, ok := b["text"].(string); ok {
+					labels = append(labels, s)
+				}
+			}
+		}
+	}
+	return labels
+}
+
 func teamMatchPrivateCB(userID int64, data string) *CallbackQuery {
 	return &CallbackQuery{ID: "cb", From: User{ID: userID, FirstName: "Alex"},
 		Message: &Message{MessageID: 5, Chat: Chat{ID: userID, Type: "private"}}, Data: &data}
@@ -247,6 +271,110 @@ func TestTeamMatchAdmin_OnlyRootMayAppoint(t *testing.T) {
 	}
 	if !operators.appointed[2] {
 		t.Fatal("expected the root operator's /team_match_admin add to appoint user 2")
+	}
+}
+
+// --- operator picker: appoint/remove from real poll participants ---
+
+// TestTeamMatchAdmin_ListDeniedForNonRoot covers the roster screen itself,
+// not just the menu button that links to it: callback data isn't otherwise
+// authenticated, so a non-root user constructing "hub:team_match_operators"
+// directly must still be denied.
+func TestTeamMatchAdmin_ListDeniedForNonRoot(t *testing.T) {
+	handler, calls, _, _ := teamMatchTestHandler(t)
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(2, "hub:team_match_operators")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(lastText(*calls), ru(t, "error.forbidden")) {
+		t.Fatalf("expected a non-root user denied the operator roster, got %q", lastText(*calls))
+	}
+}
+
+func TestTeamMatchAdmin_ListOffersAddAndRemoveButtons(t *testing.T) {
+	handler, calls, _, operators := teamMatchTestHandler(t)
+	operators.appointed[2] = true
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "hub:team_match_operators")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons(*calls)
+	if !slices.Contains(cds, "tmatch_admin:add") {
+		t.Fatalf("expected an add-operator button, got %v", cds)
+	}
+	if !slices.Contains(cds, cbTeamMatchAdminRemove(common.UserID{Value: 2})) {
+		t.Fatalf("expected a remove button for the appointed operator, got %v", cds)
+	}
+}
+
+// TestTeamMatchAdmin_AddMenuListsManagedChatsThenParticipants exercises the
+// full picker: root taps "add", picks one of their own managed chats, sees
+// that chat's recent voters by display name, and appointing one actually
+// grants operator access — the same appointment /team_match_admin add
+// <user_id> makes, just reached without needing to already know a numeric
+// Telegram id.
+func TestTeamMatchAdmin_AddMenuListsManagedChatsThenParticipants(t *testing.T) {
+	handler, calls, _, operators := teamMatchTestHandler(t)
+	chats := handler.Chats.(*fakeChats)
+	chatID := common.ChatID{Value: -100}
+	chats.settings[chatID.Value] = chat.Settings{ChatID: chatID, Title: "Продлёнка CS2", Locale: common.LocaleRU}
+	chats.managed[[2]int64{chatID.Value, 1}] = true
+	chats.profiles[7] = chat.UserProfile{UserID: common.UserID{Value: 7}, DisplayName: "Evgenii Eremeev"}
+
+	predictions := newInMemoryPredictions()
+	predictions.participants = []common.UserID{{Value: 7}}
+	handler.Predictions = prediction.NewService(predictions, nil, handler.Clock)
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "tmatch_admin:add")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons(*calls)
+	if !slices.Contains(cds, cbTeamMatchAdminPickChat(chatID)) {
+		t.Fatalf("expected the managed chat listed, got %v", cds)
+	}
+
+	*calls = nil
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, cbTeamMatchAdminPickChat(chatID))); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ = findKeyboardButtons(*calls)
+	appointCB := cbTeamMatchAdminAppoint(chatID, common.UserID{Value: 7})
+	if !slices.Contains(cds, appointCB) {
+		t.Fatalf("expected the recent participant listed as a candidate, got %v", cds)
+	}
+	if !slices.ContainsFunc(keyboardLabels(*calls), func(l string) bool { return strings.Contains(l, "Evgenii Eremeev") }) {
+		t.Fatalf("expected the participant's display name on the button, got %v", keyboardLabels(*calls))
+	}
+
+	*calls = nil
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, appointCB)); err != nil {
+		t.Fatal(err)
+	}
+	if !operators.appointed[7] {
+		t.Fatal("expected picking the participant to appoint them as a team-match operator")
+	}
+}
+
+func TestTeamMatchAdmin_RemoveButtonRevokesOperator(t *testing.T) {
+	handler, _, _, operators := teamMatchTestHandler(t)
+	operators.appointed[2] = true
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, cbTeamMatchAdminRemove(common.UserID{Value: 2}))); err != nil {
+		t.Fatal(err)
+	}
+	if operators.appointed[2] {
+		t.Fatal("expected the remove button to revoke operator access")
+	}
+}
+
+func TestTeamMatchAdmin_AddMenuEmptyWhenNoManagedChats(t *testing.T) {
+	handler, calls, _, _ := teamMatchTestHandler(t)
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "tmatch_admin:add")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(lastText(*calls), ru(t, "teammatch.admin_pick_chat_empty")) {
+		t.Fatalf("expected the empty-chats message, got %q", lastText(*calls))
 	}
 }
 

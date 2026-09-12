@@ -132,6 +132,9 @@ func (f *fakeSyncChats) SetModeratorPermissions(context.Context, common.ChatID, 
 func (f *fakeSyncChats) UserProfile(context.Context, common.UserID) (*chat.UserProfile, error) {
 	return nil, nil
 }
+func (f *fakeSyncChats) UserProfiles(context.Context, []common.UserID) (map[common.UserID]chat.UserProfile, error) {
+	return nil, nil
+}
 func (f *fakeSyncChats) ClearEventTopic(context.Context, common.ChatID, common.EventID) error {
 	return nil
 }

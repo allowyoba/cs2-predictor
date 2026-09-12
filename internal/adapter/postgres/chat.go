@@ -231,6 +231,33 @@ func (r *ChatRepository) UserProfile(ctx context.Context, userID common.UserID) 
 	return &profile, nil
 }
 
+func (r *ChatRepository) UserProfiles(ctx context.Context, userIDs []common.UserID) (map[common.UserID]chat.UserProfile, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	values := make([]int64, len(userIDs))
+	for i, id := range userIDs {
+		values[i] = id.Value
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT id, COALESCE(username, ''), display_name FROM telegram_user WHERE id = ANY($1)`, values)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[common.UserID]chat.UserProfile, len(userIDs))
+	for rows.Next() {
+		var id int64
+		var profile chat.UserProfile
+		if err := rows.Scan(&id, &profile.Username, &profile.DisplayName); err != nil {
+			return nil, err
+		}
+		profile.UserID = common.UserID{Value: id}
+		out[profile.UserID] = profile
+	}
+	return out, rows.Err()
+}
+
 func (r *ChatRepository) EventTopic(ctx context.Context, chatID common.ChatID, eventID common.EventID) (*int64, error) {
 	var topicID int64
 	err := executor(ctx, r.pool).QueryRow(ctx,

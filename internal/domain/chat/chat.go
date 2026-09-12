@@ -106,6 +106,11 @@ type Repository interface {
 	// invitation acceptors without a full ModeratorInfo. Returns nil if the
 	// bot has never seen this user.
 	UserProfile(ctx context.Context, userID common.UserID) (*UserProfile, error)
+	// UserProfiles is UserProfile's batched sibling — one round trip to
+	// label a whole list of candidates (e.g. a chat's recent poll
+	// participants) instead of one query per person. A userID with no
+	// cached profile is simply absent from the result map.
+	UserProfiles(ctx context.Context, userIDs []common.UserID) (map[common.UserID]UserProfile, error)
 
 	EventTopic(ctx context.Context, chatID common.ChatID, eventID common.EventID) (*int64, error)
 	SaveEventTopic(ctx context.Context, topic EventTopic) error

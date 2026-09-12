@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,14 +42,19 @@ func TestPrivateStatsMenu_OffersRename(t *testing.T) {
 		t.Fatal(err)
 	}
 	cds, _ := findKeyboardButtons(*calls)
-	found := false
-	for _, cd := range cds {
-		if cd == "pstats:rename" {
-			found = true
-		}
+	if !slices.Contains(cds, "pstats:settings") {
+		t.Fatalf("expected a settings button on the personal stats menu, got %v", cds)
 	}
-	if !found {
-		t.Fatalf("expected a rename button on the personal stats menu, got %v", cds)
+
+	settingsData := "pstats:settings"
+	settingsCB := &CallbackQuery{ID: "cb2", From: User{ID: 42, FirstName: "Alex"},
+		Message: &Message{MessageID: 3, Chat: Chat{ID: 42, Type: "private"}}, Data: &settingsData}
+	if err := handler.handlePrivateCallback(context.Background(), settingsCB); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ = findKeyboardButtons(*calls)
+	if !slices.Contains(cds, "pstats:rename") {
+		t.Fatalf("expected a rename button on the settings menu, got %v", cds)
 	}
 }
 
