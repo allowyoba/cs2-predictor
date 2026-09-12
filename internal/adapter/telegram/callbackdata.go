@@ -165,6 +165,20 @@ func cbManageOpen(chatID common.ChatID) string {
 	return "manage:open:" + strconv.FormatInt(chatID.Value, 36)
 }
 
+// --- team-match operator appointment (see team_match.go) ---
+
+func cbTeamMatchAdminPickChat(chatID common.ChatID) string {
+	return "tmatch_admin:chat:" + strconv.FormatInt(chatID.Value, 36)
+}
+
+func cbTeamMatchAdminAppoint(chatID common.ChatID, userID common.UserID) string {
+	return "tmatch_admin:appoint:" + strconv.FormatInt(chatID.Value, 36) + ":" + strconv.FormatInt(userID.Value, 36)
+}
+
+func cbTeamMatchAdminRemove(userID common.UserID) string {
+	return "tmatch_admin:remove:" + strconv.FormatInt(userID.Value, 36)
+}
+
 func cbModeratorCard(userID common.UserID) string {
 	return "moderators:card:" + strconv.FormatInt(userID.Value, 36)
 }

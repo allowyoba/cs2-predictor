@@ -56,6 +56,9 @@ func (f fakeRepo) SetModeratorPermissions(context.Context, common.ChatID, common
 	return nil
 }
 func (f fakeRepo) UserProfile(context.Context, common.UserID) (*UserProfile, error) { return nil, nil }
+func (f fakeRepo) UserProfiles(context.Context, []common.UserID) (map[common.UserID]UserProfile, error) {
+	return nil, nil
+}
 
 // An admin bypasses the moderator check entirely.
 func TestCanManage_AdminBypassesModeratorFlag(t *testing.T) {

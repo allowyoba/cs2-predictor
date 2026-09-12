@@ -97,10 +97,17 @@ func TestPrivateStatsMenu_OffersNotifications(t *testing.T) {
 	if err := handler.handlePrivateCallback(context.Background(), notifyCallback("pstats:menu")); err != nil {
 		t.Fatal(err)
 	}
-
 	cds, _ := findKeyboardButtons(*calls)
+	if !slices.Contains(cds, "pstats:settings") {
+		t.Fatalf("expected a settings button in the DM menu, got %v", cds)
+	}
+
+	if err := handler.handlePrivateCallback(context.Background(), notifyCallback("pstats:settings")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ = findKeyboardButtons(*calls)
 	if !slices.Contains(cds, "notify:menu") {
-		t.Fatalf("expected a notifications button in the DM menu, got %v", cds)
+		t.Fatalf("expected a notifications button in the settings menu, got %v", cds)
 	}
 }
 

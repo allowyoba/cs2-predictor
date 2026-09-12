@@ -56,7 +56,7 @@ func (h *UpdateHandler) notificationsMenu(ctx context.Context, target replyTarge
 		label := h.Texts.Get(entry.key, locale) + ": " + h.Texts.Get(stateKey, locale)
 		rows = append(rows, []InlineButton{button(label, "notify:toggle:"+string(entry.kind))})
 	}
-	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})
+	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:settings")})
 
 	text := bold(h.Texts.Get("notify.title", locale)) + "\n\n" + h.Texts.Get("notify.explainer", locale)
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})

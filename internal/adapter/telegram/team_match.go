@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/enrichment"
@@ -66,9 +67,10 @@ func (h *UpdateHandler) handleTeamMatchAdminCommand(ctx context.Context, chatID 
 	if h.TeamMatchOperators == nil {
 		return newValidationError("team match operators are not configured")
 	}
+	replyTo := sendTarget(chatID, nil)
 	fields := strings.Fields(args)
 	if len(fields) == 0 {
-		return h.listTeamMatchOperators(ctx, chatID, locale)
+		return h.listTeamMatchOperators(ctx, replyTo, actor, locale)
 	}
 	switch fields[0] {
 	case "add", "remove":
@@ -79,37 +81,160 @@ func (h *UpdateHandler) handleTeamMatchAdminCommand(ctx context.Context, chatID 
 		if err != nil {
 			return newValidationError("invalid user id %q", fields[1])
 		}
-		target := common.UserID{Value: id}
+		targetID := common.UserID{Value: id}
 		if fields[0] == "add" {
-			if err := h.TeamMatchOperators.AddOperator(ctx, target, actor); err != nil {
+			if err := h.TeamMatchOperators.AddOperator(ctx, targetID, actor); err != nil {
 				return err
 			}
-		} else if err := h.TeamMatchOperators.RemoveOperator(ctx, target); err != nil {
+		} else if err := h.TeamMatchOperators.RemoveOperator(ctx, targetID); err != nil {
 			return err
 		}
-		return h.listTeamMatchOperators(ctx, chatID, locale)
+		return h.listTeamMatchOperators(ctx, replyTo, actor, locale)
 	case "list":
-		return h.listTeamMatchOperators(ctx, chatID, locale)
+		return h.listTeamMatchOperators(ctx, replyTo, actor, locale)
 	default:
 		return newValidationError("usage: /team_match_admin add|remove|list [user_id]")
 	}
 }
 
-func (h *UpdateHandler) listTeamMatchOperators(ctx context.Context, chatID common.ChatID, locale common.LocaleCode) error {
+// listTeamMatchOperators renders the delegated-operator roster with a
+// one-tap remove button per entry, plus an "add" entry point into the
+// chat/participant picker below — root-operator-only, same as every other
+// call site that mutates this roster (checked here too, not just at the
+// menu button that links to it, since callback data isn't otherwise
+// authenticated).
+func (h *UpdateHandler) listTeamMatchOperators(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode) error {
+	if !h.isRootTeamMatchOperator(actor) {
+		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+	}
 	operators, err := h.TeamMatchOperators.ListOperators(ctx)
 	if err != nil {
 		return err
 	}
-	var b strings.Builder
-	b.WriteString(bold(h.Texts.Get("teammatch.admin_title", locale)))
+	profiles, err := h.Chats.UserProfiles(ctx, operators)
+	if err != nil {
+		return err
+	}
+	text := bold(h.Texts.Get("teammatch.admin_title", locale))
 	if len(operators) == 0 {
-		b.WriteString("\n\n" + h.Texts.Get("teammatch.admin_empty", locale))
+		text += "\n\n" + h.Texts.Get("teammatch.admin_empty", locale)
 	}
+	var rows [][]InlineButton
 	for _, id := range operators {
-		fmt.Fprintf(&b, "\n• <code>%d</code>", id.Value)
+		rows = append(rows, []InlineButton{button(operatorLabel(id, profiles), cbTeamMatchAdminRemove(id))})
 	}
-	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "hub:system")}}}
-	return h.sendTextWithKeyboard(ctx, chatID, b.String(), kb, nil)
+	rows = append(rows, []InlineButton{button(h.Texts.Get("teammatch.admin_add", locale), "tmatch_admin:add")})
+	rows = append(rows, []InlineButton{h.backButton(locale, "hub:system")})
+	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+}
+
+// operatorLabel renders a user's display name when the bot has one cached
+// (a prior /start, vote, or moderator appointment), falling back to the
+// bare numeric id — the same fallback UserProfile's own callers already
+// accept, since not every appointed id is guaranteed a cached profile.
+func operatorLabel(id common.UserID, profiles map[common.UserID]chat.UserProfile) string {
+	if p, ok := profiles[id]; ok && p.DisplayName != "" {
+		return "✖ " + p.DisplayName
+	}
+	return fmt.Sprintf("✖ %d", id.Value)
+}
+
+// teamMatchAdminAddMenu starts the "appoint from a real participant" flow:
+// pick one of the actor's own managed chats first (the same picker
+// managedChatsMenu uses), then that chat's recent voters. Reusing
+// ManagedChats/ChatParticipants here — rather than exposing every chat in
+// the database — keeps this to the same visibility boundary every other
+// admin surface already respects: an operator only browses chats they
+// themselves have passed a manager check in.
+func (h *UpdateHandler) teamMatchAdminAddMenu(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode) error {
+	if !h.isRootTeamMatchOperator(actor) {
+		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+	}
+	chats, err := h.Chats.ManagedChats(ctx, actor)
+	if err != nil {
+		return err
+	}
+	back := []InlineButton{h.backButton(locale, "hub:team_match_operators")}
+	if len(chats) == 0 {
+		return h.respond(ctx, target, h.Texts.Get("teammatch.admin_pick_chat_empty", locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
+	}
+	rows := make([][]InlineButton, 0, len(chats)+1)
+	for _, c := range chats {
+		rows = append(rows, []InlineButton{button(truncate(c.Title, 40), cbTeamMatchAdminPickChat(c.ChatID))})
+	}
+	rows = append(rows, back)
+	return h.respond(ctx, target, h.Texts.Get("teammatch.admin_pick_chat_title", locale), &InlineKeyboard{InlineKeyboard: rows})
+}
+
+// teamMatchParticipantWindow mirrors TeamMatchService's own window (see
+// internal/app/team_match.go) for what counts as "recent" — the pool a
+// crowd-verification ask draws from is exactly the pool an operator
+// appointment should draw from too: real, currently-active voters.
+const teamMatchParticipantWindow = 90 * 24 * time.Hour
+
+// teamMatchAdminPickUserMenu lists chatID's recent voters as appointment
+// candidates. Batched name lookup (UserProfiles) rather than one query per
+// candidate — the same N+1 this package avoids elsewhere.
+func (h *UpdateHandler) teamMatchAdminPickUserMenu(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode, chatID common.ChatID) error {
+	if !h.isRootTeamMatchOperator(actor) {
+		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+	}
+	participants, err := h.Predictions.ChatParticipants(ctx, chatID, h.Clock.Now().Add(-teamMatchParticipantWindow))
+	if err != nil {
+		return err
+	}
+	back := []InlineButton{h.backButton(locale, "tmatch_admin:add")}
+	if len(participants) == 0 {
+		return h.respond(ctx, target, h.Texts.Get("teammatch.admin_pick_user_empty", locale), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
+	}
+	profiles, err := h.Chats.UserProfiles(ctx, participants)
+	if err != nil {
+		return err
+	}
+	rows := make([][]InlineButton, 0, len(participants)+1)
+	for _, id := range participants {
+		label := fmt.Sprintf("%d", id.Value)
+		if p, ok := profiles[id]; ok && p.DisplayName != "" {
+			label = p.DisplayName
+		}
+		rows = append(rows, []InlineButton{button(truncate(label, 40), cbTeamMatchAdminAppoint(chatID, id))})
+	}
+	rows = append(rows, back)
+	return h.respond(ctx, target, h.Texts.Get("teammatch.admin_pick_user_title", locale), &InlineKeyboard{InlineKeyboard: rows})
+}
+
+// appointTeamMatchOperator is the picker flow's final step — mirrors
+// handleTeamMatchAdminCommand's "add" case exactly (same AddOperator call,
+// same root-only guard, same "just re-render the roster" confirmation),
+// just reached via chat/participant taps instead of a typed numeric id.
+func (h *UpdateHandler) appointTeamMatchOperator(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode, appointee common.UserID) error {
+	if !h.isRootTeamMatchOperator(actor) {
+		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+	}
+	if h.TeamMatchOperators == nil {
+		return newValidationError("team match operators are not configured")
+	}
+	if err := h.TeamMatchOperators.AddOperator(ctx, appointee, actor); err != nil {
+		return err
+	}
+	return h.listTeamMatchOperators(ctx, target, actor, locale)
+}
+
+// removeTeamMatchOperator is listTeamMatchOperators' one-tap "✖ Name"
+// button — no separate confirm step, matching how the rest of this
+// root-only roster already treats add/remove as low-risk, reversible
+// toggles (an operator can always be re-appointed the same way).
+func (h *UpdateHandler) removeTeamMatchOperator(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode, operatorID common.UserID) error {
+	if !h.isRootTeamMatchOperator(actor) {
+		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+	}
+	if h.TeamMatchOperators == nil {
+		return newValidationError("team match operators are not configured")
+	}
+	if err := h.TeamMatchOperators.RemoveOperator(ctx, operatorID); err != nil {
+		return err
+	}
+	return h.listTeamMatchOperators(ctx, target, actor, locale)
 }
 
 // teamMatchQueueMenu lists pending review requests, best-score first (the

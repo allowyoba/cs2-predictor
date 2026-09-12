@@ -129,6 +129,8 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = nil
 	case data == "pstats:menu":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
+	case data == "pstats:settings":
+		err = h.privateSettingsMenu(ctx, target, locale)
 	case data == "hub:root":
 		err = h.startLanding(ctx, target, userID, locale)
 	case data == "hub:personal":
@@ -140,7 +142,35 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	case data == "hub:provider_status":
 		err = h.providerStatusView(ctx, target, userID, locale)
 	case data == "hub:team_match_operators":
-		err = h.listTeamMatchOperators(ctx, common.ChatID{Value: cb.Message.Chat.ID}, locale)
+		err = h.listTeamMatchOperators(ctx, target, userID, locale)
+	case data == "tmatch_admin:add":
+		err = h.teamMatchAdminAddMenu(ctx, target, userID, locale)
+	case strings.HasPrefix(data, "tmatch_admin:chat:"):
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "tmatch_admin:chat:"), 36, 64)
+		if parseErr != nil {
+			err = newValidationError("invalid team match admin chat id")
+		} else {
+			err = h.teamMatchAdminPickUserMenu(ctx, target, userID, locale, common.ChatID{Value: id})
+		}
+	case strings.HasPrefix(data, "tmatch_admin:appoint:"):
+		parts := strings.Split(strings.TrimPrefix(data, "tmatch_admin:appoint:"), ":")
+		if len(parts) != 2 {
+			err = newValidationError("invalid team match admin appoint callback")
+			break
+		}
+		appointeeID, parseErr := strconv.ParseInt(parts[1], 36, 64)
+		if parseErr != nil {
+			err = newValidationError("invalid team match admin appointee id")
+			break
+		}
+		err = h.appointTeamMatchOperator(ctx, target, userID, locale, common.UserID{Value: appointeeID})
+	case strings.HasPrefix(data, "tmatch_admin:remove:"):
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "tmatch_admin:remove:"), 36, 64)
+		if parseErr != nil {
+			err = newValidationError("invalid team match admin operator id")
+		} else {
+			err = h.removeTeamMatchOperator(ctx, target, userID, locale, common.UserID{Value: id})
+		}
 	case data == "pstats:all":
 		err = h.renderPrivateStats(ctx, target, userID, locale, scoring.AllTime())
 	case data == "pstats:years":
@@ -232,7 +262,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 			err = setErr
 			break
 		}
-		err = h.privateStatsMenu(ctx, target, userID, next)
+		err = h.privateSettingsMenu(ctx, target, next)
 	case data == "notify:menu":
 		err = h.notificationsMenu(ctx, target, userID, locale)
 	case strings.HasPrefix(data, "notify:toggle:"):

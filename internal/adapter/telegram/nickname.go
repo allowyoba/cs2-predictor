@@ -40,7 +40,7 @@ func (h *UpdateHandler) renameMenu(ctx context.Context, target replyTarget, user
 		text = h.Texts.Get("dm.rename_current", locale, bold(escapeHTML(*nickname)))
 		rows = append(rows, []InlineButton{button(h.Texts.Get("dm.rename_reset", locale), cbRenameReset())})
 	}
-	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})
+	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:settings")})
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 }
 
@@ -102,6 +102,6 @@ func (h *UpdateHandler) applyNicknameReply(ctx context.Context, msg *Message, us
 	}
 	chatID := common.ChatID{Value: msg.Chat.ID}
 	text := "✅ " + h.Texts.Get("dm.rename_saved", locale, bold(escapeHTML(nickname)))
-	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "pstats:menu")}}}
+	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "pstats:settings")}}}
 	return h.respond(ctx, sendTarget(chatID, nil), text, &kb)
 }

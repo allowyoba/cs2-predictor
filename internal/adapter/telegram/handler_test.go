@@ -45,6 +45,7 @@ type fakeChats struct {
 	reachable     map[int64]bool
 	notifyPrefs   map[int64]chat.NotificationPrefs
 	nicknames     map[int64]string
+	profiles      map[int64]chat.UserProfile
 }
 
 func newFakeChats() *fakeChats {
@@ -56,6 +57,7 @@ func newFakeChats() *fakeChats {
 		locales: map[int64]common.LocaleCode{}, reachable: map[int64]bool{},
 		notifyPrefs: map[int64]chat.NotificationPrefs{},
 		nicknames:   map[int64]string{},
+		profiles:    map[int64]chat.UserProfile{},
 	}
 }
 
@@ -185,7 +187,19 @@ func (f *fakeChats) SetModeratorPermissions(_ context.Context, chatID common.Cha
 	return nil
 }
 func (f *fakeChats) UserProfile(_ context.Context, userID common.UserID) (*chat.UserProfile, error) {
+	if p, ok := f.profiles[userID.Value]; ok {
+		return &p, nil
+	}
 	return nil, nil
+}
+func (f *fakeChats) UserProfiles(_ context.Context, userIDs []common.UserID) (map[common.UserID]chat.UserProfile, error) {
+	out := make(map[common.UserID]chat.UserProfile, len(userIDs))
+	for _, id := range userIDs {
+		if p, ok := f.profiles[id.Value]; ok {
+			out[id] = p
+		}
+	}
+	return out, nil
 }
 func (f *fakeChats) EventTopic(context.Context, common.ChatID, common.EventID) (*int64, error) {
 	return nil, nil

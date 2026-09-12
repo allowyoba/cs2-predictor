@@ -97,6 +97,9 @@ func (fakeChatsForCompletion) SetModeratorPermissions(context.Context, common.Ch
 func (fakeChatsForCompletion) UserProfile(context.Context, common.UserID) (*chat.UserProfile, error) {
 	return nil, nil
 }
+func (fakeChatsForCompletion) UserProfiles(context.Context, []common.UserID) (map[common.UserID]chat.UserProfile, error) {
+	return nil, nil
+}
 func (fakeChatsForCompletion) ClearEventTopic(context.Context, common.ChatID, common.EventID) error {
 	return nil
 }

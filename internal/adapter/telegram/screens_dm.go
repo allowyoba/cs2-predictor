@@ -110,12 +110,17 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 	if err != nil {
 		return err
 	}
+	// Grouped by function rather than a flat dump: stats/analytics first
+	// (this screen's primary purpose), then the person's own activity, then
+	// navigation (manage groups) and personal preferences tucked behind one
+	// "Settings" entry point (notifications/language/rename all move to
+	// privateSettingsMenu), then help/back last — standard progressive
+	// disclosure instead of listing every leaf action at the top level.
 	if len(available) == 0 {
 		rows := [][]InlineButton{
 			{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
 			{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
-			{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
-			{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
+			{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
 			{button(h.Texts.Get("menu.help", locale), "pstats:help")},
 		}
 		if backRow != nil {
@@ -132,14 +137,26 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(h.Texts.Get("private.chats", locale), "pstats:chats:0"), button(h.Texts.Get("stats.other_period", locale), "pstats:years")},
 		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
 		{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
-		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
-		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
+		{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
 		{button(h.Texts.Get("menu.help", locale), "pstats:help")},
 	}
 	if backRow != nil {
 		rows = append(rows, backRow)
 	}
 	return h.respond(ctx, target, h.Texts.Get("private.stats_choose", locale), &InlineKeyboard{InlineKeyboard: rows})
+}
+
+// privateSettingsMenu groups the person's own preferences — notifications,
+// language, display name — behind one entry point from privateStatsMenu,
+// instead of each living as its own top-level button alongside unrelated
+// stats/navigation actions.
+func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTarget, locale common.LocaleCode) error {
+	rows := [][]InlineButton{
+		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
+		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
+		{h.backButton(locale, "pstats:menu")},
+	}
+	return h.respond(ctx, target, h.Texts.Get("private.settings_title", locale), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 func (h *UpdateHandler) privateYearMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
