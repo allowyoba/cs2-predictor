@@ -18,18 +18,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"cs2predictor/internal/adapter/apifyhltv"
-	"cs2predictor/internal/adapter/grid"
-	"cs2predictor/internal/adapter/liquipedia"
 	"cs2predictor/internal/adapter/pandascore"
 	pg "cs2predictor/internal/adapter/postgres"
 	"cs2predictor/internal/adapter/telegram"
-	"cs2predictor/internal/adapter/valvevrs"
 	"cs2predictor/internal/app"
 	"cs2predictor/internal/app/httpapi"
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
-	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/domain/prediction"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
@@ -121,87 +116,9 @@ func run() error {
 	// for events/matches/schedule/results — this only ever adds cached,
 	// best-effort context like a Valve VRS rank line to an outgoing poll) ---
 	enrichmentRepo := pg.NewEnrichmentRepository(pool)
-	var enrichmentSources []enrichment.Source
-	// teamMatchSources feeds TeamMatchService: every ranking source whose
-	// RankingSync is actually running, so an unmatched team only ever gets
-	// checked against feeds this deployment has real data for.
-	var teamMatchSources []enrichment.Source
-	var valveVRSSync *app.RankingSync
-	if cfg.Enrichment.ValveVRSEnabled {
-		valveVRSSync = &app.RankingSync{
-			Source:   enrichment.SourceValveVRS,
-			Provider: valvevrs.NewProvider(valvevrs.DefaultConfig(), httpClient),
-			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
-			Snapshots: enrichmentRepo,
-			Lock:      clusterLock, Log: log,
-		}
-	}
-	// hltvRankingSync and vrsApifyRankingSync are a paired weekly fetch —
-	// both hit the same Apify actor, just in its two different ranking
-	// modes (see apifyhltv.DefaultConfig/DefaultValveConfig) — and share
-	// one ApifyRankingGate so both fire (or both stay quiet) together, at
-	// most once a calendar week, on HLTV's own Monday update day. VRS's job
-	// here writes to the exact same enrichment.SourceValveVRS as
-	// valveVRSSync above; that free GitHub-based job keeps running on its
-	// own frequent schedule as the fallback for the rest of the week. It
-	// gets its own LockKey (see RankingSync.LockKey's doc comment) rather
-	// than sharing valveVRSSync's Source-derived one: with no jitter and a
-	// 6h interval that's an exact multiple of this job's 1h check interval,
-	// a shared lock name would let the two silently and repeatedly starve
-	// each other.
-	var hltvRankingSync, vrsApifyRankingSync *app.RankingSync
-	if cfg.Enrichment.HLTVEnabled {
-		apifyGate := &app.ApifyRankingGate{State: enrichmentRepo, Clock: clock}
-		newApifyRankingSync := func(source enrichment.Source, providerConfig apifyhltv.Config, lockKey string) *app.RankingSync {
-			providerConfig.MaxTeams = cfg.Enrichment.ApifyMaxTeams
-			return &app.RankingSync{
-				Source:   source,
-				Provider: apifyhltv.NewProvider(providerConfig, httpClient),
-				Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
-				Snapshots: enrichmentRepo,
-				Gate:      apifyGate,
-				LockKey:   lockKey,
-				Lock:      clusterLock, Log: log,
-			}
-		}
-		hltvRankingSync = newApifyRankingSync(enrichment.SourceHLTV, apifyhltv.DefaultConfig(cfg.Enrichment.HLTVAPIToken), "")
-		vrsApifyRankingSync = newApifyRankingSync(enrichment.SourceValveVRS, apifyhltv.DefaultValveConfig(cfg.Enrichment.HLTVAPIToken),
-			"cs2predictor:ranking-sync:VALVE_VRS_APIFY")
-	}
-	// SourceValveVRS is registered once here, covering either or both of
-	// valveVRSSync (free, frequent) and vrsApifyRankingSync (paid, weekly)
-	// being the one(s) actually running — team-matching against VALVE_VRS
-	// only needs at least one of them producing data, not both.
-	if cfg.Enrichment.ValveVRSEnabled || cfg.Enrichment.HLTVEnabled {
-		enrichmentSources = append(enrichmentSources, enrichment.SourceValveVRS)
-		teamMatchSources = append(teamMatchSources, enrichment.SourceValveVRS)
-	}
-	if cfg.Enrichment.HLTVEnabled {
-		enrichmentSources = append(enrichmentSources, enrichment.SourceHLTV)
-		teamMatchSources = append(teamMatchSources, enrichment.SourceHLTV)
-	}
-	var teamStatsSync *app.TeamStatsSync
-	if cfg.Enrichment.GRIDEnabled {
-		gridProvider := grid.NewProvider(grid.DefaultConfig(cfg.Enrichment.GRIDAPIKey), httpClient)
-		teamStatsSync = &app.TeamStatsSync{
-			TeamStats: gridProvider, MatchStats: gridProvider,
-			Catalog: catalog, Subscriptions: subscriptions,
-			Form: enrichmentRepo, H2H: enrichmentRepo, State: enrichmentRepo,
-			Lock: clusterLock, Log: log,
-		}
-		enrichmentSources = append(enrichmentSources, enrichment.SourceGRID)
-	}
-	var tournamentMetadataSync *app.TournamentMetadataSync
-	if cfg.Enrichment.LiquipediaEnabled {
-		tournamentMetadataSync = &app.TournamentMetadataSync{
-			Provider:      liquipedia.NewProvider(liquipedia.DefaultConfig(cfg.Enrichment.LiquipediaAPIKey), httpClient),
-			Catalog:       catalog,
-			Subscriptions: subscriptions,
-			Metadata:      enrichmentRepo, State: enrichmentRepo,
-			Lock: clusterLock, Log: log,
-		}
-		enrichmentSources = append(enrichmentSources, enrichment.SourceLiquipedia)
-	}
+	enrichmentBuilt := buildEnrichment(cfg.Enrichment, enrichmentRepo, catalog, subscriptions, httpClient, clock, clusterLock, log)
+	enrichmentSources := enrichmentBuilt.Sources
+	teamMatchSources := enrichmentBuilt.TeamMatchSources
 
 	// --- telegram adapter ---
 	texts, err := telegram.LoadTexts()
@@ -363,20 +280,8 @@ func run() error {
 		runBackground(cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
 		runBackground(cfg.DigestCheckDelay, digests.Dispatch)
 		runBackground(cfg.OutboxDelay, dispatcher.Dispatch)
-		if valveVRSSync != nil {
-			runBackground(cfg.Enrichment.ValveVRSSyncInterval, valveVRSSync.Dispatch)
-		}
-		if hltvRankingSync != nil {
-			runBackground(cfg.Enrichment.ApifyRankingCheckInterval, hltvRankingSync.Dispatch)
-		}
-		if vrsApifyRankingSync != nil {
-			runBackground(cfg.Enrichment.ApifyRankingCheckInterval, vrsApifyRankingSync.Dispatch)
-		}
-		if teamStatsSync != nil {
-			runBackground(cfg.Enrichment.GRIDSyncInterval, teamStatsSync.Dispatch)
-		}
-		if tournamentMetadataSync != nil {
-			runBackground(cfg.Enrichment.LiquipediaSyncInterval, tournamentMetadataSync.Dispatch)
+		for _, job := range enrichmentBuilt.Jobs {
+			runBackground(job.interval, job.dispatch)
 		}
 		if cfg.PollReminderLead > 0 {
 			runBackground(cfg.PollReminderCheckDelay, reminders.Dispatch)

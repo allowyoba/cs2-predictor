@@ -67,7 +67,7 @@ func (s *RankingSync) lockKey() string {
 }
 
 func (s *RankingSync) Dispatch(ctx context.Context) {
-	_, err := s.Lock.Execute(ctx, s.lockKey(), func(ctx context.Context) error {
+	guardedDispatch(ctx, s.Lock, s.lockKey(), s.Log, "ranking sync ("+string(s.Source)+")", func(ctx context.Context) {
 		if s.Gate != nil {
 			ok, gateErr := s.Gate.ShouldRun(ctx, s.Source)
 			if gateErr != nil {
@@ -77,18 +77,14 @@ func (s *RankingSync) Dispatch(ctx context.Context) {
 				// other persistent sync failure does, rather than quietly
 				// reporting the source as healthy while it never fetches.
 				s.recordFailure(ctx, fmt.Errorf("gate check failed: %w", gateErr))
-				return nil
+				return
 			}
 			if !ok {
-				return nil
+				return
 			}
 		}
 		s.sync(ctx)
-		return nil
 	})
-	if err != nil {
-		s.Log.Error("ranking sync dispatch failed", "source", s.Source, "error", err)
-	}
 }
 
 func (s *RankingSync) sync(ctx context.Context) {
@@ -122,12 +118,7 @@ func (s *RankingSync) sync(ctx context.Context) {
 			continue
 		}
 		matched++
-		ranking := enrichment.TeamRanking{
-			TeamID: teamID, GlobalRank: rt.GlobalRank, RegionalRank: rt.RegionalRank,
-			Region: rt.Region, Points: rt.Points, Roster: rt.Identity.Roster,
-			PublishedAt: rt.PublishedAt, Source: rt.Source,
-		}
-		if err := s.Rankings.SaveRanking(ctx, ranking); err != nil {
+		if err := s.Rankings.SaveRanking(ctx, enrichment.NewTeamRanking(teamID, rt)); err != nil {
 			s.Log.Error("ranking save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
 		}
 	}
@@ -139,10 +130,7 @@ func (s *RankingSync) sync(ctx context.Context) {
 }
 
 func (s *RankingSync) recordFailure(ctx context.Context, err error) {
-	s.Log.Warn("ranking sync failed, keeping cached rankings", "source", s.Source, "error", err)
-	if stateErr := s.State.RecordFailure(ctx, s.Source, err.Error()); stateErr != nil {
-		s.Log.Error("ranking sync state record-failure failed", "source", s.Source, "error", stateErr)
-	}
+	recordSyncFailure(ctx, s.State, s.Source, s.Log, "ranking", err)
 }
 
 // buildCandidates loads every local team plus its known aliases (one batch

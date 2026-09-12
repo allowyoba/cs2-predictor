@@ -28,13 +28,7 @@ type TeamStatsSync struct {
 }
 
 func (s *TeamStatsSync) Dispatch(ctx context.Context) {
-	_, err := s.Lock.Execute(ctx, "cs2predictor:grid-team-stats-sync", func(ctx context.Context) error {
-		s.sync(ctx)
-		return nil
-	})
-	if err != nil {
-		s.Log.Error("grid team stats sync dispatch failed", "error", err)
-	}
+	guardedDispatch(ctx, s.Lock, "cs2predictor:grid-team-stats-sync", s.Log, "grid team stats", s.sync)
 }
 
 func (s *TeamStatsSync) sync(ctx context.Context) {
@@ -81,7 +75,7 @@ func (s *TeamStatsSync) sync(ctx context.Context) {
 	// doesn't count against health. But if EVERY attempted lookup came back
 	// an actual error (a bad key, GRID down, ...), that's worth recording
 	// as a sync failure rather than silently reporting success.
-	if attempted > 0 && succeeded == 0 && lastErr != nil {
+	if allAttemptsFailed(attempted, succeeded, lastErr) {
 		s.recordFailure(ctx, lastErr)
 		return
 	}
@@ -126,8 +120,5 @@ func (s *TeamStatsSync) enrichH2H(ctx context.Context, first, second competition
 }
 
 func (s *TeamStatsSync) recordFailure(ctx context.Context, err error) {
-	s.Log.Warn("grid team stats sync failed, keeping cached data", "error", err)
-	if stateErr := s.State.RecordFailure(ctx, enrichment.SourceGRID, err.Error()); stateErr != nil {
-		s.Log.Error("grid sync state record-failure failed", "error", stateErr)
-	}
+	recordSyncFailure(ctx, s.State, enrichment.SourceGRID, s.Log, "grid team stats", err)
 }
