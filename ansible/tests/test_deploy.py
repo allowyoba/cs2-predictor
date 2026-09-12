@@ -65,14 +65,6 @@ case "$*" in
 esac
 ''')
         docker.chmod(0o755)
-        # aws is stubbed for the S3 backup-storage tests only; it logs its
-        # own invocations separately from docker's log so assertions on
-        # one never have to filter out the other.
-        aws = self.bin / "aws"
-        aws.write_text('''#!/bin/sh
-printf '%s\\n' "$*" >> "$MOCK_AWS_LOG"
-''')
-        aws.chmod(0o755)
         self.new_image = "ghcr.io/example/app@sha256:" + "a" * 64
         self.previous_image = "ghcr.io/example/app@sha256:" + "b" * 64
         self.new_env_values = {
@@ -98,8 +90,7 @@ printf '%s\\n' "$*" >> "$MOCK_AWS_LOG"
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],
                         REGISTRY_USER="test", REGISTRY_TOKEN="private-token",
-                        MOCK_DOCKER_LOG=str(self.root / "docker.log"),
-                        MOCK_AWS_LOG=str(self.root / "aws.log"), **self.new_env_values)
+                        MOCK_DOCKER_LOG=str(self.root / "docker.log"), **self.new_env_values)
         self.vars = {
             "app_dir": str(self.app), "app_user": "root",
             "backup_root": str(self.backups), "deploy_lock": str(self.lock),
@@ -295,11 +286,16 @@ esac
         result = self.run_deploy()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertFalse(self.db_backup_dir().exists())
-        aws_log = (self.root / "aws.log").read_text()
-        self.assertIn("put-bucket-lifecycle-configuration", aws_log)
-        self.assertIn("https://storage.yandexcloud.net", aws_log)
-        self.assertIn("s3 cp", aws_log)
-        self.assertIn("s3://cs2predictor-backups/database/", aws_log)
+        # The S3 steps run through the official AWS CLI image via `docker
+        # run` (no `aws` binary is ever installed on the host — see
+        # database_backup/tasks/main.yml's own comment for why), so their
+        # invocations land in docker.log, not a separate aws-specific log.
+        docker_log = (self.root / "docker.log").read_text()
+        self.assertIn("amazon/aws-cli", docker_log)
+        self.assertIn("put-bucket-lifecycle-configuration", docker_log)
+        self.assertIn("https://storage.yandexcloud.net", docker_log)
+        self.assertIn("s3 cp", docker_log)
+        self.assertIn("s3://cs2predictor-backups/database/", docker_log)
         self.assertNotIn("s3cr3t", result.stdout)
 
     def test_database_backup_to_s3_requires_credentials(self):

@@ -63,6 +63,14 @@
         argv: [gzip, "{{ db_backup_staging.path }}/{{ db_backup_label }}.dump"]
       changed_when: true
 
+    - name: Determine the compressed dump's size
+      # Read by "Record the backup in db_backup_log" below — taken here,
+      # before the fs/s3 branches, since neither a filesystem move nor an
+      # S3 upload changes the file's own size.
+      ansible.builtin.stat:
+        path: "{{ db_backup_staging.path }}/{{ db_backup_label }}.dump.gz"
+      register: db_backup_dump_stat
+
     - name: Store the compressed dump on the filesystem
       when: db_backup_storage == 'fs'
       block:
@@ -102,17 +110,17 @@
               Set DB_BACKUP_S3_BUCKET, DB_BACKUP_S3_ACCESS_KEY_ID and DB_BACKUP_S3_SECRET_ACCESS_KEY to back up to S3
               (see ansible/README.md).
 
-        # Neither this role nor any other installs it — a real incident:
-        # the two tasks below assumed `aws` was already on the host and
-        # failed with a bare "command not found" (hidden by no_log, so it
-        # looked like a credentials/permission problem instead).
-        - name: Install the AWS CLI (needed for S3-compatible backup storage)
-          ansible.builtin.apt:
-            name: awscli
-            state: present
-            update_cache: true
-            cache_valid_time: 3600
-
+        # Run through the official AWS CLI image rather than a host-
+        # installed `aws` binary: neither this role nor any other ever
+        # installed one (a real incident — the two tasks below assumed it
+        # was already on the host and failed with a bare "command not
+        # found", hidden by no_log so it looked like a credentials/
+        # permission problem instead), and the deploy user has no sudo/apt
+        # access to install system packages — only Docker, which every
+        # other command in this role already relies on (compose_argv).
+        # Pinned to a specific tag for the same reason every image this
+        # project deploys is pinned: a re-run installs the exact bytes
+        # that were verified, not whatever `latest` points to by then.
         - name: Ensure the bucket's lifecycle rule matches the configured retention
           # A declared lifecycle rule, not a manual prune loop: retention
           # holds even if a later deploy — the only thing that runs this
@@ -122,7 +130,16 @@
           # change.
           ansible.builtin.command:
             argv:
-              - aws
+              - docker
+              - run
+              - --rm
+              - -e
+              - AWS_ACCESS_KEY_ID
+              - -e
+              - AWS_SECRET_ACCESS_KEY
+              - -e
+              - AWS_DEFAULT_REGION
+              - amazon/aws-cli:2.23.6
               - s3api
               - put-bucket-lifecycle-configuration
               - --endpoint-url
@@ -141,10 +158,21 @@
         - name: Upload the dump
           ansible.builtin.command:
             argv:
-              - aws
+              - docker
+              - run
+              - --rm
+              - -v
+              - "{{ db_backup_staging.path }}:/data:ro"
+              - -e
+              - AWS_ACCESS_KEY_ID
+              - -e
+              - AWS_SECRET_ACCESS_KEY
+              - -e
+              - AWS_DEFAULT_REGION
+              - amazon/aws-cli:2.23.6
               - s3
               - cp
-              - "{{ db_backup_staging.path }}/{{ db_backup_label }}.dump.gz"
+              - "/data/{{ db_backup_label }}.dump.gz"
               - "s3://{{ db_backup_s3_bucket }}/{{ db_backup_s3_prefix }}{{ db_backup_label }}.dump.gz"
               - --endpoint-url
               - "{{ db_backup_s3_endpoint }}"
@@ -154,6 +182,30 @@
             AWS_DEFAULT_REGION: "{{ db_backup_s3_region }}"
           changed_when: true
           no_log: true
+
+    - name: Record the backup in db_backup_log
+      # Read back by internal/adapter/telegram/backup_status.go (the admin
+      # panel's backup-status screen) — this bot process never performs a
+      # backup itself, so this INSERT is the only place that table's data
+      # comes from. Only reached once pg_dump/compress/store-or-upload
+      # above already succeeded (an earlier failure aborts the play before
+      # this point), so there is nothing to record on a failed backup — see
+      # db_backup_log's own migration comment for why that gap is
+      # intentional rather than an oversight.
+      ansible.builtin.shell:
+        cmd: >-
+          {{ (compose_argv + ['exec', '-T', db_backup_container_service, 'psql', '-U', db_backup_database_user, '-d', db_backup_database_name, '-c',
+            "INSERT INTO db_backup_log(label, storage, size_bytes) VALUES ('" + db_backup_label + "', '" + db_backup_storage + "', " + (db_backup_dump_stat.stat.size | string) + ")"
+          ]) | map('quote') | join(' ') }}
+        executable: /bin/bash
+      environment:
+        # Same requirement as "Dump the database to a compressed
+        # custom-format file" above, for the same reason — see that task's
+        # own comment: Compose won't interpolate compose.prod.yml (and so
+        # won't run `exec` into any service) without APP_IMAGE set, even
+        # though this exec never starts the bot service itself.
+        APP_IMAGE: "{{ application_deploy_previous_image | default(app_image) }}"
+      changed_when: true
 
     - name: Report the backup outcome
       ansible.builtin.debug:
