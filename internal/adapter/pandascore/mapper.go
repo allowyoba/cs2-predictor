@@ -180,9 +180,21 @@ func mapMatch(dto matchDTO) competition.Match {
 
 	var score *competition.MatchScore
 	if first != nil && second != nil && dto.Status == "finished" { // intentionally exact-case, unlike the case-insensitive status mapping below
-		firstID, _ := strconv.ParseInt(first.ExternalID, 10, 64)
-		secondID, _ := strconv.ParseInt(second.ExternalID, 10, 64)
-		score = &competition.MatchScore{First: results[firstID], Second: results[secondID]}
+		firstID, firstErr := strconv.ParseInt(first.ExternalID, 10, 64)
+		secondID, secondErr := strconv.ParseInt(second.ExternalID, 10, 64)
+		firstScore, firstOK := results[firstID]
+		secondScore, secondOK := results[secondID]
+		// A plain map lookup silently returns 0 for a missing key — exactly
+		// indistinguishable from a genuine 0-map result. PandaScore's own
+		// results[] aggregate has been observed lagging status flipping to
+		// "finished" (most likely right after the deciding map of a BO3+),
+		// so require both entries to actually be present before trusting
+		// them; otherwise leave score unset, same as an unfinished match —
+		// the next sync tick re-fetches and, once the aggregate has caught
+		// up, settles correctly instead of locking in a wrong score forever.
+		if firstErr == nil && secondErr == nil && firstOK && secondOK {
+			score = &competition.MatchScore{First: firstScore, Second: secondScore}
+		}
 	}
 
 	var status competition.MatchStatus
