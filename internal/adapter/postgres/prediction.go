@@ -28,13 +28,15 @@ func NewPredictionRepository(pool *pgxpool.Pool) *PredictionRepository {
 func (r *PredictionRepository) scanPoll(ctx context.Context, row pgx.Row) (*prediction.Poll, error) {
 	var p prediction.Poll
 	var chatVal int64
-	if err := row.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt); err != nil {
+	var firstTeamVal, secondTeamVal *uuid.UUID
+	if err := row.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt, &firstTeamVal, &secondTeamVal); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	p.ChatID = common.ChatID{Value: chatVal}
+	applyPollTeamAnchor(&p, firstTeamVal, secondTeamVal)
 
 	optRows, err := executor(ctx, r.pool).Query(ctx,
 		`SELECT option_index, first_score, second_score FROM poll_option WHERE poll_id = $1 ORDER BY option_index`, p.ID.Value)
@@ -52,7 +54,20 @@ func (r *PredictionRepository) scanPoll(ctx context.Context, row pgx.Row) (*pred
 	return &p, optRows.Err()
 }
 
-const pollSelect = `SELECT id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at FROM match_poll`
+const pollSelect = `SELECT id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at, first_team_id, second_team_id FROM match_poll`
+
+// applyPollTeamAnchor sets Poll's team anchor from two nullable scanned
+// columns — nil (an older poll, saved before this anchor existed) leaves
+// both fields at their zero value, which Settle treats as "no anchor,
+// score as before".
+func applyPollTeamAnchor(p *prediction.Poll, firstTeamVal, secondTeamVal *uuid.UUID) {
+	if firstTeamVal != nil {
+		p.FirstTeamID = common.TeamID{Value: *firstTeamVal}
+	}
+	if secondTeamVal != nil {
+		p.SecondTeamID = common.TeamID{Value: *secondTeamVal}
+	}
+}
 
 func (r *PredictionRepository) FindPoll(ctx context.Context, id common.PollID) (*prediction.Poll, error) {
 	return r.scanPoll(ctx, executor(ctx, r.pool).QueryRow(ctx, pollSelect+` WHERE id = $1`, id.Value))
@@ -81,11 +96,13 @@ func (r *PredictionRepository) queryPolls(ctx context.Context, query string, arg
 	for rows.Next() {
 		var p prediction.Poll
 		var chatVal int64
-		if err := rows.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt); err != nil {
+		var firstTeamVal, secondTeamVal *uuid.UUID
+		if err := rows.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt, &firstTeamVal, &secondTeamVal); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		p.ChatID = common.ChatID{Value: chatVal}
+		applyPollTeamAnchor(&p, firstTeamVal, secondTeamVal)
 		polls = append(polls, p)
 	}
 	rows.Close()
@@ -181,12 +198,24 @@ func (r *PredictionRepository) ChatParticipants(ctx context.Context, chatID comm
 
 func (r *PredictionRepository) SavePoll(ctx context.Context, p prediction.Poll) (prediction.Poll, error) {
 	ex := executor(ctx, r.pool)
+	// first_team_id/second_team_id are deliberately absent from the ON
+	// CONFLICT clause — like poll_option, they're write-once: the anchor
+	// this poll was created with must never change on a later save (e.g.
+	// the one that fills in TelegramMessageID right after sending).
+	var firstTeamVal, secondTeamVal *uuid.UUID
+	if p.FirstTeamID != (common.TeamID{}) {
+		firstTeamVal = &p.FirstTeamID.Value
+	}
+	if p.SecondTeamID != (common.TeamID{}) {
+		secondTeamVal = &p.SecondTeamID.Value
+	}
 	_, err := ex.Exec(ctx,
-		`INSERT INTO match_poll(id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at, created_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now(), now())
+		`INSERT INTO match_poll(id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at, first_team_id, second_team_id, created_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now())
 		 ON CONFLICT (id) DO UPDATE SET topic_id=excluded.topic_id, telegram_poll_id=excluded.telegram_poll_id,
 		   telegram_message_id=excluded.telegram_message_id, status=excluded.status, closes_at=excluded.closes_at, updated_at=now()`,
-		p.ID.Value, p.ChatID.Value, p.MatchID.Value, p.TopicID, p.TelegramPollID, p.TelegramMessageID, p.Status, p.ClosesAt)
+		p.ID.Value, p.ChatID.Value, p.MatchID.Value, p.TopicID, p.TelegramPollID, p.TelegramMessageID, p.Status, p.ClosesAt,
+		firstTeamVal, secondTeamVal)
 	if err != nil {
 		return prediction.Poll{}, err
 	}

@@ -39,6 +39,20 @@ type Poll struct {
 	Options           []Option
 	Status            PollStatus
 	ClosesAt          time.Time
+	// FirstTeamID/SecondTeamID anchor which physical team Options' "first"
+	// and "second" refer to, captured once at creation from the match
+	// snapshot the poll was actually rendered from. PandaScore's own
+	// opponents order is not guaranteed stable across two fetches of the
+	// same match (confirmed in production — see the incident this field
+	// exists to fix), so match.FirstTeam/SecondTeam can no longer be
+	// trusted at settlement time to mean what they meant when this poll's
+	// question and options were built. Zero-value TeamIDs mark a poll
+	// created before this field existed — its Options must be treated
+	// as-is (no correction possible, since we have no anchor to correct
+	// against). See scoring.Service.Settle for the settlement-time check
+	// this makes possible.
+	FirstTeamID  common.TeamID
+	SecondTeamID common.TeamID
 }
 
 type Vote struct {
