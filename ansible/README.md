@@ -153,7 +153,7 @@ environment; `webhook.yml` uses only the connection-related ones (`APP_USER` is 
 | `LIQUIPEDIA_API_KEY`    | Secret   | Optional. Written into the server `.env`; required only once `LIQUIPEDIA_ENABLED=true` |
 | `HLTV_ENABLED`, `APIFY_RANKING_CHECK_INTERVAL`, `APIFY_MAX_TEAMS` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
 | `APIFY_TOKEN`           | Secret   | Optional. Written into the server `.env`; required only once `HLTV_ENABLED=true` |
-| `DB_BACKUP_ENABLED`, `DB_BACKUP_RETENTION_DAYS`, `DB_BACKUP_STORAGE` | Variable | Optional. Read directly by Ansible, not written to `.env`; unset defaults to enabled, 5 days, filesystem — see "Database backups" below |
+| `DB_BACKUP_ENABLED`, `DB_BACKUP_RETENTION_COUNT`, `DB_BACKUP_STORAGE` | Variable | Optional. Read directly by Ansible, not written to `.env`; unset defaults to enabled, keep 5, filesystem — see "Database backups" below |
 | `DB_BACKUP_S3_ENDPOINT`, `DB_BACKUP_S3_REGION`, `DB_BACKUP_S3_BUCKET`, `DB_BACKUP_S3_PREFIX` | Variable | Optional, only used when `DB_BACKUP_STORAGE=s3`; endpoint/region default to Yandex Cloud Object Storage |
 | `DB_BACKUP_S3_ACCESS_KEY_ID`, `DB_BACKUP_S3_SECRET_ACCESS_KEY` | Secret   | Required only once `DB_BACKUP_STORAGE=s3` |
 
@@ -261,15 +261,30 @@ anything about the deploy changes. A failed backup fails the deploy the same way
 until it succeeds. The one exception is a genuine first install — there's no previous database to back up yet, so the
 role skips itself when no `deployment.json` from an earlier deploy exists.
 
-Every setting defaults safely with nothing configured: backups are enabled, kept for 5 days, and stored under
-`<APP_PATH>/backups/database` on the VM's own filesystem (`ansible/roles/database_backup/defaults/main.yml`). Set
-`DB_BACKUP_STORAGE=s3` to upload to an S3-compatible bucket instead — `DB_BACKUP_S3_ENDPOINT`/`DB_BACKUP_S3_REGION`
+Every setting defaults safely with nothing configured: backups are enabled, the newest 5 are kept, and they're stored
+under `<APP_PATH>/backups/database` on the VM's own filesystem (`ansible/roles/database_backup/defaults/main.yml`).
+Set `DB_BACKUP_STORAGE=s3` to upload to an S3-compatible bucket instead — `DB_BACKUP_S3_ENDPOINT`/`DB_BACKUP_S3_REGION`
 default to Yandex Cloud Object Storage (`https://storage.yandexcloud.net`, `ru-central1`), this project's default
-provider, but any S3-compatible endpoint works by overriding them. S3 retention is enforced as a real bucket
-lifecycle rule (`aws s3api put-bucket-lifecycle-configuration`, re-applied every deploy) rather than a manual prune,
-so it holds even if backups stop running; filesystem retention prunes `*.dump.gz` files older than
-`DB_BACKUP_RETENTION_DAYS` on every run instead. `DB_BACKUP_S3_ACCESS_KEY_ID`/`DB_BACKUP_S3_SECRET_ACCESS_KEY` are
-required once S3 storage is selected — the deploy fails fast with a clear message if either is missing.
+provider, but any S3-compatible endpoint works by overriding them. Retention is a straight count cap
+(`DB_BACKUP_RETENTION_COUNT`, default 5) rather than an age window, applied identically on both storages: after each
+backup, everything but the newest N is deleted — the newest N filesystem files by mtime, or the newest N objects
+under the S3 prefix (`aws s3api list-objects-v2` + `s3 rm`, run through the AWS CLI's official Docker image since the
+deploy host has no `aws` binary or sudo access to install one). `DB_BACKUP_S3_ACCESS_KEY_ID`/`DB_BACKUP_S3_SECRET_ACCESS_KEY`
+are required once S3 storage is selected — the deploy fails fast with a clear message if either is missing. Backups
+also run independently of any deploy, once a day — see "Scheduled backups" below.
+
+## Scheduled backups
+
+`ansible/backup.yml` runs the same `database_backup` role on its own, decoupled from any deploy — the mandatory
+pre-deploy backup only protects against a *deploy*, so days without one would otherwise leave the accumulating votes
+and predictions unbacked. It reuses `prepare_connection` (the same SSH-transport setup `deploy.yml` uses) to reach
+`production`, sets `application_deploy_previous_raw: {failed: false}` to satisfy the role's own "not a first install"
+gate (which doesn't apply outside a deploy) and a placeholder `app_image` (only needed so Compose can interpolate
+`compose.prod.yml` for the read-only `exec` into Postgres — nothing here ever starts a container from it), then cleans
+up its SSH credentials the same way `deploy.yml` does. The `Backup` GitHub Actions workflow (`.github/workflows/backup.yml`)
+runs it once a day on a cron schedule (plus `workflow_dispatch` for a manual run), reusing the exact same
+`DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_PORT`/`APP_USER`/`APP_PATH`/`DEPLOY_KEY`/`KNOWN_HOSTS` and `DB_BACKUP_*`
+secrets/vars already configured for `deploy.yml` — no separate configuration is needed.
 
 ## Deployment flow
 

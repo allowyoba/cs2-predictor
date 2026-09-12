@@ -138,13 +138,6 @@ type UpdateHandler struct {
 	// exposes, just human-readable inside a DM. Nil/empty omits them.
 	EnrichmentState   enrichment.SyncStateRepository
 	EnrichmentSources []enrichment.Source
-
-	// BackupStatus backs the database-backup status screen (see
-	// backup_status.go): this bot process never performs a backup itself —
-	// the deploy pipeline (ansible/roles/database_backup) does, and writes
-	// one row per successful backup directly to db_backup_log. Nil omits
-	// the screen's data entirely (shown as "no backups recorded").
-	BackupStatus common.BackupStatusRepository
 }
 
 // requireManager wraps chat.AuthorizationService.RequireManager: on success
