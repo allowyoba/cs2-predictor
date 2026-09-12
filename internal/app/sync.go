@@ -167,12 +167,43 @@ func (s *CompetitionSynchronization) CloseDuePolls(ctx context.Context) {
 	})
 }
 
+// reconcileTeamOrder anchors incoming's FirstTeam/SecondTeam (and, with it,
+// Score) to whichever order was established the first time this match's
+// participants were resolved and persisted (previous) — a real production
+// incident: PandaScore's own opponents[] order for a match isn't guaranteed
+// stable across two separate API calls, and prediction.Service.Create builds
+// every poll option's MatchScore{First, Second} from the match snapshot at
+// the moment its participants first became known (sync.go's
+// MatchNotStarted branch below). If a later fetch (e.g. the one that
+// reports the match as finished) returns the same two teams in the opposite
+// order, mapMatch would relabel FirstTeam/SecondTeam accordingly and the
+// final score would then be compared against poll options built under the
+// original labeling — silently crediting the wrong side's voters. Swapping
+// back here, before the match is ever saved or settled, keeps every
+// downstream consumer (SaveMatch, Settle, notifications) working with one
+// stable team identity → position mapping for the lifetime of the match.
+func reconcileTeamOrder(previous *competition.Match, incoming competition.Match) competition.Match {
+	if previous == nil || previous.FirstTeam == nil || previous.SecondTeam == nil ||
+		incoming.FirstTeam == nil || incoming.SecondTeam == nil {
+		return incoming
+	}
+	if previous.FirstTeam.ID != incoming.SecondTeam.ID || previous.SecondTeam.ID != incoming.FirstTeam.ID {
+		return incoming
+	}
+	incoming.FirstTeam, incoming.SecondTeam = incoming.SecondTeam, incoming.FirstTeam
+	if incoming.Score != nil {
+		incoming.Score.First, incoming.Score.Second = incoming.Score.Second, incoming.Score.First
+	}
+	return incoming
+}
+
 //nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (s *CompetitionSynchronization) processMatch(ctx context.Context, incoming competition.Match) error {
 	previous, err := s.Catalog.FindMatch(ctx, incoming.ID)
 	if err != nil {
 		return err
 	}
+	incoming = reconcileTeamOrder(previous, incoming)
 	if _, err := s.Catalog.SaveMatch(ctx, incoming); err != nil {
 		return err
 	}

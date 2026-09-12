@@ -36,6 +36,34 @@ func TestMapMatch(t *testing.T) {
 	}
 }
 
+func TestMapMatch_MissingResultsEntryLeavesScoreUnset(t *testing.T) {
+	// A real incident: PandaScore's results[] aggregate can lag the match's
+	// own status flipping to "finished" (observed right after a BO3
+	// decider), omitting one team's entry entirely. A plain map lookup
+	// would silently read that as a 0, turning a true 1:2 into a false
+	// 0:2 — this must instead leave the score unresolved so the next sync
+	// tick retries once PandaScore's data has caught up, rather than
+	// locking in a wrong score.
+	beginAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	matchType := "best_of"
+	games := 3
+	dto := matchDTO{
+		ID: 9, Name: strPtr("A vs B"), Status: "finished", BeginAt: &beginAt,
+		MatchType: &matchType, NumberOfGames: &games,
+		Serie:      namedDTO{ID: 4, Name: "Event"},
+		Tournament: &namedDTO{ID: 5, Name: "Final"},
+		Opponents:  []opponentDTO{{Opponent: &namedDTO{ID: 1, Name: "A"}}, {Opponent: &namedDTO{ID: 2, Name: "B"}}},
+		// Only team 2's entry is present — team 1's is missing entirely.
+		Results: []resultDTO{{TeamID: 2, Score: 2}},
+	}
+
+	match := mapMatch(dto)
+
+	if match.Score != nil {
+		t.Errorf("score = %+v, want nil (unresolved) when one team's result is missing", match.Score)
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 func TestMapEvent_AppendsYearWhenNotAlreadyInName(t *testing.T) {

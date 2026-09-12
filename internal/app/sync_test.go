@@ -374,3 +374,74 @@ func (f *fakeSyncChats) FilterDMReachable(context.Context, []common.UserID) ([]c
 }
 func (f *fakeSyncChats) Nickname(context.Context, common.UserID) (*string, error) { return nil, nil }
 func (f *fakeSyncChats) SetNickname(context.Context, common.UserID, string) error { return nil }
+
+// TestReconcileTeamOrder is a regression test for a real production
+// incident: a provider's opponents order for a match isn't guaranteed
+// stable across two fetches. A poll's options are built once, from
+// whichever order the match had the first time its participants were
+// resolved; if a later fetch (e.g. the one reporting the match finished)
+// swaps the two teams, the final score must be swapped back before it's
+// ever saved or settled — otherwise it gets compared against poll options
+// built under the original labeling, silently crediting the wrong side.
+func TestReconcileTeamOrder(t *testing.T) {
+	teamA := &competition.Team{ID: common.TeamID{Value: uuid.New()}, Name: "MIBR"}
+	teamB := &competition.Team{ID: common.TeamID{Value: uuid.New()}, Name: "Legacy"}
+	teamC := &competition.Team{ID: common.TeamID{Value: uuid.New()}, Name: "Alliance"}
+
+	t.Run("swapped order relative to previous is corrected, score included", func(t *testing.T) {
+		previous := &competition.Match{FirstTeam: teamA, SecondTeam: teamB}
+		incoming := competition.Match{FirstTeam: teamB, SecondTeam: teamA, Score: &competition.MatchScore{First: 2, Second: 1}}
+
+		got := reconcileTeamOrder(previous, incoming)
+
+		if got.FirstTeam != teamA || got.SecondTeam != teamB {
+			t.Fatalf("teams = (%v, %v), want (%v, %v)", got.FirstTeam, got.SecondTeam, teamA, teamB)
+		}
+		if got.Score == nil || got.Score.First != 1 || got.Score.Second != 2 {
+			t.Errorf("score = %+v, want 1:2 (swapped back with the teams)", got.Score)
+		}
+	})
+
+	t.Run("matching order relative to previous is left untouched", func(t *testing.T) {
+		previous := &competition.Match{FirstTeam: teamA, SecondTeam: teamB}
+		incoming := competition.Match{FirstTeam: teamA, SecondTeam: teamB, Score: &competition.MatchScore{First: 2, Second: 1}}
+
+		got := reconcileTeamOrder(previous, incoming)
+
+		if got.FirstTeam != teamA || got.SecondTeam != teamB || got.Score.First != 2 || got.Score.Second != 1 {
+			t.Errorf("match unexpectedly changed: %+v", got)
+		}
+	})
+
+	t.Run("no previous match is left untouched", func(t *testing.T) {
+		incoming := competition.Match{FirstTeam: teamA, SecondTeam: teamB, Score: &competition.MatchScore{First: 2, Second: 1}}
+
+		got := reconcileTeamOrder(nil, incoming)
+
+		if got.FirstTeam != teamA || got.SecondTeam != teamB {
+			t.Errorf("match unexpectedly changed: %+v", got)
+		}
+	})
+
+	t.Run("different teams entirely (not a swap) are left untouched", func(t *testing.T) {
+		previous := &competition.Match{FirstTeam: teamA, SecondTeam: teamB}
+		incoming := competition.Match{FirstTeam: teamA, SecondTeam: teamC, Score: &competition.MatchScore{First: 2, Second: 1}}
+
+		got := reconcileTeamOrder(previous, incoming)
+
+		if got.FirstTeam != teamA || got.SecondTeam != teamC || got.Score.First != 2 || got.Score.Second != 1 {
+			t.Errorf("match unexpectedly changed: %+v", got)
+		}
+	})
+
+	t.Run("participants not yet known on either side are left untouched", func(t *testing.T) {
+		previous := &competition.Match{FirstTeam: nil, SecondTeam: nil}
+		incoming := competition.Match{FirstTeam: teamA, SecondTeam: teamB, Score: nil}
+
+		got := reconcileTeamOrder(previous, incoming)
+
+		if got.FirstTeam != teamA || got.SecondTeam != teamB {
+			t.Errorf("match unexpectedly changed: %+v", got)
+		}
+	})
+}
