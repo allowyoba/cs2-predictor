@@ -6,10 +6,12 @@
 # pre-deploy backup.
 db_backup_enabled: "{{ lookup('env', 'DB_BACKUP_ENABLED') | default('true', true) | bool }}"
 
-# How long a backup is kept before it's eligible for deletion — for "fs"
-# storage a straight file-age prune, for "s3" an actual bucket lifecycle
-# rule (so retention holds even if a later deploy is never run again).
-db_backup_retention_days: "{{ lookup('env', 'DB_BACKUP_RETENTION_DAYS') | default('5', true) | int }}"
+# How many backups are kept before the oldest are pruned — a count, not an
+# age window, so "keep 5 backups" holds regardless of how often a backup
+# actually runs (once per deploy, or daily via ansible/backup.yml). Applies
+# the same way to both "fs" (newest N files kept) and "s3" (newest N objects
+# under the prefix kept) storage.
+db_backup_retention_count: "{{ lookup('env', 'DB_BACKUP_RETENTION_COUNT') | default('5', true) | int }}"
 
 # "fs" (a local directory under app_dir) or "s3" (an S3-compatible bucket —
 # defaults to Yandex Cloud Object Storage's endpoint/region, since that's

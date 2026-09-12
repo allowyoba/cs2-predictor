@@ -110,9 +110,9 @@ jobs:
           # unlike the enrichment variables above, these are read by Ansible
           # itself (lookup('env', ...) in the role's defaults), not written
           # into the app's .env; every one is optional and defaults safely
-          # (5-day retention, filesystem storage) — see ansible/README.md.
+          # (keep the newest 5, filesystem storage) — see ansible/README.md.
           DB_BACKUP_ENABLED: ${{ vars.DB_BACKUP_ENABLED }}
-          DB_BACKUP_RETENTION_DAYS: ${{ vars.DB_BACKUP_RETENTION_DAYS }}
+          DB_BACKUP_RETENTION_COUNT: ${{ vars.DB_BACKUP_RETENTION_COUNT }}
           DB_BACKUP_STORAGE: ${{ vars.DB_BACKUP_STORAGE }}
           DB_BACKUP_S3_ENDPOINT: ${{ vars.DB_BACKUP_S3_ENDPOINT }}
           DB_BACKUP_S3_REGION: ${{ vars.DB_BACKUP_S3_REGION }}

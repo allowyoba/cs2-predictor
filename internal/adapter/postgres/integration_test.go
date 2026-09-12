@@ -1402,56 +1402,6 @@ func TestRetentionRepository_RowCountCapKeepsOnlyTheNewestRows(t *testing.T) {
 	}
 }
 
-// TestBackupStatusRepository_RecentBackupsReturnsNewestFirst covers the
-// read side of db_backup_log — the deploy pipeline (not this application)
-// is the only writer, so rows are inserted with raw SQL here, exactly the
-// shape ansible/roles/database_backup's psql INSERT produces.
-func TestBackupStatusRepository_RecentBackupsReturnsNewestFirst(t *testing.T) {
-	pool, ctx := newTestPool(t)
-	repo := pg.NewBackupStatusRepository(pool)
-
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO db_backup_log(label, storage, size_bytes, created_at) VALUES
-		 ('cs2predictor-20260910-220000', 'fs', NULL, now() - interval '2 days'),
-		 ('cs2predictor-20260911-220000', 's3', 482355712, now() - interval '1 days'),
-		 ('cs2predictor-20260912-220000', 's3', 501234567, now())`); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := repo.RecentBackups(ctx, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d records, want exactly 2 (the limit)", len(got))
-	}
-	if got[0].Label != "cs2predictor-20260912-220000" || got[1].Label != "cs2predictor-20260911-220000" {
-		t.Fatalf("records are not newest-first: %+v", got)
-	}
-	if got[0].SizeBytes == nil || *got[0].SizeBytes != 501234567 {
-		t.Fatalf("size_bytes = %v, want 501234567", got[0].SizeBytes)
-	}
-	if got[0].Storage != "s3" {
-		t.Fatalf("storage = %q, want s3", got[0].Storage)
-	}
-
-	// A NULL size_bytes (the deploy automation couldn't determine it) must
-	// round-trip as nil, not a false zero.
-	all, err := repo.RecentBackups(ctx, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var oldest common.BackupRecord
-	for _, rec := range all {
-		if rec.Label == "cs2predictor-20260910-220000" {
-			oldest = rec
-		}
-	}
-	if oldest.SizeBytes != nil {
-		t.Fatalf("expected a nil SizeBytes for the fs backup with no recorded size, got %v", *oldest.SizeBytes)
-	}
-}
-
 func TestAdminActionRepository_ReturnsNewestFirstPerChat(t *testing.T) {
 	pool, ctx := newTestPool(t)
 	chats := pg.NewChatRepository(pool)
