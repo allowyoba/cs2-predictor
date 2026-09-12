@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"cs2predictor/internal/domain/enrichment"
 )
@@ -210,5 +211,74 @@ func TestFetchRankings_ValveModeSendsValveRankingTypeAndTagsSourceValveVRS(t *te
 		if r.Source != enrichment.SourceValveVRS {
 			t.Fatalf("expected Source=VALVE_VRS, got %q", r.Source)
 		}
+	}
+}
+
+// PublishedAt must reflect the actor's own scrapedAt, not whenever
+// FetchRankings happened to be called — the sample response's scrapedAt is
+// 2026-09-11T21:57:15.554Z, deliberately far from "now" so a regression to
+// time.Now() would fail this immediately rather than by coincidence.
+func TestFetchRankings_PublishedAtUsesScrapedAtNotFetchTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(sampleActorRunResponse))
+	}))
+	defer server.Close()
+
+	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 9, 11, 21, 57, 15, 554000000, time.UTC)
+	for _, r := range rankings {
+		if !r.PublishedAt.Equal(want) {
+			t.Fatalf("PublishedAt = %v, want the run's own scrapedAt %v", r.PublishedAt, want)
+		}
+	}
+}
+
+// A missing/zero scrapedAt must not silently produce the Unix epoch as
+// PublishedAt — it should fall back to the old fetch-time behavior instead.
+func TestFetchRankings_FallsBackToFetchTimeWhenScrapedAtIsMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"rankings": [{"place": 1, "team": {"name": "Spirit"}, "points": 1000}]}]`))
+	}))
+	defer server.Close()
+
+	before := time.Now().Add(-time.Second)
+	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rankings) != 1 {
+		t.Fatalf("got %d rankings, want 1", len(rankings))
+	}
+	if rankings[0].PublishedAt.Before(before) {
+		t.Fatalf("PublishedAt = %v, want it no earlier than the fallback fetch time", rankings[0].PublishedAt)
+	}
+}
+
+// APIFY_MAX_TEAMS=0 must be sent as a literal 0, not silently omitted
+// (which would let the actor fall back to its own default team count
+// instead of honoring an explicit operator choice).
+func TestFetchRankings_SendsMaxTeamsZeroExplicitly(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	if _, err := newTestProvider(t, server, 0).FetchRankings(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	maxTeams, present := gotBody["maxTeams"]
+	if !present {
+		t.Fatal("expected maxTeams to be present in the request body even when 0")
+	}
+	if maxTeams != float64(0) {
+		t.Fatalf("maxTeams = %v, want 0", maxTeams)
 	}
 }

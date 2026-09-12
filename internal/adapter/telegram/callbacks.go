@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -275,6 +276,11 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 			break
 		}
 		if confirmErr := h.confirmTeamMatch(ctx, userID, reqID, index); confirmErr != nil {
+			if errors.Is(confirmErr, errTeamMatchAlreadyResolved) {
+				err = h.alert(ctx, cb.ID, h.Texts.Get("teammatch.ask_expired", locale))
+				answered = true
+				break
+			}
 			err = confirmErr
 			break
 		}
@@ -286,6 +292,11 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 			break
 		}
 		if rejectErr := h.rejectTeamMatch(ctx, userID, reqID); rejectErr != nil {
+			if errors.Is(rejectErr, errTeamMatchAlreadyResolved) {
+				err = h.alert(ctx, cb.ID, h.Texts.Get("teammatch.ask_expired", locale))
+				answered = true
+				break
+			}
 			err = rejectErr
 			break
 		}

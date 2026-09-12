@@ -250,6 +250,14 @@ type TeamMatchRepository interface {
 	// one call — never called for a (source, externalName) that already
 	// has a request; see the (source, external_name) UNIQUE constraint.
 	CreateRequest(ctx context.Context, req TeamMatchRequest, candidates []TeamMatchCandidate) error
+	// AddCandidate appends one more competing team to an already-existing
+	// request — used when a second local team also fuzzy-matches the same
+	// external name FindPendingByExternalName already found a request for,
+	// so that team isn't silently dropped from consideration. A no-op if
+	// (requestID, candidate.TeamID) already exists (ON CONFLICT DO NOTHING
+	// in the postgres implementation) — callers are expected to also
+	// enforce MaxCandidatesPerRequest before calling this.
+	AddCandidate(ctx context.Context, requestID common.RequestID, candidate TeamMatchCandidate) error
 	// ListPending returns open requests, best-score first (the ones most
 	// likely to be a quick, confident tap come first).
 	ListPending(ctx context.Context, limit int) ([]TeamMatchRequest, error)

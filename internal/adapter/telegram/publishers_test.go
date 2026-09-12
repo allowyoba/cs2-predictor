@@ -141,3 +141,36 @@ func TestBigEventPublisher_SendsBadgedAnnouncementWithSubscribeButton(t *testing
 		t.Fatalf("callback_data = %v, want %q", firstBtn["callback_data"], "subscribe:"+eventID)
 	}
 }
+
+// The teammatch.ask_question template already wraps both names in <b>; the
+// publisher must not bold the candidate name again on top of that.
+func TestTeamMatchAskPublisher_DoesNotDoubleWrapCandidateNameInBold(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	pub := NewTeamMatchAskPublisher(client, newFakeChats(), texts, nil)
+
+	n := common.TeamMatchAskNotification{
+		UserID: 1, RequestID: "r1", ExternalName: "Natus Vincere", CandidateTeamID: "t1",
+		CandidateName: "NAVI", Locale: "ru",
+	}
+	payload, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(context.Background(), common.OutboxMessage{Payload: string(payload)}); err != nil {
+		t.Fatal(err)
+	}
+
+	text := findSendMessageText(t, *calls)
+	if strings.Contains(text, "<b><b>") || strings.Contains(text, "</b></b>") {
+		t.Fatalf("expected no double-nested <b> tags, got %q", text)
+	}
+	if !strings.Contains(text, "<b>NAVI</b>") {
+		t.Fatalf("expected the candidate name bolded exactly once by the template, got %q", text)
+	}
+}

@@ -139,37 +139,34 @@ func run() error {
 	// hltvRankingSync and vrsApifyRankingSync are a paired weekly fetch —
 	// both hit the same Apify actor, just in its two different ranking
 	// modes (see apifyhltv.DefaultConfig/DefaultValveConfig) — and share
-	// one ApifyRankingGate so both fire (or both stay quiet) together:
-	// HLTV's own Monday update, a running top-tier tournament, or one
-	// starting soon, capped to once a week per source regardless. VRS's
-	// job here writes to the exact same enrichment.SourceValveVRS as
+	// one ApifyRankingGate so both fire (or both stay quiet) together, at
+	// most once a calendar week, on HLTV's own Monday update day. VRS's job
+	// here writes to the exact same enrichment.SourceValveVRS as
 	// valveVRSSync above; that free GitHub-based job keeps running on its
-	// own frequent schedule as the fallback for the rest of the week.
+	// own frequent schedule as the fallback for the rest of the week. It
+	// gets its own LockKey (see RankingSync.LockKey's doc comment) rather
+	// than sharing valveVRSSync's Source-derived one: with no jitter and a
+	// 6h interval that's an exact multiple of this job's 1h check interval,
+	// a shared lock name would let the two silently and repeatedly starve
+	// each other.
 	var hltvRankingSync, vrsApifyRankingSync *app.RankingSync
 	if cfg.Enrichment.HLTVEnabled {
-		apifyGate := &app.ApifyRankingGate{State: enrichmentRepo, Catalog: catalog, Clock: clock, Log: log}
-
-		hltvConfig := apifyhltv.DefaultConfig(cfg.Enrichment.HLTVAPIToken)
-		hltvConfig.MaxTeams = cfg.Enrichment.ApifyMaxTeams
-		hltvRankingSync = &app.RankingSync{
-			Source:   enrichment.SourceHLTV,
-			Provider: apifyhltv.NewProvider(hltvConfig, httpClient),
-			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
-			Snapshots: enrichmentRepo,
-			Gate:      apifyGate,
-			Lock:      clusterLock, Log: log,
+		apifyGate := &app.ApifyRankingGate{State: enrichmentRepo, Clock: clock}
+		newApifyRankingSync := func(source enrichment.Source, providerConfig apifyhltv.Config, lockKey string) *app.RankingSync {
+			providerConfig.MaxTeams = cfg.Enrichment.ApifyMaxTeams
+			return &app.RankingSync{
+				Source:   source,
+				Provider: apifyhltv.NewProvider(providerConfig, httpClient),
+				Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
+				Snapshots: enrichmentRepo,
+				Gate:      apifyGate,
+				LockKey:   lockKey,
+				Lock:      clusterLock, Log: log,
+			}
 		}
-
-		vrsApifyConfig := apifyhltv.DefaultValveConfig(cfg.Enrichment.HLTVAPIToken)
-		vrsApifyConfig.MaxTeams = cfg.Enrichment.ApifyMaxTeams
-		vrsApifyRankingSync = &app.RankingSync{
-			Source:   enrichment.SourceValveVRS,
-			Provider: apifyhltv.NewProvider(vrsApifyConfig, httpClient),
-			Teams:    enrichmentRepo, Rankings: enrichmentRepo, Identity: enrichmentRepo, State: enrichmentRepo,
-			Snapshots: enrichmentRepo,
-			Gate:      apifyGate,
-			Lock:      clusterLock, Log: log,
-		}
+		hltvRankingSync = newApifyRankingSync(enrichment.SourceHLTV, apifyhltv.DefaultConfig(cfg.Enrichment.HLTVAPIToken), "")
+		vrsApifyRankingSync = newApifyRankingSync(enrichment.SourceValveVRS, apifyhltv.DefaultValveConfig(cfg.Enrichment.HLTVAPIToken),
+			"cs2predictor:ranking-sync:VALVE_VRS_APIFY")
 	}
 	// SourceValveVRS is registered once here, covering either or both of
 	// valveVRSSync (free, frequent) and vrsApifyRankingSync (paid, weekly)

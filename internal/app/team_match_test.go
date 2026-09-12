@@ -123,6 +123,15 @@ func (f *fakeTeamMatchRepo) CreateRequest(_ context.Context, req enrichment.Team
 	f.candidates[req.ID] = candidates
 	return nil
 }
+func (f *fakeTeamMatchRepo) AddCandidate(_ context.Context, requestID common.RequestID, candidate enrichment.TeamMatchCandidate) error {
+	for _, c := range f.candidates[requestID] {
+		if c.TeamID == candidate.TeamID {
+			return nil
+		}
+	}
+	f.candidates[requestID] = append(f.candidates[requestID], candidate)
+	return nil
+}
 func (f *fakeTeamMatchRepo) ListPending(context.Context, int) ([]enrichment.TeamMatchRequest, error) {
 	var out []enrichment.TeamMatchRequest
 	for _, r := range f.byID {
@@ -361,6 +370,73 @@ func TestEnsureRequest_ReusesExistingPendingRequestForSameExternalName(t *testin
 	}
 	if pending, _ := requests.ListPending(context.Background(), 10); len(pending) != 1 {
 		t.Fatalf("expected exactly one pending request, got %+v", pending)
+	}
+	_, candidates, err := requests.FindRequest(context.Background(), *firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected the second team to be added as a competing candidate rather than silently dropped, got %+v", candidates)
+	}
+	var sawA, sawB bool
+	for _, c := range candidates {
+		sawA = sawA || c.TeamID == teamA.ID
+		sawB = sawB || c.TeamID == teamB.ID
+	}
+	if !sawA || !sawB {
+		t.Fatalf("expected both competing teams among the candidates, got %+v", candidates)
+	}
+}
+
+// The same team matching the same external name again (e.g. in a later
+// match) must not be added as a duplicate candidate.
+func TestEnsureRequest_SameTeamMatchingAgainDoesNotDuplicateCandidate(t *testing.T) {
+	snapshot := []enrichment.RankedTeam{{Identity: enrichment.TeamIdentity{Name: "Avangar"}, Source: enrichment.SourceValveVRS}}
+	svc, requests, _, _ := newTestTeamMatchService(snapshot)
+	team := competition.Team{ID: common.NewTeamID(), Name: "Avangarr"}
+
+	firstID := ensureRequestSingle(t, svc, team)
+	if firstID == nil {
+		t.Fatal("expected a request from the first call")
+	}
+	secondID := ensureRequestSingle(t, svc, team)
+	if secondID == nil || secondID.String() != firstID.String() {
+		t.Fatalf("expected the same request reused, got %v and %v", firstID, secondID)
+	}
+	_, candidates, err := requests.FindRequest(context.Background(), *firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected exactly one candidate — the same team matching again must not duplicate it, got %+v", candidates)
+	}
+}
+
+// Once a request already has MaxCandidatesPerRequest candidates, a further
+// competing team must not push it over that cap.
+func TestEnsureRequest_DoesNotExceedMaxCandidatesPerRequest(t *testing.T) {
+	snapshot := []enrichment.RankedTeam{{Identity: enrichment.TeamIdentity{Name: "Avangar"}, Source: enrichment.SourceValveVRS}}
+	svc, requests, _, _ := newTestTeamMatchService(snapshot)
+
+	// Each name below is "Avangar" with one letter doubled — a single
+	// insertion, scoring consistently in the ambiguous fuzzy-request band
+	// (well under FuzzyAutoAcceptThreshold) regardless of which letter.
+	names := []string{"Avangarr", "Avangaar", "Avanggar", "Avanngar", "Aavangar"}
+	var lastID *common.RequestID
+	for _, name := range names {
+		team := competition.Team{ID: common.NewTeamID(), Name: name}
+		id := ensureRequestSingle(t, svc, team)
+		if id == nil {
+			t.Fatalf("expected a request id for %q", name)
+		}
+		lastID = id
+	}
+	_, candidates, err := requests.FindRequest(context.Background(), *lastID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != enrichment.MaxCandidatesPerRequest {
+		t.Fatalf("expected exactly %d candidates (the cap), got %d: %+v", enrichment.MaxCandidatesPerRequest, len(candidates), candidates)
 	}
 }
 

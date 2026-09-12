@@ -93,9 +93,9 @@ type EnrichmentConfig struct {
 	HLTVAPIToken string
 	// ApifyRankingCheckInterval is how often the *gate* is checked, not
 	// how often a fetch actually happens — actual cadence is capped to
-	// once a week by ApifyRankingGate regardless of how often this ticks;
-	// this only bounds how promptly a qualifying moment (the weekly
-	// schedule, or a tournament starting/running) is noticed.
+	// once a week (Monday, end of day) by ApifyRankingGate regardless of
+	// how often this ticks; this only bounds how promptly that weekly
+	// window is noticed.
 	ApifyRankingCheckInterval time.Duration
 	// ApifyMaxTeams bounds both relevance and Apify's pay-per-result cost
 	// for both the HLTV and Valve/VRS fetches — see
