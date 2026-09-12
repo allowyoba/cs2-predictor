@@ -129,6 +129,18 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = nil
 	case data == "pstats:menu":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
+	case data == "hub:root":
+		err = h.startLanding(ctx, target, userID, locale)
+	case data == "hub:personal":
+		err = h.privateStatsMenu(ctx, target, userID, locale)
+	case data == "hub:manage":
+		err = h.managedChatsMenu(ctx, target, userID, locale)
+	case data == "hub:system":
+		err = h.systemToolsMenu(ctx, target, userID, locale)
+	case data == "hub:provider_status":
+		err = h.providerStatusView(ctx, target, userID, locale)
+	case data == "hub:team_match_operators":
+		err = h.listTeamMatchOperators(ctx, common.ChatID{Value: cb.Message.Chat.ID}, locale)
 	case data == "pstats:all":
 		err = h.renderPrivateStats(ctx, target, userID, locale, scoring.AllTime())
 	case data == "pstats:years":

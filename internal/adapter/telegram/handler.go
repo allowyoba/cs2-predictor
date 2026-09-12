@@ -497,8 +497,10 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		if token, ok := parseInvitationDeepLink(text); ok {
 			return h.openInvitationAccept(ctx, sendTarget(chatID, nil), userID, locale, token)
 		}
-		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
-	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"), strings.HasPrefix(text, "/stats"):
+		return h.startLanding(ctx, sendTarget(chatID, nil), userID, locale)
+	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"):
+		return h.startLanding(ctx, sendTarget(chatID, nil), userID, locale)
+	case strings.HasPrefix(text, "/stats"):
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/bets"):
 		return h.privateBetsMenu(ctx, sendTarget(chatID, nil), userID, locale, nil, 0, 0)
