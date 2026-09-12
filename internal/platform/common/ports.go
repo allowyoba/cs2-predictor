@@ -66,6 +66,13 @@ type StandingNotification struct {
 	PreviousRank *int   `json:"previousRank"`
 	Points       int    `json:"points"`
 	PointsDelta  int    `json:"pointsDelta"`
+	// ExactPredictions/CorrectPredictions/Predictions mirror
+	// scoring.UserStanding's own fields — carried through the outbox so a
+	// published leaderboard can render the same "(exact-outcome-wrong)"
+	// breakdown the live /stats view does, without a second query.
+	ExactPredictions   int `json:"exactPredictions"`
+	CorrectPredictions int `json:"correctPredictions"`
+	Predictions        int `json:"predictions"`
 }
 
 // MatchResultNotification is the payload for the "telegram.match-result"

@@ -19,8 +19,9 @@ import (
 // DEPLOY_NOTIFY_CHAT_IDS set /team_match_admin uses) since this is a
 // bot-operations concern, not something any group admin needs.
 func (h *UpdateHandler) providerStatusView(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+	back := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "hub:system")}}}
 	if !h.isRootTeamMatchOperator(userID) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), back)
 	}
 
 	var sections []string
@@ -40,10 +41,10 @@ func (h *UpdateHandler) providerStatusView(ctx context.Context, target replyTarg
 		sections = append(sections, formatEnrichmentProviderStatus(h.Texts, locale, source, st))
 	}
 	if len(sections) == 0 {
-		return h.respond(ctx, target, h.Texts.Get("providers.empty", locale), nil)
+		return h.respond(ctx, target, h.Texts.Get("providers.empty", locale), back)
 	}
 	text := bold(h.Texts.Get("providers.title", locale)) + "\n\n" + strings.Join(sections, "\n\n")
-	return h.respond(ctx, target, text, nil)
+	return h.respond(ctx, target, text, back)
 }
 
 // formatCompetitionProviderStatus renders app.CompetitionProviderGateway's

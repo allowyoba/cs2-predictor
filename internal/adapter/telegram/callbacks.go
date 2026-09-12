@@ -134,7 +134,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	case data == "hub:personal":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
 	case data == "hub:manage":
-		err = h.managedChatsMenu(ctx, target, userID, locale)
+		err = h.managedChatsMenu(ctx, target, userID, locale, "hub:root")
 	case data == "hub:system":
 		err = h.systemToolsMenu(ctx, target, userID, locale)
 	case data == "hub:provider_status":
@@ -314,7 +314,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		}
 		err = h.teamMatchQueueMenu(ctx, target, userID, locale, 0)
 	case data == "manage:chats":
-		err = h.managedChatsMenu(ctx, target, userID, locale)
+		err = h.managedChatsMenu(ctx, target, userID, locale, "pstats:menu")
 	case strings.HasPrefix(data, "manage:open:"):
 		id, parseErr := strconv.ParseInt(strings.TrimPrefix(data, "manage:open:"), 36, 64)
 		if parseErr != nil {

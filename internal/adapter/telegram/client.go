@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -302,6 +304,106 @@ func (c *Client) doCall(ctx context.Context, method string, payload any) (json.R
 		return nil, apiErr
 	}
 	return envelope.Result, nil
+}
+
+// SendPhoto uploads imgData (e.g. a chart PNG) as a photo message — the one
+// call in this client that sends binary content rather than a JSON payload,
+// since Telegram's sendPhoto only accepts an actual file upload, a URL, or
+// a previously-seen file_id, and a freshly rendered chart has none of the
+// latter two. No retry-on-429 loop (unlike Call): a chart is generated
+// on demand from a button tap, so the simplest recovery from a rate limit
+// is the same tap again, not a hidden multi-second wait inside the request
+// that handled it.
+func (c *Client) SendPhoto(ctx context.Context, chatID int64, filename string, imgData []byte, caption string, topicID *int64) error {
+	if err := c.limiter.wait(ctx, chatID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.config.Token) == "" {
+		return &APIError{Method: "sendPhoto", Message: "telegram token is not configured"}
+	}
+
+	body, contentType, err := buildSendPhotoForm(chatID, filename, imgData, caption, topicID)
+	if err != nil {
+		return err
+	}
+	return c.postSendPhoto(ctx, body, contentType)
+}
+
+// buildSendPhotoForm encodes sendPhoto's multipart/form-data body: every
+// scalar field Telegram accepts alongside the upload itself, plus the image
+// bytes as the "photo" file part.
+func buildSendPhotoForm(chatID int64, filename string, imgData []byte, caption string, topicID *int64) (*bytes.Buffer, string, error) {
+	encodeErr := &APIError{Method: "sendPhoto", Message: "encode sendPhoto form failed"}
+
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	if err := w.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
+		return nil, "", encodeErr
+	}
+	if caption != "" {
+		if err := w.WriteField("caption", caption); err != nil {
+			return nil, "", encodeErr
+		}
+		if err := w.WriteField("parse_mode", "HTML"); err != nil {
+			return nil, "", encodeErr
+		}
+	}
+	if topicID != nil {
+		if err := w.WriteField("message_thread_id", strconv.FormatInt(*topicID, 10)); err != nil {
+			return nil, "", encodeErr
+		}
+	}
+	part, err := w.CreateFormFile("photo", filename)
+	if err != nil {
+		return nil, "", encodeErr
+	}
+	if _, err := part.Write(imgData); err != nil {
+		return nil, "", encodeErr
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", encodeErr
+	}
+	return &body, w.FormDataContentType(), nil
+}
+
+// postSendPhoto does the actual HTTP round trip and envelope parsing —
+// split out of SendPhoto only to keep that function's own complexity below
+// the linter's threshold; the two are never called separately.
+func (c *Client) postSendPhoto(ctx context.Context, body *bytes.Buffer, contentType string) error {
+	ctx, cancel := context.WithTimeout(ctx, doCallTimeout)
+	defer cancel()
+
+	url := fmt.Sprintf("%s/bot%s/sendPhoto", c.config.BaseURL, c.config.Token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return &APIError{Method: "sendPhoto", Message: "build sendPhoto request failed"}
+	}
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		// Never include err.Error() here — it can contain the request URL,
+		// which contains the bot token.
+		return &APIError{Method: "sendPhoto", Message: "telegram sendPhoto request failed"}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil || len(respBody) == 0 {
+		return &APIError{Method: "sendPhoto", Message: "empty response from sendPhoto"}
+	}
+	var envelope apiEnvelope
+	if err := json.Unmarshal(respBody, &envelope); err != nil {
+		return &APIError{Method: "sendPhoto", Message: "telegram sendPhoto returned an unparseable response"}
+	}
+	if !envelope.OK {
+		apiErr := &APIError{Method: "sendPhoto", Message: fmt.Sprintf("telegram sendPhoto failed: %s", envelope.Description), ErrorCode: envelope.ErrorCode}
+		if envelope.Parameters != nil {
+			apiErr.RetryAfter = envelope.Parameters.RetryAfter
+		}
+		return apiErr
+	}
+	return nil
 }
 
 type InlineButton struct {

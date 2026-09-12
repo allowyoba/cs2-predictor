@@ -228,6 +228,18 @@ func (s *personalDataScoring) UserBets(_ context.Context, userID common.UserID, 
 	return filtered, nil
 }
 
+func (s *personalDataScoring) UserBetsForEvent(_ context.Context, userID common.UserID, chatID common.ChatID, _ common.EventID, _ int) ([]scoring.UserBet, error) {
+	s.userID = userID
+	s.betsChatID = &chatID
+	var filtered []scoring.UserBet
+	for _, b := range s.bets {
+		if b.ChatID == chatID {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered, nil
+}
+
 func (s *personalDataScoring) UserPredictions(_ context.Context, userID common.UserID, limit int) ([]scoring.UserPrediction, error) {
 	s.userID = userID
 	s.predictionLimit = limit

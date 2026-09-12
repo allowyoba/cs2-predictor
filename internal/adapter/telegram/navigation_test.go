@@ -110,12 +110,12 @@ func TestSettingsToggle_AnswersOnceViaToastNotTwice(t *testing.T) {
 func TestLeaderboardRows_AreCompactAndDoNotUseSpacePaddedColumns(t *testing.T) {
 	rows := leaderboardRows([]scoring.UserStanding{
 		{Rank: 1, DisplayName: "Очень длинное имя игрока", Points: 123},
-		{Rank: 4, DisplayName: "Alex", Points: 9},
+		{Rank: 4, DisplayName: "Alex", Points: 9, ExactPredictions: 2, CorrectPredictions: 5, Predictions: 8},
 	}, common.UserID{})
 	if strings.Contains(rows, "                        ") {
 		t.Fatalf("leaderboard must not use fixed-width space padding: %q", rows)
 	}
-	if !strings.Contains(rows, "🥇 <b>") || !strings.Contains(rows, "4. <b>Alex</b> · <code>9</code>") {
+	if !strings.Contains(rows, "🥇 <b>") || !strings.Contains(rows, "4. <b>Alex</b> · <code>9</code> <code>(2-3-3)</code>") {
 		t.Fatalf("unexpected compact leaderboard format: %q", rows)
 	}
 }
@@ -125,6 +125,23 @@ func TestLeaderboardRows_ShowsMovementWhenAvailable(t *testing.T) {
 	rows := leaderboardRows([]scoring.UserStanding{{Rank: 4, PreviousRank: &prev, DisplayName: "Alex", Points: 9}}, common.UserID{})
 	if !strings.Contains(rows, "↑2") {
 		t.Fatalf("expected rank movement, got %q", rows)
+	}
+}
+
+func TestStatsBreakdown_SplitsExactOutcomeAndWrong(t *testing.T) {
+	cases := []struct {
+		exact, correct, total int
+		want                  string
+	}{
+		{0, 0, 0, "(0-0-0)"},
+		{2, 5, 8, "(2-3-3)"}, // 2 exact, 3 outcome-only, 3 wrong
+		{4, 4, 4, "(4-0-0)"}, // every prediction exact
+		{0, 0, 6, "(0-0-6)"}, // every prediction wrong
+	}
+	for _, c := range cases {
+		if got := statsBreakdown(c.exact, c.correct, c.total); got != c.want {
+			t.Fatalf("statsBreakdown(%d,%d,%d) = %q, want %q", c.exact, c.correct, c.total, got, c.want)
+		}
 	}
 }
 

@@ -9,9 +9,11 @@ import (
 	"cs2predictor/internal/platform/common"
 )
 
-func startMsg(userID int64) *Message {
+// startMsg always builds the same user id — every caller in this file
+// checks who is shown a hub built for user 1, not whose id is used.
+func startMsg() *Message {
 	text := "/start"
-	return &Message{Chat: Chat{ID: userID, Type: "private"}, From: &User{ID: userID}, Text: &text}
+	return &Message{Chat: Chat{ID: 1, Type: "private"}, From: &User{ID: 1}, Text: &text}
 }
 
 // Someone with no admin rights anywhere and no operator role must land
@@ -22,7 +24,7 @@ func TestStartLanding_NoRolesGoesStraightToPersonalDashboard(t *testing.T) {
 	defer server.Close()
 	handler, _ := newTestHandler(t, server)
 
-	if err := handler.handlePrivateMessage(context.Background(), startMsg(1)); err != nil {
+	if err := handler.handlePrivateMessage(context.Background(), startMsg()); err != nil {
 		t.Fatal(err)
 	}
 	body := findSendMessageText(t, *calls)
@@ -47,7 +49,7 @@ func TestStartLanding_ManagerSeesHubWithPersonalAndManageOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := handler.handlePrivateMessage(context.Background(), startMsg(1)); err != nil {
+	if err := handler.handlePrivateMessage(context.Background(), startMsg()); err != nil {
 		t.Fatal(err)
 	}
 	body := findSendMessageText(t, *calls)
@@ -70,7 +72,7 @@ func TestStartLanding_RootOperatorSeesAllThreePanels(t *testing.T) {
 	handler, _ := newTestHandler(t, server)
 	handler.TeamMatchOperatorChatIDs = []int64{1}
 
-	if err := handler.handlePrivateMessage(context.Background(), startMsg(1)); err != nil {
+	if err := handler.handlePrivateMessage(context.Background(), startMsg()); err != nil {
 		t.Fatal(err)
 	}
 	labels := buttonLabels(t, lastKeyboardCall(t, *calls))
@@ -120,6 +122,117 @@ func TestSystemToolsMenu_RootSeesProviderStatusAndOperatorsButDelegateDoesNot(t 
 	}
 	if !slicesContainLabel(delegateLabels, ru(t, "hub.team_matches")) {
 		t.Fatalf("expected a delegated operator to still see team-match review, got %v", delegateLabels)
+	}
+}
+
+// TestPrivateStatsMenu_OffersBackToHubForSomeoneWhoHasOne is a regression
+// test for a real navigation dead end: an operator (or manager) who opened
+// their personal dashboard via hub:personal had no way back to the hub —
+// privateStatsMenu rendered no back button at all.
+func TestPrivateStatsMenu_OffersBackToHubForSomeoneWhoHasOne(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+	handler.TeamMatchOperatorChatIDs = []int64{1}
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "hub:personal")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons([]map[string]any{lastKeyboardCall(t, *calls)})
+	if !containsPrefix(cds, "hub:root") {
+		t.Fatalf("expected a back-to-hub button, got callback data %v", cds)
+	}
+}
+
+// TestPrivateStatsMenu_NoHubButtonForAPlainVoter is the flip side: someone
+// with no managed chat and no operator role never saw the hub in the first
+// place (see TestStartLanding_NoRolesGoesStraightToPersonalDashboard), so a
+// back-to-hub button here would point nowhere useful.
+func TestPrivateStatsMenu_NoHubButtonForAPlainVoter(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+
+	if err := handler.handlePrivateMessage(context.Background(), startMsg()); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons([]map[string]any{lastKeyboardCall(t, *calls)})
+	if containsPrefix(cds, "hub:root") {
+		t.Fatalf("a plain voter with no hub access must not see a back-to-hub button, got %v", cds)
+	}
+}
+
+// TestManagedChatsMenu_BackTargetMatchesHowItWasReached is a regression test
+// for the same class of bug: managedChatsMenu always sent its back button
+// to "pstats:menu" regardless of entry point, stranding an operator who
+// opened it via hub:manage — they'd be bounced sideways into the unrelated
+// personal-stats screen instead of back to the hub.
+func TestManagedChatsMenu_BackTargetMatchesHowItWasReached(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	handler.TeamMatchOperatorChatIDs = []int64{1}
+	userID := common.UserID{Value: 1}
+	chatID := common.ChatID{Value: -1}
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Title: "Test Chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.RecordManaged(context.Background(), chatID, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "hub:manage")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons([]map[string]any{lastKeyboardCall(t, *calls)})
+	if !containsPrefix(cds, "hub:root") {
+		t.Fatalf("expected the back button to return to the hub when reached via hub:manage, got %v", cds)
+	}
+
+	*calls = nil
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "manage:chats")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ = findKeyboardButtons([]map[string]any{lastKeyboardCall(t, *calls)})
+	if !containsPrefix(cds, "pstats:menu") {
+		t.Fatalf("expected the back button to return to personal stats when reached via manage:chats, got %v", cds)
+	}
+}
+
+// TestProviderStatusView_OffersBackToSystemTools is a regression test for
+// another dead end reported from production: opening provider status from
+// the system-tools panel rendered no keyboard at all, so there was no way
+// back short of retyping /start.
+func TestProviderStatusView_OffersBackToSystemTools(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+	handler.TeamMatchOperatorChatIDs = []int64{1}
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "hub:provider_status")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons([]map[string]any{lastKeyboardCall(t, *calls)})
+	if !containsPrefix(cds, "hub:system") {
+		t.Fatalf("expected a back-to-system-tools button, got %v", cds)
+	}
+}
+
+// TestListTeamMatchOperators_OffersBackToSystemTools covers the same dead
+// end for the operator roster screen.
+func TestListTeamMatchOperators_OffersBackToSystemTools(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+	handler.TeamMatchOperatorChatIDs = []int64{1}
+	handler.TeamMatchOperators = newFakeTeamMatchOperatorRepo()
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "hub:team_match_operators")); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons([]map[string]any{lastKeyboardCall(t, *calls)})
+	if !containsPrefix(cds, "hub:system") {
+		t.Fatalf("expected a back-to-system-tools button, got %v", cds)
 	}
 }
 

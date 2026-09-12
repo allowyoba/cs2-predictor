@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,6 +32,82 @@ func TestCall_Success(t *testing.T) {
 	}
 	if !strings.Contains(string(result), `"message_id":42`) {
 		t.Fatalf("result = %s", result)
+	}
+}
+
+// SendPhoto must actually upload the image bytes as a multipart file (not,
+// say, a base64 string field or a URL) with the chat id and caption
+// alongside it — the one thing that made a JSON-only Call unsuitable for
+// this endpoint in the first place.
+func TestSendPhoto_UploadsTheImageAsAMultipartFile(t *testing.T) {
+	var gotPath, gotContentType string
+	var gotForm *multipart.Form
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotContentType = r.Header.Get("Content-Type")
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm: %v", err)
+		}
+		gotForm = r.MultipartForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":7}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{BaseURL: server.URL, Token: "secret-token"}, server.Client())
+	imgData := []byte("fake-png-bytes")
+	topicID := int64(55)
+	if err := client.SendPhoto(context.Background(), -100, "chart.png", imgData, "My caption", &topicID); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/botsecret-token/sendPhoto" {
+		t.Fatalf("path = %q, want /botsecret-token/sendPhoto", gotPath)
+	}
+	if !strings.HasPrefix(gotContentType, "multipart/form-data") {
+		t.Fatalf("Content-Type = %q, want multipart/form-data", gotContentType)
+	}
+	if got := gotForm.Value["chat_id"]; len(got) != 1 || got[0] != "-100" {
+		t.Fatalf("chat_id field = %v, want [-100]", got)
+	}
+	if got := gotForm.Value["caption"]; len(got) != 1 || got[0] != "My caption" {
+		t.Fatalf("caption field = %v, want [My caption]", got)
+	}
+	if got := gotForm.Value["message_thread_id"]; len(got) != 1 || got[0] != "55" {
+		t.Fatalf("message_thread_id field = %v, want [55]", got)
+	}
+	files := gotForm.File["photo"]
+	if len(files) != 1 {
+		t.Fatalf("expected exactly one uploaded photo file, got %d", len(files))
+	}
+	f, err := files[0].Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	uploaded, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(uploaded) != string(imgData) {
+		t.Fatalf("uploaded photo bytes = %q, want %q", uploaded, imgData)
+	}
+}
+
+func TestSendPhoto_SurfacesAnAPIErrorOnFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{BaseURL: server.URL, Token: "secret-token"}, server.Client())
+	err := client.SendPhoto(context.Background(), -100, "chart.png", []byte("x"), "", nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "chat not found") {
+		t.Fatalf("error = %v, want it to mention 'chat not found'", err)
 	}
 }
 
