@@ -34,6 +34,21 @@ class DeploymentTest(unittest.TestCase):
         # the backup destination is non-empty and inspectable.
         docker.write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$MOCK_DOCKER_LOG"
+# Real compose.prod.yml declares the bot service as `image: ${APP_IMAGE:?required}`
+# — real Compose refuses to interpolate the file at all without it, for
+# *any* subcommand that touches the project (exec/config/ps included, not
+# just up). Mirrored here so a task that forgets to set APP_IMAGE in its
+# own environment (as database_backup's pg_dump exec once did) fails the
+# same way in this stub as it would for real, instead of the stub silently
+# succeeding regardless.
+case "$*" in
+  *--project-directory*)
+    if [ -z "${APP_IMAGE:-}" ]; then
+      echo "error while interpolating services.bot.image: required variable APP_IMAGE is missing a value: required" >&2
+      exit 1
+    fi
+    ;;
+esac
 case "$*" in
   login*) cat >/dev/null ;;
   *" up "*)
