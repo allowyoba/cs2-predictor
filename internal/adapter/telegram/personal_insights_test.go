@@ -30,13 +30,14 @@ func insightsCallback() *CallbackQuery {
 func TestPersonalInsights_RendersStreaksTeamsAndTrend(t *testing.T) {
 	now := time.Now()
 	day := func(n int) time.Time { return now.Add(-time.Duration(n) * 24 * time.Hour) }
+	navi, g2 := common.NewTeamID(), common.NewTeamID()
 	handler, personal, calls := setupInsightsTest(t, []scoring.UserPrediction{
-		{PlayedAt: day(1), TeamName: "NAVI", Correct: true},
-		{PlayedAt: day(2), TeamName: "NAVI", Correct: true},
-		{PlayedAt: day(3), TeamName: "NAVI", Correct: true},
-		{PlayedAt: day(40), TeamName: "G2", Correct: false},
-		{PlayedAt: day(41), TeamName: "G2", Correct: false},
-		{PlayedAt: day(42), TeamName: "G2", Correct: true},
+		{PlayedAt: day(1), TeamID: navi, TeamName: "NAVI", Correct: true},
+		{PlayedAt: day(2), TeamID: navi, TeamName: "NAVI", Correct: true},
+		{PlayedAt: day(3), TeamID: navi, TeamName: "NAVI", Correct: true},
+		{PlayedAt: day(40), TeamID: g2, TeamName: "G2", Correct: false},
+		{PlayedAt: day(41), TeamID: g2, TeamName: "G2", Correct: false},
+		{PlayedAt: day(42), TeamID: g2, TeamName: "G2", Correct: true},
 	})
 
 	if err := handler.handlePrivateCallback(context.Background(), insightsCallback()); err != nil {
@@ -48,8 +49,8 @@ func TestPersonalInsights_RendersStreaksTeamsAndTrend(t *testing.T) {
 	}
 	text := lastText(*calls)
 	for _, want := range []string{
-		handler.Texts.Get("insights.streak_current", common.LocaleRU, 3),
-		handler.Texts.Get("insights.streak_longest", common.LocaleRU, 3),
+		handler.Texts.Get("insights.streak_warm", common.LocaleRU, 3),
+		handler.Texts.Get("insights.streak_best", common.LocaleRU, 3),
 		"NAVI",
 		"G2",
 	} {
@@ -57,10 +58,13 @@ func TestPersonalInsights_RendersStreaksTeamsAndTrend(t *testing.T) {
 			t.Fatalf("insights screen %q is missing %q", text, want)
 		}
 	}
-	// Recent 100% against a previous 33% is rendered as a numeric delta,
-	// without another decorative marker competing with the data.
+	// Recent 100% against a previous 33% is rendered as a numeric delta.
 	if !strings.Contains(text, "+67") {
 		t.Fatalf("expected a +67 pp trend delta in %q", text)
+	}
+	// The visual form guide/accuracy bar are the whole point of the redesign.
+	if !strings.Contains(text, "🟩") || !strings.Contains(text, "▰") {
+		t.Fatalf("expected a visual form guide and accuracy bar in %q", text)
 	}
 }
 
@@ -96,6 +100,57 @@ func TestPersonalInsights_WithoutAnEarlierWindowShowsNoTrendArrow(t *testing.T) 
 	}
 	if !strings.Contains(text, handler.Texts.Get("insights.trend_recent_only", common.LocaleRU, 50, 2)) {
 		t.Fatalf("expected the standalone recent-accuracy line, got %q", text)
+	}
+}
+
+func TestAccuracyBar_FillsProportionallyAndClampsToSlots(t *testing.T) {
+	cases := map[int]string{
+		0:   "▱▱▱▱▱▱▱▱▱▱",
+		50:  "▰▰▰▰▰▱▱▱▱▱",
+		100: "▰▰▰▰▰▰▰▰▰▰",
+	}
+	for percent, want := range cases {
+		if got := accuracyBar(percent); got != want {
+			t.Fatalf("accuracyBar(%d) = %q, want %q", percent, got, want)
+		}
+	}
+}
+
+func TestFormGuide_RendersWinsAndLossesAsSquaresInOrder(t *testing.T) {
+	got := formGuide([]bool{true, false, true})
+	if want := "🟩🟥🟩"; got != want {
+		t.Fatalf("formGuide = %q, want %q", got, want)
+	}
+	if formGuide(nil) != "" {
+		t.Fatal("an empty form must render as an empty string, not a stray guide with nothing in it")
+	}
+}
+
+func TestStreakLine_FramingEscalatesWithLength(t *testing.T) {
+	texts, err := LoadTexts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		streak int
+		key    string
+	}{
+		{0, "insights.streak_broken"},
+		{1, "insights.streak_active"},
+		{3, "insights.streak_warm"},
+		{5, "insights.streak_hot"},
+	}
+	for _, c := range cases {
+		got := streakLine(texts, common.LocaleRU, c.streak)
+		var want string
+		if c.streak == 0 {
+			want = texts.Get(c.key, common.LocaleRU)
+		} else {
+			want = texts.Get(c.key, common.LocaleRU, c.streak)
+		}
+		if got != want {
+			t.Fatalf("streakLine(%d) = %q, want %q (key %s)", c.streak, got, want, c.key)
+		}
 	}
 }
 

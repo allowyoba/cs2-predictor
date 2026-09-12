@@ -3,15 +3,33 @@ package scoring
 import (
 	"testing"
 	"time"
+
+	"cs2predictor/internal/platform/common"
 )
 
 var insightsNow = time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+
+// testTeamIDs gives every distinct team name in a test its own stable id —
+// grouping is by TeamID now (see UserPrediction's doc comment), so tests
+// need one team name to always map to the same id, and two different names
+// to never collide, the same guarantee production gets from the real team
+// table's primary key.
+var testTeamIDs = map[string]common.TeamID{}
+
+func teamID(name string) common.TeamID {
+	if id, ok := testTeamIDs[name]; ok {
+		return id
+	}
+	id := common.NewTeamID()
+	testTeamIDs[name] = id
+	return id
+}
 
 // at builds a prediction daysAgo days before insightsNow.
 func at(daysAgo int, team string, correct bool) UserPrediction {
 	return UserPrediction{
 		PlayedAt: insightsNow.Add(-time.Duration(daysAgo) * 24 * time.Hour),
-		TeamName: team, Correct: correct,
+		TeamID:   teamID(team), TeamName: team, Correct: correct,
 	}
 }
 
