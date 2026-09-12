@@ -233,8 +233,8 @@ func (p *EventFinishedPublisher) Publish(ctx context.Context, message common.Out
 		if s.Rank > 3 {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("%s %s — %s %s", medalFor(s.Rank), code(escapeHTML(truncate(s.DisplayName, 28))), bold(strconv.Itoa(s.Points)),
-			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions))))
+		lines = append(lines, fmt.Sprintf("%s %s %s — %s", medalFor(s.Rank), code(escapeHTML(truncate(s.DisplayName, 28))),
+			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), bold(strconv.Itoa(s.Points))))
 	}
 	podium := p.texts.Get("stats.empty", locale)
 	if len(lines) > 0 {
@@ -305,9 +305,10 @@ func (p *MatchResultPublisher) Publish(ctx context.Context, message common.Outbo
 	var lines []string
 	for _, s := range n.Standings {
 		movement := movementIndicator(s.Rank, s.PreviousRank, p.texts, locale)
-		lines = append(lines, fmt.Sprintf("%s %s %s — %s %s",
-			medalFor(s.Rank), code(escapeHTML(truncate(s.DisplayName, 24))), italic(movement), bold(fmt.Sprintf("%d (+%d)", s.Points, s.PointsDelta)),
-			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions))))
+		lines = append(lines, fmt.Sprintf("%s %s %s %s — %s",
+			medalFor(s.Rank), code(escapeHTML(truncate(s.DisplayName, 24))),
+			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), italic(movement),
+			bold(fmt.Sprintf("%d (+%d)", s.Points, s.PointsDelta))))
 	}
 	standingsText := strings.Join(lines, "\n")
 

@@ -168,9 +168,9 @@ func (h *UpdateHandler) personalStats(ctx context.Context, target replyTarget, s
 	}
 	for _, s := range standings {
 		if s.UserID.Value == from.ID {
-			text := fmt.Sprintf("%s\n%s · %s %s",
-				bold(escapeHTML(s.DisplayName)), code(fmt.Sprintf("#%d", s.Rank)), code(strconv.Itoa(s.Points)),
-				code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)))
+			text := fmt.Sprintf("%s %s\n%s · %s",
+				bold(escapeHTML(s.DisplayName)), code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)),
+				code(fmt.Sprintf("#%d", s.Rank)), code(strconv.Itoa(s.Points)))
 			return h.respond(ctx, target, managedScreenContext(target, settings, text), h.statsExit(settings.Locale, "stats:events"))
 		}
 	}
@@ -202,8 +202,8 @@ func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID) str
 		if s.UserID == viewer {
 			viewerMark = " · 👤"
 		}
-		fmt.Fprintf(&b, "%s %s%s · %s %s%s", prefix, bold(escapeHTML(name)), movement, code(strconv.Itoa(s.Points)),
-			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), viewerMark)
+		fmt.Fprintf(&b, "%s %s %s%s · %s%s", prefix, bold(escapeHTML(name)),
+			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), movement, code(strconv.Itoa(s.Points)), viewerMark)
 	}
 	return b.String()
 }

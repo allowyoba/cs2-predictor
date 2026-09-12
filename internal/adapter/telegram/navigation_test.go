@@ -115,7 +115,7 @@ func TestLeaderboardRows_AreCompactAndDoNotUseSpacePaddedColumns(t *testing.T) {
 	if strings.Contains(rows, "                        ") {
 		t.Fatalf("leaderboard must not use fixed-width space padding: %q", rows)
 	}
-	if !strings.Contains(rows, "🥇 <b>") || !strings.Contains(rows, "4. <b>Alex</b> · <code>9</code> <code>(2-3-3)</code>") {
+	if !strings.Contains(rows, "🥇 <b>") || !strings.Contains(rows, "4. <b>Alex</b> <code>(2-3-3)</code> · <code>9</code>") {
 		t.Fatalf("unexpected compact leaderboard format: %q", rows)
 	}
 }
