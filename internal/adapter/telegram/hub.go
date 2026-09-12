@@ -61,7 +61,6 @@ func (h *UpdateHandler) systemToolsMenu(ctx context.Context, target replyTarget,
 	if h.isRootTeamMatchOperator(userID) {
 		rows = append(rows,
 			[]InlineButton{button(h.Texts.Get("hub.provider_status", locale), "hub:provider_status")},
-			[]InlineButton{button(h.Texts.Get("hub.backup_status", locale), "hub:backup_status")},
 			[]InlineButton{button(h.Texts.Get("hub.team_match_operators", locale), "hub:team_match_operators")},
 		)
 	}

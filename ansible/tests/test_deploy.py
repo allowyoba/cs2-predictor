@@ -246,18 +246,30 @@ esac
             self.assertEqual(f.read(), b"fake-database-dump")
         self.assertEqual(dumps[0].stat().st_mode & 0o777, 0o600)
 
-    def test_database_backup_prunes_files_past_the_retention_window(self):
+    def test_database_backup_prunes_files_beyond_the_retention_count(self):
         self.write_previous_deployment()
         backup_dir = self.db_backup_dir()
         backup_dir.mkdir(parents=True)
-        stale = backup_dir / "db-v0.9.0-20000101T000000Z.dump.gz"
-        stale.write_bytes(gzip.compress(b"ancient-dump"))
-        old_time = time.time() - (6 * 86400)
-        os.utime(stale, (old_time, old_time))
+        # 5 pre-existing backups (the default retention count) plus the one
+        # this deploy creates itself must leave exactly 5: the newest 5,
+        # i.e. everything except the very oldest pre-existing file.
+        oldest = backup_dir / "db-v0.9.0-20000101T000000Z.dump.gz"
+        names = [
+            "db-v0.9.0-20000101T000000Z.dump.gz",
+            "db-v0.9.1-20000102T000000Z.dump.gz",
+            "db-v0.9.2-20000103T000000Z.dump.gz",
+            "db-v0.9.3-20000104T000000Z.dump.gz",
+            "db-v0.9.4-20000105T000000Z.dump.gz",
+        ]
+        for i, name in enumerate(names):
+            f = backup_dir / name
+            f.write_bytes(gzip.compress(b"old-dump"))
+            t = time.time() - ((len(names) - i) * 86400)
+            os.utime(f, (t, t))
         result = self.run_deploy()
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertFalse(stale.exists())
-        self.assertEqual(len(list(backup_dir.glob("*.dump.gz"))), 1)
+        self.assertFalse(oldest.exists())
+        self.assertEqual(len(list(backup_dir.glob("*.dump.gz"))), 5)
 
     def test_database_backup_failure_blocks_the_deploy(self):
         self.write_previous_deployment()
@@ -292,10 +304,16 @@ esac
         # invocations land in docker.log, not a separate aws-specific log.
         docker_log = (self.root / "docker.log").read_text()
         self.assertIn("amazon/aws-cli", docker_log)
-        self.assertIn("put-bucket-lifecycle-configuration", docker_log)
         self.assertIn("https://storage.yandexcloud.net", docker_log)
         self.assertIn("s3 cp", docker_log)
         self.assertIn("s3://cs2predictor-backups/database/", docker_log)
+        # Retention is enforced by listing objects under the prefix and
+        # deleting everything but the newest N (a count cap, not a bucket
+        # lifecycle rule) — the mock docker never actually runs the
+        # container, so the listing comes back empty and nothing is
+        # deleted, but the listing call itself must still happen.
+        self.assertIn("list-objects-v2", docker_log)
+        self.assertIn("sort_by(Contents", docker_log)
         self.assertNotIn("s3cr3t", result.stdout)
 
     def test_database_backup_to_s3_requires_credentials(self):

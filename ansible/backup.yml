@@ -1,0 +1,51 @@
+---
+# Runs the database_backup role on a schedule (see .github/workflows/
+# backup.yml), independent of deploy.yml — the mandatory pre-deploy backup
+# in deploy.yml only protects against a *deploy*, so if days pass with no
+# deploy, nothing backs up the votes/predictions accumulating in the
+# meantime. This closes that gap by decoupling the trigger (a cron
+# schedule) from the deploy event, while reusing the exact same,
+# already-tested role and connection setup as a real deploy.
+- name: Prepare SSH transport for the scheduled backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  roles:
+    - prepare_connection
+
+- name: Back up the database on a schedule, independent of any deploy
+  hosts: production
+  become: true
+  become_user: "{{ app_user }}"
+  gather_facts: false
+  serial: 1
+  vars:
+    # database_backup's own gate ("is there a previous release to back up
+    # yet") only makes sense in the deploy context it was written for — a
+    # scheduled run makes no such distinction: if the stack is already up,
+    # back it up. See database_backup/tasks/main.yml's own "Skip database
+    # backup" task for the check this satisfies.
+    application_deploy_previous_raw: { failed: false }
+    # Only ever used as an exec target's environment value — compose.
+    # prod.yml's bot service must interpolate to *something* even for a
+    # read-only `exec` into postgres that never starts it (see "Dump the
+    # database..." in database_backup/tasks/main.yml). This playbook never
+    # reads deployment.json, so the real running image is unknown to it —
+    # and doesn't need to be, since nothing here starts a container from it.
+    app_image: unused-scheduled-backup
+  roles:
+    - database_backup
+
+- name: Remove controller SSH credentials
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Clean up the prepared SSH transport
+      ansible.builtin.include_role:
+        name: prepare_connection
+        tasks_from: cleanup
