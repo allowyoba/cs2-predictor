@@ -113,7 +113,7 @@ ps: ## Show development stack container status
 
 ## --- Deployment ---
 
-ANSIBLE_PLAYBOOKS := site.yml bootstrap.yml deploy.yml webhook.yml notify_failure.yml backup.yml
+ANSIBLE_PLAYBOOKS := site.yml bootstrap.yml deploy.yml webhook.yml notify_failure.yml scheduled_backup.yml
 
 .PHONY: deploy-check
 deploy-check: ## Syntax-check the Ansible playbooks and shellcheck scripts/ — what CI runs (needs: pip install ansible-core)
@@ -174,10 +174,6 @@ notify-deploy-failure: ## DM the configured admins about a failed deploy (used b
 .PHONY: register-webhook
 register-webhook: ## Re-register the Telegram webhook (used by .github/workflows/webhook.yml)
 	ansible-playbook ansible/webhook.yml
-
-.PHONY: backup
-backup: ## Back up the database independent of a deploy (used by .github/workflows/backup.yml; needs the same env vars ansible/site.yml reads, plus DB_BACKUP_*)
-	ansible-playbook ansible/backup.yml
 
 ## --- Database ---
 

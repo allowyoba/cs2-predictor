@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily CS2 Predictor database backup
+# Managed by ansible/roles/scheduled_backup — do not edit by hand.
+
+[Timer]
+OnCalendar={{ scheduled_backup_on_calendar }}
+# Spreads the actual run over a 5-minute window instead of every VM in a
+# hypothetical fleet firing at the exact same second — harmless here with
+# one host, and cheap insurance if that ever changes.
+RandomizedDelaySec=300
+# Catches up on a run missed while the VM was down (reboot, maintenance)
+# instead of silently waiting for the next scheduled time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
