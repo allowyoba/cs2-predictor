@@ -1,0 +1,15 @@
+---
+# One-time provisioning of the daily database-backup timer, and how to
+# rotate its S3 credential afterwards — run by hand, connecting as the
+# pre-existing `admin` account, the same way bootstrap.yml is (see its own
+# header comment and ansible/README.md's "Scheduled backups" section).
+# Deliberately not part of deploy.yml: it installs root-owned systemd
+# units, and the deploy SSH user only has root-equivalent access to the
+# app user, never to root itself.
+- name: Install the scheduled database backup timer
+  hosts: production
+  become: true
+  gather_facts: false
+  serial: 1
+  roles:
+    - scheduled_backup

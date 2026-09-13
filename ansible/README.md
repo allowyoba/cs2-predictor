@@ -275,16 +275,40 @@ also run independently of any deploy, once a day — see "Scheduled backups" bel
 
 ## Scheduled backups
 
-`ansible/backup.yml` runs the same `database_backup` role on its own, decoupled from any deploy — the mandatory
-pre-deploy backup only protects against a *deploy*, so days without one would otherwise leave the accumulating votes
-and predictions unbacked. It reuses `prepare_connection` (the same SSH-transport setup `deploy.yml` uses) to reach
-`production`, sets `application_deploy_previous_raw: {failed: false}` to satisfy the role's own "not a first install"
-gate (which doesn't apply outside a deploy) and a placeholder `app_image` (only needed so Compose can interpolate
-`compose.prod.yml` for the read-only `exec` into Postgres — nothing here ever starts a container from it), then cleans
-up its SSH credentials the same way `deploy.yml` does. The `Backup` GitHub Actions workflow (`.github/workflows/backup.yml`)
-runs it once a day on a cron schedule (plus `workflow_dispatch` for a manual run), reusing the exact same
-`DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_PORT`/`APP_USER`/`APP_PATH`/`DEPLOY_KEY`/`KNOWN_HOSTS` and `DB_BACKUP_*`
-secrets/vars already configured for `deploy.yml` — no separate configuration is needed.
+The mandatory pre-deploy backup only protects against a *deploy* — days without one would otherwise leave the
+accumulating votes and predictions unbacked. That gap is closed by a `systemd` timer running directly **on the VM**
+(`cs2predictor-backup.timer`, firing `cs2predictor-backup.service` once a day), not by a scheduled GitHub Actions
+workflow: a cron job on the VM keeps backing up the database even when GitHub Actions itself can't run (billing
+issues, an outage, secrets misconfiguration) — exactly the failure mode that motivated moving it here.
+
+`ansible/roles/scheduled_backup` installs the timer, the service unit, and the backup script
+(`ansible/roles/scheduled_backup/templates/backup.sh.j2`) that the service runs — the same dump/gzip/upload/prune
+logic as `database_backup`'s own S3 path, just standalone (no Ansible, no GitHub Actions involved at run time). The
+script reads the S3 access key from `systemd`'s `LoadCredentialEncrypted=`: the key is encrypted at rest
+(`systemd-creds encrypt`, bound to this host) and decrypted only into the service's own private, in-memory
+`$CREDENTIALS_DIRECTORY` for the duration of each run — never written to disk in plaintext.
+
+This role installs root-owned systemd units, which the deploy SSH user deliberately cannot do (see "Least-privilege
+deploy" below) — it is **not** part of `deploy.yml`. Like `bootstrap.yml`, it's run by hand, connecting as the
+pre-existing `admin` account:
+
+```bash
+cd ansible
+ansible-playbook -i <private-inventory> scheduled_backup.yml
+```
+
+### Rotating the S3 credential
+
+The encrypted credential files (`/etc/cs2predictor/{aws_access_key_id,aws_secret_access_key}.cred`) are created once
+and then left alone by ordinary re-runs. To set them for the first time, or rotate them later, pass the plaintext
+values as extra vars on a one-off run (never commit them):
+
+```bash
+ansible-playbook -i <private-inventory> scheduled_backup.yml \
+  --extra-vars "scheduled_backup_s3_access_key_id=... scheduled_backup_s3_secret_access_key=..."
+```
+
+Nothing else needs to change — the script and units are re-templated idempotently on every run regardless.
 
 ## Deployment flow
 

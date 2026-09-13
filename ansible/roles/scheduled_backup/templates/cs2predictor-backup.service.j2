@@ -1,0 +1,18 @@
+[Unit]
+Description=CS2 Predictor scheduled database backup
+# Managed by ansible/roles/scheduled_backup — do not edit by hand.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User={{ scheduled_backup_app_user }}
+Group={{ scheduled_backup_app_user }}
+WorkingDirectory={{ scheduled_backup_app_dir }}
+# Decrypted only into this run's own $CREDENTIALS_DIRECTORY (a private
+# tmpfs), never written to disk in plaintext — see
+# "Rotating the S3 credential" in ansible/README.md for how these two
+# files are created/refreshed.
+LoadCredentialEncrypted=aws_access_key_id:/etc/cs2predictor/aws_access_key_id.cred
+LoadCredentialEncrypted=aws_secret_access_key:/etc/cs2predictor/aws_secret_access_key.cred
+ExecStart={{ scheduled_backup_app_dir }}/scripts/backup.sh

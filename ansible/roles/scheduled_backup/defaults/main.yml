@@ -1,0 +1,27 @@
+---
+# Root-provisioned, run by hand via the pre-existing `admin` account
+# alongside bootstrap.yml (see its own header comment and
+# ansible/README.md) — not part of the routine deploy.yml pipeline, since
+# the deploy SSH user cannot write root-owned systemd units. Re-run is
+# idempotent and safe any time these defaults or the script template
+# change; it does not touch the encrypted credential files (see
+# "Rotating the S3 credential" in ansible/README.md).
+scheduled_backup_app_user: "{{ app_user | default('cs2predictor') }}"
+scheduled_backup_app_dir: "{{ app_dir | default('/opt/cs2predictor') }}"
+
+# Same meaning and defaults as database_backup's own vars — this timer
+# runs the same kind of backup, just decoupled from any deploy.
+scheduled_backup_retention_count: "{{ lookup('env', 'DB_BACKUP_RETENTION_COUNT') | default('5', true) | int }}"
+scheduled_backup_s3_endpoint: "{{ lookup('env', 'DB_BACKUP_S3_ENDPOINT') | default('https://storage.yandexcloud.net', true) }}"
+scheduled_backup_s3_region: "{{ lookup('env', 'DB_BACKUP_S3_REGION') | default('ru-central1', true) }}"
+scheduled_backup_s3_bucket: "{{ lookup('env', 'DB_BACKUP_S3_BUCKET') | default('', true) }}"
+scheduled_backup_s3_prefix: "{{ lookup('env', 'DB_BACKUP_S3_PREFIX') | default('database/', true) }}"
+
+scheduled_backup_database_name: cs2predictor
+scheduled_backup_database_user: cs2predictor
+scheduled_backup_container_service: postgres
+
+# When this fires — kept off-the-hour and away from any typical deploy
+# window purely to avoid contending with a deploy's own mandatory backup
+# for the same Postgres container.
+scheduled_backup_on_calendar: "*-*-* 03:17:00"
