@@ -35,11 +35,11 @@ func (o *fakeOutbox) Enqueue(context.Context, string, string, string, string) (u
 func (o *fakeOutbox) Pending(context.Context, int) ([]common.OutboxMessage, error) {
 	return o.pending, nil
 }
-func (o *fakeOutbox) Published(_ context.Context, id uuid.UUID) error {
+func (o *fakeOutbox) Published(_ context.Context, id uuid.UUID, _ time.Time) error {
 	o.published = append(o.published, id)
 	return nil
 }
-func (o *fakeOutbox) Failed(_ context.Context, id uuid.UUID, errText string) error {
+func (o *fakeOutbox) Failed(_ context.Context, id uuid.UUID, _ time.Time, errText string) error {
 	o.failed[id] = errText
 	return nil
 }

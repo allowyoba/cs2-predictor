@@ -917,8 +917,9 @@ func TestOutbox_PendingPublishedAndBackoff(t *testing.T) {
 	if len(pending) != 1 || pending[0].ID != id {
 		t.Fatalf("expected the enqueued message to be pending, got %+v", pending)
 	}
+	occurredAt := pending[0].OccurredAt
 
-	if err := outbox.Failed(ctx, id, "telegram unavailable"); err != nil {
+	if err := outbox.Failed(ctx, id, occurredAt, "telegram unavailable"); err != nil {
 		t.Fatal(err)
 	}
 	pendingAfterFailure, err := outbox.Pending(ctx, 10)
@@ -929,7 +930,7 @@ func TestOutbox_PendingPublishedAndBackoff(t *testing.T) {
 		t.Fatalf("expected the failed message to be backed off (not immediately pending again), got %+v", pendingAfterFailure)
 	}
 
-	if err := outbox.Published(ctx, id); err != nil {
+	if err := outbox.Published(ctx, id, occurredAt); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -946,8 +947,18 @@ func TestOutbox_StopsBeingPendingOnceItHitsMaxAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	initialPending, err := outbox.Pending(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var occurredAt time.Time
+	for _, m := range initialPending {
+		if m.ID == id {
+			occurredAt = m.OccurredAt
+		}
+	}
 	for range common.OutboxMaxAttempts {
-		if err := outbox.Failed(ctx, id, "still unavailable"); err != nil {
+		if err := outbox.Failed(ctx, id, occurredAt, "still unavailable"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -960,6 +971,69 @@ func TestOutbox_StopsBeingPendingOnceItHitsMaxAttempts(t *testing.T) {
 		if m.ID == id {
 			t.Fatalf("message hit %d attempts but is still pending: %+v", common.OutboxMaxAttempts, m)
 		}
+	}
+}
+
+// TestOutboxPartitions_EnsureCreatesAndDropOnlyRemovesWhenEmpty covers
+// migration 0031's whole point: EnsureOutboxPartition must make a day's
+// partition available for inserts, and DropOutboxPartitionIfEmpty must
+// refuse to remove one still holding a row — only an empty one, or a day
+// with no partition at all, goes.
+func TestOutboxPartitions_EnsureCreatesAndDropOnlyRemovesWhenEmpty(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	retention := pg.NewRetentionRepository(pool)
+	outbox := pg.NewOutbox(pool)
+
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+
+	id, err := outbox.Enqueue(ctx, "chat", "-1", "telegram.match-result", "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := outbox.Pending(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var occurredAt time.Time
+	for _, m := range pending {
+		if m.ID == id {
+			occurredAt = m.OccurredAt
+		}
+	}
+	if occurredAt.IsZero() {
+		t.Fatal("enqueued message must come back from Pending")
+	}
+
+	// Today's partition already exists (migration 0031 creates it) and
+	// holds the row just enqueued — it must not be dropped.
+	dropped, err := retention.DropOutboxPartitionIfEmpty(ctx, today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dropped {
+		t.Fatal("a partition holding a row must never be dropped")
+	}
+
+	// A day with no partition at all is a safe no-op, not an error.
+	farFuture := today.AddDate(0, 0, 365)
+	dropped, err = retention.DropOutboxPartitionIfEmpty(ctx, farFuture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dropped {
+		t.Fatal("a nonexistent partition must never report as dropped")
+	}
+
+	// Ensure creates it; with nothing routed into it, it must then drop.
+	if err := retention.EnsureOutboxPartition(ctx, farFuture); err != nil {
+		t.Fatal(err)
+	}
+	dropped, err = retention.DropOutboxPartitionIfEmpty(ctx, farFuture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dropped {
+		t.Fatal("an empty partition with no rows must be dropped")
 	}
 }
 

@@ -143,8 +143,10 @@ func (f *fakeSettlementOutbox) recaps() []common.ResultRecapNotification {
 func (f *fakeSettlementOutbox) Pending(context.Context, int) ([]common.OutboxMessage, error) {
 	return nil, nil
 }
-func (f *fakeSettlementOutbox) Published(context.Context, uuid.UUID) error      { return nil }
-func (f *fakeSettlementOutbox) Failed(context.Context, uuid.UUID, string) error { return nil }
+func (f *fakeSettlementOutbox) Published(context.Context, uuid.UUID, time.Time) error { return nil }
+func (f *fakeSettlementOutbox) Failed(context.Context, uuid.UUID, time.Time, string) error {
+	return nil
+}
 
 func newSettlementFixture() (*fakePredictionsForSettlement, *fakeScoringForSettlement, *fakeSettlementRepo, *fakeSettlementOutbox) {
 	return &fakePredictionsForSettlement{polls: map[common.PollID]prediction.Poll{}, votes: map[common.PollID][]prediction.Vote{}},
