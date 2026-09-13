@@ -65,7 +65,7 @@ func TestMatches_BatchesAndMergesAcrossConcurrentRequests(t *testing.T) {
 
 	var events []competition.Event
 	for i := int64(1); i <= 5; i++ {
-		events = append(events, competition.Event{ExternalID: strconv.FormatInt(i, 10)})
+		events = append(events, competition.Event{ExternalID: strconv.FormatInt(i, 10), Game: competition.GameCS2})
 	}
 
 	matches, err := provider.Matches(context.Background(), events)
@@ -107,7 +107,11 @@ func TestMatches_OneFailingBatchFailsTheWholeCall(t *testing.T) {
 	config.MaxConcurrency = 4
 	provider := NewProvider(config, server.Client())
 
-	events := []competition.Event{{ExternalID: "1"}, {ExternalID: "2"}, {ExternalID: "3"}}
+	events := []competition.Event{
+		{ExternalID: "1", Game: competition.GameCS2},
+		{ExternalID: "2", Game: competition.GameCS2},
+		{ExternalID: "3", Game: competition.GameCS2},
+	}
 	if _, err := provider.Matches(context.Background(), events); err == nil {
 		t.Fatal("expected an error when one batch's request fails")
 	}

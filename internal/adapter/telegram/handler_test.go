@@ -162,6 +162,13 @@ func (f *fakeChats) Save(_ context.Context, s chat.Settings) (chat.Settings, err
 	f.settings[s.ChatID.Value] = s
 	return s, nil
 }
+func (f *fakeChats) SetEnabledGames(_ context.Context, chatID common.ChatID, games []competition.GameCode) error {
+	s := f.settings[chatID.Value]
+	s.ChatID = chatID
+	s.EnabledGames = games
+	f.settings[chatID.Value] = s
+	return nil
+}
 func (f *fakeChats) IsModerator(_ context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {
 	return f.moderators[[2]int64{chatID.Value, userID.Value}], nil
 }
@@ -229,7 +236,7 @@ func (m fakeMembership) Role(context.Context, common.ChatID, common.UserID) (cha
 
 type fakeCatalog struct{}
 
-func (fakeCatalog) SearchEvents(context.Context, string, int, bool) ([]competition.Event, error) {
+func (fakeCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
 }
 func (fakeCatalog) FindEvent(context.Context, common.EventID) (*competition.Event, error) {

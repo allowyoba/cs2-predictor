@@ -27,7 +27,41 @@ func NewCompetitionRepository(pool *pgxpool.Pool) *CompetitionRepository {
 	return &CompetitionRepository{pool: pool}
 }
 
-const gameIDCS2 = 1 // hardcoded everywhere in the original persistence code, never looked up
+// gameID resolves a GameCode to game.id. Unlike providerID it never
+// auto-inserts: game rows are seeded by migration (see 0001, 0032), so an
+// unresolvable code means a GameCode the schema doesn't know about yet —
+// a real bug, not a first-sight-of-a-new-provider situation.
+func (r *CompetitionRepository) gameID(ctx context.Context, code competition.GameCode) (int16, error) {
+	var id int16
+	err := executor(ctx, r.pool).QueryRow(ctx, `SELECT id FROM game WHERE code = $1`, string(code)).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("game code %q is not seeded in the game table", code)
+	}
+	return id, err
+}
+
+// gameCodes batch-resolves game ids to their codes in one round trip, for
+// scanEvents — see providerCodes's doc comment for why batching matters here.
+func (r *CompetitionRepository) gameCodes(ctx context.Context, ids []int16) (map[int16]competition.GameCode, error) {
+	out := map[int16]competition.GameCode{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx, `SELECT id, code FROM game WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int16
+		var code string
+		if err := rows.Scan(&id, &code); err != nil {
+			return nil, err
+		}
+		out[id] = competition.GameCode(code)
+	}
+	return out, rows.Err()
+}
 
 func (r *CompetitionRepository) providerID(ctx context.Context, code string) (int16, error) {
 	code = upper(code)
@@ -56,7 +90,7 @@ func (r *CompetitionRepository) providerCode(ctx context.Context, id int16) (str
 	return code, err
 }
 
-const eventSelect = `SELECT id, provider_id, external_id, name, status, starts_at, ends_at, tier FROM tournament_event`
+const eventSelect = `SELECT id, game_id, provider_id, external_id, name, status, starts_at, ends_at, tier FROM tournament_event`
 
 // escapeLikePattern escapes the three characters that are special inside a
 // SQL LIKE/ILIKE pattern (the wildcards '%' and '_', plus the escape
@@ -67,11 +101,20 @@ func escapeLikePattern(s string) string {
 	return r.Replace(s)
 }
 
-func (r *CompetitionRepository) SearchEvents(ctx context.Context, query string, limit int, topTierOnly bool) ([]competition.Event, error) {
+func (r *CompetitionRepository) SearchEvents(ctx context.Context, query string, limit int, topTierOnly bool, games []competition.GameCode) ([]competition.Event, error) {
 	if limit < 1 {
 		limit = 1
 	} else if limit > 1000 {
 		limit = 1000
+	}
+	if len(games) == 0 {
+		// A chat with no games enabled sees nothing — not an error, just
+		// an empty result, same as "no events matched the search".
+		return nil, nil
+	}
+	codes := make([]string, len(games))
+	for i, g := range games {
+		codes[i] = string(g)
 	}
 	// Event discovery is served entirely from the Postgres catalog: no
 	// provider call happens while a user is browsing. ILIKE makes the search
@@ -80,12 +123,13 @@ func (r *CompetitionRepository) SearchEvents(ctx context.Context, query string, 
 	sql := eventSelect + `
 		 WHERE name ILIKE ('%' || $1 || '%') ESCAPE '\'
 		   AND status IN ('UPCOMING', 'RUNNING')
-		   AND (ends_at IS NULL OR ends_at > now())`
+		   AND (ends_at IS NULL OR ends_at > now())
+		   AND game_id IN (SELECT id FROM game WHERE code = ANY($3))`
 	if topTierOnly {
 		sql += ` AND tier IN ('s', 'a')`
 	}
 	sql += ` ORDER BY CASE status WHEN 'RUNNING' THEN 0 ELSE 1 END, starts_at ASC NULLS LAST, name ASC LIMIT $2`
-	rows, err := executor(ctx, r.pool).Query(ctx, sql, escapeLikePattern(query), limit)
+	rows, err := executor(ctx, r.pool).Query(ctx, sql, escapeLikePattern(query), limit, codes)
 	if err != nil {
 		return nil, err
 	}
@@ -99,13 +143,14 @@ func (r *CompetitionRepository) SearchEvents(ctx context.Context, query string, 
 // data_provider on every multi-row event read (SearchEvents, FindEvents).
 func (r *CompetitionRepository) scanEvents(ctx context.Context, rows pgx.Rows) ([]competition.Event, error) {
 	var out []competition.Event
-	var providerIDs []int16
+	var providerIDs, gameIDs []int16
 	for rows.Next() {
-		e, providerID, err := scanEvent(rows)
+		e, gameID, providerID, err := scanEvent(rows)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, e)
+		gameIDs = append(gameIDs, gameID)
 		providerIDs = append(providerIDs, providerID)
 	}
 	if err := rows.Err(); err != nil {
@@ -115,8 +160,13 @@ func (r *CompetitionRepository) scanEvents(ctx context.Context, rows pgx.Rows) (
 	if err != nil {
 		return nil, err
 	}
+	games, err := r.gameCodes(ctx, gameIDs)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
 		out[i].Provider = codes[providerIDs[i]]
+		out[i].Game = games[gameIDs[i]]
 	}
 	return out, nil
 }
@@ -146,23 +196,22 @@ func (r *CompetitionRepository) providerCodes(ctx context.Context, ids []int16) 
 
 func scanEvent(row interface {
 	Scan(dest ...any) error
-}) (competition.Event, int16, error) {
+}) (competition.Event, int16, int16, error) {
 	var e competition.Event
-	var providerID int16
+	var gameID, providerID int16
 	var tier *string
-	if err := row.Scan(&e.ID.Value, &providerID, &e.ExternalID, &e.Name, &e.Status, &e.StartsAt, &e.EndsAt, &tier); err != nil {
-		return competition.Event{}, 0, err
+	if err := row.Scan(&e.ID.Value, &gameID, &providerID, &e.ExternalID, &e.Name, &e.Status, &e.StartsAt, &e.EndsAt, &tier); err != nil {
+		return competition.Event{}, 0, 0, err
 	}
-	e.Game = competition.GameCS2
 	if tier != nil {
 		e.Tier = competition.EventTier(*tier)
 	}
-	return e, providerID, nil
+	return e, gameID, providerID, nil
 }
 
 func (r *CompetitionRepository) FindEvent(ctx context.Context, id common.EventID) (*competition.Event, error) {
 	row := executor(ctx, r.pool).QueryRow(ctx, eventSelect+` WHERE id = $1`, id.Value)
-	e, providerID, err := scanEvent(row)
+	e, gameID, providerID, err := scanEvent(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -174,6 +223,11 @@ func (r *CompetitionRepository) FindEvent(ctx context.Context, id common.EventID
 		return nil, err
 	}
 	e.Provider = code
+	games, err := r.gameCodes(ctx, []int16{gameID})
+	if err != nil {
+		return nil, err
+	}
+	e.Game = games[gameID]
 	return &e, nil
 }
 
@@ -200,6 +254,10 @@ func (r *CompetitionRepository) SaveEvent(ctx context.Context, e competition.Eve
 	if err != nil {
 		return competition.Event{}, err
 	}
+	gameID, err := r.gameID(ctx, e.Game)
+	if err != nil {
+		return competition.Event{}, err
+	}
 	var tier *string
 	if e.Tier != competition.TierUnknown {
 		t := string(e.Tier)
@@ -211,7 +269,7 @@ func (r *CompetitionRepository) SaveEvent(ctx context.Context, e competition.Eve
 		 ON CONFLICT (id) DO UPDATE SET provider_id = excluded.provider_id, external_id = excluded.external_id,
 		   name = excluded.name, status = excluded.status, starts_at = excluded.starts_at, ends_at = excluded.ends_at,
 		   tier = excluded.tier, updated_at = now()`,
-		e.ID.Value, gameIDCS2, providerID, e.ExternalID, e.Name, e.Status, e.StartsAt, e.EndsAt, tier)
+		e.ID.Value, gameID, providerID, e.ExternalID, e.Name, e.Status, e.StartsAt, e.EndsAt, tier)
 	return e, err
 }
 
@@ -338,16 +396,20 @@ func (r *CompetitionRepository) SaveMatch(ctx context.Context, m competition.Mat
 		if err != nil {
 			return err
 		}
+		gameID, err := r.gameID(ctx, event.Game)
+		if err != nil {
+			return err
+		}
 
 		ex := executor(ctx, r.pool)
 
 		if m.FirstTeam != nil {
-			if err := r.saveTeam(ctx, providerID, *m.FirstTeam); err != nil {
+			if err := r.saveTeam(ctx, gameID, providerID, *m.FirstTeam); err != nil {
 				return err
 			}
 		}
 		if m.SecondTeam != nil {
-			if err := r.saveTeam(ctx, providerID, *m.SecondTeam); err != nil {
+			if err := r.saveTeam(ctx, gameID, providerID, *m.SecondTeam); err != nil {
 				return err
 			}
 		}
@@ -426,12 +488,12 @@ func (r *CompetitionRepository) SaveMatch(ctx context.Context, m competition.Mat
 	return m, nil
 }
 
-func (r *CompetitionRepository) saveTeam(ctx context.Context, providerID int16, t competition.Team) error {
+func (r *CompetitionRepository) saveTeam(ctx context.Context, gameID, providerID int16, t competition.Team) error {
 	_, err := executor(ctx, r.pool).Exec(ctx,
 		`INSERT INTO team(id, game_id, provider_id, external_id, name, location, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), now(), now())
 		 ON CONFLICT (id) DO UPDATE SET name = excluded.name, location = COALESCE(excluded.location, team.location), updated_at = now()`,
-		t.ID.Value, gameIDCS2, providerID, t.ExternalID, t.Name, t.Location)
+		t.ID.Value, gameID, providerID, t.ExternalID, t.Name, t.Location)
 	return err
 }
 

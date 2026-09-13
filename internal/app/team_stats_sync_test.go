@@ -42,7 +42,7 @@ type fakeTeamStatsCatalog struct {
 	err     error
 }
 
-func (f *fakeTeamStatsCatalog) SearchEvents(context.Context, string, int, bool) ([]competition.Event, error) {
+func (f *fakeTeamStatsCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
 }
 func (f *fakeTeamStatsCatalog) FindEvent(context.Context, common.EventID) (*competition.Event, error) {

@@ -12,7 +12,14 @@ import (
 
 type GameCode string
 
-const GameCS2 GameCode = "CS2"
+const (
+	GameCS2   GameCode = "CS2"
+	GameDota2 GameCode = "DOTA2"
+)
+
+// Games lists every supported GameCode, in the order chat settings/UI
+// should present them.
+var Games = []GameCode{GameCS2, GameDota2}
 
 type EventStatus string
 

@@ -41,7 +41,9 @@ type MatchFactsCatalog interface {
 
 // Catalog is the persistence port for events and matches.
 type Catalog interface {
-	SearchEvents(ctx context.Context, query string, limit int, topTierOnly bool) ([]Event, error)
+	// games restricts results to those GameCodes — a chat that hasn't
+	// enabled any game (empty games) sees nothing, not everything.
+	SearchEvents(ctx context.Context, query string, limit int, topTierOnly bool, games []GameCode) ([]Event, error)
 	FindEvent(ctx context.Context, id common.EventID) (*Event, error)
 	// FindEvents batch-fetches events by id in a single round trip — used to
 	// avoid an N+1 query pattern when rendering a list backed by several

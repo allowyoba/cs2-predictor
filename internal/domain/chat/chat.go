@@ -10,6 +10,7 @@ import (
 	"context"
 	"time"
 
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -34,6 +35,25 @@ type Settings struct {
 	// it via the proactive big-event-discovered notification — see
 	// CompetitionSynchronization.announceBigEvent.
 	AutoSubscribeTopTier bool
+	// EnabledGames lists the games this chat wants events/polls for — empty
+	// for a chat that hasn't turned any on yet (the default for every new
+	// chat; see chat_enabled_game's migration for why existing chats were
+	// backfilled with CS2 instead). Read-only here; change it via
+	// Repository.SetEnabledGames, not Save.
+	EnabledGames []competition.GameCode
+}
+
+// GameEnabled reports whether this chat wants game's events/polls — the
+// gate CompetitionSynchronization applies before offering or auto-
+// subscribing a chat to an event, and the search screen applies before
+// showing one at all.
+func (s Settings) GameEnabled(game competition.GameCode) bool {
+	for _, g := range s.EnabledGames {
+		if g == game {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultTimezone is the fallback IANA zone for a chat that hasn't set one.
@@ -80,6 +100,10 @@ type ActiveChatLister interface {
 type Repository interface {
 	Find(ctx context.Context, chatID common.ChatID) (*Settings, error)
 	Save(ctx context.Context, settings Settings) (Settings, error)
+	// SetEnabledGames replaces the chat's whole EnabledGames set — mirrors
+	// SetModeratorPermissions's replace-the-set semantics rather than
+	// living on Save, which never otherwise touches a satellite table.
+	SetEnabledGames(ctx context.Context, chatID common.ChatID, games []competition.GameCode) error
 	// MigrateChatID renames a chat's id everywhere at once (via ON UPDATE
 	// CASCADE on every foreign key referencing it) — Telegram permanently
 	// renumbers a group's id when it's upgraded to a supergroup, announced
