@@ -13,14 +13,21 @@ type fakeRetentionStore struct {
 	maxRows map[string]int
 	deleted map[string]int64
 	errs    map[string]error
+
+	ensuredPartitionDays []time.Time
+	consideredDropDays   []time.Time
+	droppedDays          []time.Time
+	droppableDays        map[string]bool
+	partitionErr         error
 }
 
 func newFakeRetentionStore() *fakeRetentionStore {
 	return &fakeRetentionStore{
-		cutoffs: map[string]time.Time{},
-		maxRows: map[string]int{},
-		deleted: map[string]int64{},
-		errs:    map[string]error{},
+		cutoffs:       map[string]time.Time{},
+		maxRows:       map[string]int{},
+		deleted:       map[string]int64{},
+		errs:          map[string]error{},
+		droppableDays: map[string]bool{},
 	}
 }
 
@@ -57,6 +64,21 @@ func (f *fakeRetentionStore) DeleteProcessedUpdatesExceeding(_ context.Context, 
 }
 func (f *fakeRetentionStore) DeletePublishedOutboxExceeding(_ context.Context, maxRows int) (int64, error) {
 	return f.recordCap("outbox-cap", maxRows)
+}
+func (f *fakeRetentionStore) EnsureOutboxPartition(_ context.Context, day time.Time) error {
+	f.ensuredPartitionDays = append(f.ensuredPartitionDays, day)
+	return f.partitionErr
+}
+func (f *fakeRetentionStore) DropOutboxPartitionIfEmpty(_ context.Context, day time.Time) (bool, error) {
+	f.consideredDropDays = append(f.consideredDropDays, day)
+	if f.partitionErr != nil {
+		return false, f.partitionErr
+	}
+	if f.droppableDays[day.Format(time.DateOnly)] {
+		f.droppedDays = append(f.droppedDays, day)
+		return true, nil
+	}
+	return false, nil
 }
 
 type fixedClock struct{ now time.Time }
@@ -176,4 +198,86 @@ func TestRetentionSweep_RowCountCapContinuesAfterOneTargetFails(t *testing.T) {
 	if _, capped := store.maxRows["outbox-cap"]; !capped {
 		t.Fatal("outbox row cap must still run after the updates cap failed")
 	}
+}
+
+func TestRetentionSweep_EnsuresTodayThroughLookaheadOutboxPartitions(t *testing.T) {
+	now := time.Date(2026, 9, 8, 17, 30, 0, 0, time.UTC)
+	store := newFakeRetentionStore()
+
+	newTestSweep(store, now).Dispatch(context.Background())
+
+	today := now.Truncate(24 * time.Hour)
+	want := []time.Time{today, today.AddDate(0, 0, 1), today.AddDate(0, 0, 2)}
+	if len(store.ensuredPartitionDays) != len(want) {
+		t.Fatalf("ensured partition days = %v, want %v", store.ensuredPartitionDays, want)
+	}
+	for i, day := range want {
+		if !store.ensuredPartitionDays[i].Equal(day) {
+			t.Fatalf("ensured partition day[%d] = %v, want %v", i, store.ensuredPartitionDays[i], day)
+		}
+	}
+}
+
+func TestRetentionSweep_DropsOnlyEmptyOutboxPartitionsPastTheTTLPlusMargin(t *testing.T) {
+	now := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	store := newFakeRetentionStore()
+	sweep := newTestSweep(store, now)
+	sweep.PublishedOutboxTTL = 5 * 24 * time.Hour // matches production default
+
+	// cutoff = now - TTL - 1 day margin = 2026-09-02. Only days strictly
+	// before that are ever even considered for a drop.
+	old := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC) // on/after the cutoff
+	store.droppableDays[old.Format(time.DateOnly)] = true
+
+	sweep.Dispatch(context.Background())
+
+	foundOld, foundRecent := false, false
+	for _, day := range store.consideredDropDays {
+		if day.Equal(old) {
+			foundOld = true
+		}
+		if day.Equal(recent) || day.After(recent) {
+			foundRecent = true
+		}
+	}
+	if !foundOld {
+		t.Fatal("a partition well past the TTL+margin must be considered for dropping")
+	}
+	if foundRecent {
+		t.Fatal("a partition still within the TTL+margin must never be considered for dropping")
+	}
+
+	dropped := false
+	for _, day := range store.droppedDays {
+		if day.Equal(old) {
+			dropped = true
+		}
+	}
+	if !dropped {
+		t.Fatal("the droppable old partition must actually be dropped")
+	}
+}
+
+func TestRetentionSweep_ZeroPublishedOutboxTTLDisablesPartitionMaintenance(t *testing.T) {
+	store := newFakeRetentionStore()
+	sweep := newTestSweep(store, time.Now())
+	sweep.PublishedOutboxTTL = 0
+
+	sweep.Dispatch(context.Background())
+
+	if len(store.ensuredPartitionDays) != 0 {
+		t.Fatal("disabled outbox retention must not create partitions either")
+	}
+	if len(store.consideredDropDays) != 0 {
+		t.Fatal("disabled outbox retention must not consider dropping partitions either")
+	}
+}
+
+func TestRetentionSweep_PartitionMaintenanceContinuesAfterAnEnsureFailure(t *testing.T) {
+	store := newFakeRetentionStore()
+	store.partitionErr = errors.New("connection reset")
+
+	// Must not panic or abort the rest of the sweep.
+	newTestSweep(store, time.Now()).Dispatch(context.Background())
 }

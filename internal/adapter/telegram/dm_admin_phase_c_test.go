@@ -103,8 +103,8 @@ func (f *fakeOutbox) Enqueue(_ context.Context, _, _, eventType, payload string)
 	return uuid.New(), nil
 }
 func (f *fakeOutbox) Pending(context.Context, int) ([]common.OutboxMessage, error) { return nil, nil }
-func (f *fakeOutbox) Published(context.Context, uuid.UUID) error                   { return nil }
-func (f *fakeOutbox) Failed(context.Context, uuid.UUID, string) error              { return nil }
+func (f *fakeOutbox) Published(context.Context, uuid.UUID, time.Time) error        { return nil }
+func (f *fakeOutbox) Failed(context.Context, uuid.UUID, time.Time, string) error   { return nil }
 
 func setupUnsubscribeTest(t *testing.T, admins []common.UserID, unreachable map[int64]bool, eventID common.EventID, chatID common.ChatID) (*UpdateHandler, *fakeChats, *fakePendingUnsubscribes, *[]map[string]any) {
 	t.Helper()
