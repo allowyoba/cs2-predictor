@@ -111,4 +111,45 @@ func (s *RetentionSweep) sweep(ctx context.Context) {
 		}
 	}
 	s.Log.Debug("retention sweep finished", "rowsDeleted", total)
+
+	s.maintainOutboxPartitions(ctx, now)
+}
+
+// outboxPartitionLookahead: days ahead of today to keep pre-created.
+const outboxPartitionLookahead = 2
+
+// outboxPartitionBacklogScanDays bounds how far back to look for droppable
+// partitions each sweep — generous since checks are cheap and this also
+// catches up after the sweep was disabled or down for a while.
+const outboxPartitionBacklogScanDays = 60
+
+// maintainOutboxPartitions keeps outbox_event's daily partitions (migration
+// 0031) ahead of writes and drops old empty ones, one day past
+// PublishedOutboxTTL as margin for the deletes above to empty them first. A
+// partition still holding rows (e.g. a message that exhausted its retry
+// budget, see common.OutboxMaxAttempts) is left alone and retried later.
+func (s *RetentionSweep) maintainOutboxPartitions(ctx context.Context, now time.Time) {
+	if s.PublishedOutboxTTL <= 0 {
+		return // partition lifecycle follows the same TTL; disabled means disabled
+	}
+	today := now.UTC().Truncate(24 * time.Hour)
+
+	for i := 0; i <= outboxPartitionLookahead; i++ {
+		day := today.AddDate(0, 0, i)
+		if err := s.Store.EnsureOutboxPartition(ctx, day); err != nil {
+			s.Log.Warn("failed to ensure outbox partition", "date", day.Format(time.DateOnly), "error", err)
+		}
+	}
+
+	cutoff := today.Add(-s.PublishedOutboxTTL - 24*time.Hour)
+	for day := cutoff.AddDate(0, 0, -outboxPartitionBacklogScanDays); day.Before(cutoff); day = day.AddDate(0, 0, 1) {
+		dropped, err := s.Store.DropOutboxPartitionIfEmpty(ctx, day)
+		if err != nil {
+			s.Log.Warn("failed to drop outbox partition", "date", day.Format(time.DateOnly), "error", err)
+			continue
+		}
+		if dropped {
+			s.Log.Info("dropped empty outbox partition", "date", day.Format(time.DateOnly))
+		}
+	}
 }

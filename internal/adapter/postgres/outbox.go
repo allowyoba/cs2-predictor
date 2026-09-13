@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,9 @@ import (
 //     computed from the attempts value BEFORE increment (Postgres evaluates
 //     every SET clause's RHS against the pre-update row).
 //   - last_error is truncated to 4000 chars, matching error.take(4000).
+//   - Published/Failed key on (id, occurred_at): outbox_event is partitioned
+//     by occurred_at (migration 0031), so occurred_at prunes the UPDATE to
+//     one partition instead of scanning all of them.
 type Outbox struct {
 	pool *pgxpool.Pool
 }
@@ -56,18 +60,19 @@ func (o *Outbox) Pending(ctx context.Context, limit int) ([]common.OutboxMessage
 	return out, rows.Err()
 }
 
-func (o *Outbox) Published(ctx context.Context, id uuid.UUID) error {
-	_, err := executor(ctx, o.pool).Exec(ctx, `UPDATE outbox_event SET published_at = now() WHERE id = $1`, id)
+func (o *Outbox) Published(ctx context.Context, id uuid.UUID, occurredAt time.Time) error {
+	_, err := executor(ctx, o.pool).Exec(ctx,
+		`UPDATE outbox_event SET published_at = now() WHERE id = $1 AND occurred_at = $2`, id, occurredAt)
 	return err
 }
 
-func (o *Outbox) Failed(ctx context.Context, id uuid.UUID, errText string) error {
+func (o *Outbox) Failed(ctx context.Context, id uuid.UUID, occurredAt time.Time, errText string) error {
 	if len(errText) > 4000 {
 		errText = errText[:4000]
 	}
 	_, err := executor(ctx, o.pool).Exec(ctx,
-		`UPDATE outbox_event SET attempts = attempts + 1, last_error = $2,
+		`UPDATE outbox_event SET attempts = attempts + 1, last_error = $3,
 		 next_attempt_at = now() + make_interval(secs => least(300, power(2, attempts)::int))
-		 WHERE id = $1`, id, errText)
+		 WHERE id = $1 AND occurred_at = $2`, id, occurredAt, errText)
 	return err
 }

@@ -42,12 +42,14 @@ type OutboxMessage struct {
 const OutboxMaxAttempts = 20
 
 // Outbox is the transactional-outbox port. Enqueue must be called in the
-// same DB transaction as the domain write it announces.
+// same DB transaction as the domain write it announces. Published/Failed
+// take occurredAt (from Pending) so the adapter's UPDATE can prune to
+// outbox_event's partition (migration 0031) instead of scanning all of them.
 type Outbox interface {
 	Enqueue(ctx context.Context, aggregateType, aggregateID, eventType, payload string) (uuid.UUID, error)
 	Pending(ctx context.Context, limit int) ([]OutboxMessage, error)
-	Published(ctx context.Context, id uuid.UUID) error
-	Failed(ctx context.Context, id uuid.UUID, errText string) error
+	Published(ctx context.Context, id uuid.UUID, occurredAt time.Time) error
+	Failed(ctx context.Context, id uuid.UUID, occurredAt time.Time, errText string) error
 }
 
 // OutboxPublisher fans an outbox message out to its destination (Telegram)
@@ -216,6 +218,12 @@ type RetentionRepository interface {
 	// hatch the TTL fields use.
 	DeleteProcessedUpdatesExceeding(ctx context.Context, maxRows int) (int64, error)
 	DeletePublishedOutboxExceeding(ctx context.Context, maxRows int) (int64, error)
+
+	// Maintain outbox_event's daily RANGE partitions (migration 0031). day
+	// is a partition's UTC calendar date; Drop is a no-op if the partition
+	// is missing or still holds rows.
+	EnsureOutboxPartition(ctx context.Context, day time.Time) error
+	DropOutboxPartitionIfEmpty(ctx context.Context, day time.Time) (bool, error)
 }
 
 // NotificationKind names one of the private nudges a person can opt into.

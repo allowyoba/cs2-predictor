@@ -57,14 +57,14 @@ func (d *OutboxDispatcher) dispatchOne(ctx context.Context, message common.Outbo
 		}
 	}
 	if publisher == nil {
-		_ = d.Outbox.Failed(ctx, message.ID, "no publisher for "+message.Type)
+		_ = d.Outbox.Failed(ctx, message.ID, message.OccurredAt, "no publisher for "+message.Type)
 		d.Metrics.OutboxEvents.WithLabelValues("unsupported", message.Type).Inc()
 		d.Log.Error("no outbox publisher", "eventId", message.ID, "type", message.Type)
 		return
 	}
 
 	if err := publisher.Publish(ctx, message); err != nil {
-		_ = d.Outbox.Failed(ctx, message.ID, err.Error())
+		_ = d.Outbox.Failed(ctx, message.ID, message.OccurredAt, err.Error())
 		d.Metrics.OutboxEvents.WithLabelValues("failed", message.Type).Inc()
 		d.Log.Error("outbox publish failed", "eventId", message.ID, "type", message.Type, "error", err, "attempts", message.Attempts+1)
 		// message.Attempts is the value BEFORE this failure's increment
@@ -80,7 +80,7 @@ func (d *OutboxDispatcher) dispatchOne(ctx context.Context, message common.Outbo
 		}
 		return
 	}
-	if err := d.Outbox.Published(ctx, message.ID); err != nil {
+	if err := d.Outbox.Published(ctx, message.ID, message.OccurredAt); err != nil {
 		d.Log.Error("failed to mark outbox message published", "eventId", message.ID, "error", err)
 		return
 	}

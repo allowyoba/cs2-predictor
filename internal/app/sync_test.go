@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -154,8 +155,8 @@ func (o *fakeSyncOutbox) Enqueue(_ context.Context, _, aggregateID, eventType, _
 func (o *fakeSyncOutbox) Pending(context.Context, int) ([]common.OutboxMessage, error) {
 	return nil, nil
 }
-func (o *fakeSyncOutbox) Published(context.Context, uuid.UUID) error      { return nil }
-func (o *fakeSyncOutbox) Failed(context.Context, uuid.UUID, string) error { return nil }
+func (o *fakeSyncOutbox) Published(context.Context, uuid.UUID, time.Time) error      { return nil }
+func (o *fakeSyncOutbox) Failed(context.Context, uuid.UUID, time.Time, string) error { return nil }
 
 // newTestSync builds a CompetitionSynchronization wired only for
 // DiscoverEvents (Predictions/Settlement/EventCompletion stay nil — none of
