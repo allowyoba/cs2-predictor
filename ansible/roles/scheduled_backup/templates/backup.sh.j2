@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Managed by ansible/roles/scheduled_backup — do not edit by hand, changes
+# are overwritten the next time that role runs.
+#
+# Runs the database backup independent of any deploy, from a systemd timer
+# (cs2predictor-backup.timer) rather than the GitHub Actions pipeline —
+# unlike database_backup's Ansible role, this never depends on GitHub
+# Actions being reachable or billed, which is the entire point: it keeps
+# backing up the database even when the deploy pipeline can't run at all.
+#
+# AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY come from systemd's
+# LoadCredentialEncrypted (see cs2predictor-backup.service.j2) — decrypted
+# into $CREDENTIALS_DIRECTORY only for this unit's own run, never written
+# to disk in plaintext. See "Rotating the S3 credential" in
+# ansible/README.md for how those files are (re-)created.
+set -euo pipefail
+
+app_dir={{ scheduled_backup_app_dir | quote }}
+staging="$(mktemp -d)"
+trap 'rm -rf "$staging"' EXIT
+
+label="db-$(date -u +%Y%m%dT%H%M%SZ)"
+
+# The bot service's image is `${APP_IMAGE:?required}` in compose.prod.yml —
+# Compose refuses to interpolate the file at all without it, even for a
+# read-only `exec` into the already-running postgres container. The
+# currently-installed release's own image (from the last successful
+# deploy) is the only value that's actually correct here.
+app_image="$(jq -r '.image' "$app_dir/deployment.json")"
+
+compose_args=(--project-directory "$app_dir/docker" --env-file "$app_dir/.env" -f "$app_dir/docker/compose.prod.yml")
+
+APP_IMAGE="$app_image" docker compose "${compose_args[@]}" exec -T {{ scheduled_backup_container_service }} \
+  pg_dump -U {{ scheduled_backup_database_user }} -Fc {{ scheduled_backup_database_name }} \
+  > "$staging/$label.dump"
+gzip "$staging/$label.dump"
+
+aws_env=(-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION="{{ scheduled_backup_s3_region }}")
+export AWS_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY
+AWS_ACCESS_KEY_ID="$(<"${CREDENTIALS_DIRECTORY}/aws_access_key_id")"
+AWS_SECRET_ACCESS_KEY="$(<"${CREDENTIALS_DIRECTORY}/aws_secret_access_key")"
+
+docker run --rm -v "$staging:/data:ro" "${aws_env[@]}" amazon/aws-cli:2.23.6 \
+  s3 cp "/data/$label.dump.gz" "s3://{{ scheduled_backup_s3_bucket }}/{{ scheduled_backup_s3_prefix }}$label.dump.gz" \
+  --endpoint-url "{{ scheduled_backup_s3_endpoint }}"
+
+# Keep only the newest N objects under the prefix — see
+# database_backup/tasks/main.yml's own equivalent step for why the
+# slicing itself is done by JMESPath rather than in shell.
+stale="$(docker run --rm "${aws_env[@]}" amazon/aws-cli:2.23.6 \
+  s3api list-objects-v2 --endpoint-url "{{ scheduled_backup_s3_endpoint }}" \
+  --bucket "{{ scheduled_backup_s3_bucket }}" --prefix "{{ scheduled_backup_s3_prefix }}" \
+  --query "sort_by(Contents || \`[]\`, &LastModified)[:-{{ scheduled_backup_retention_count }}].Key" \
+  --output text)"
+
+if [ -n "$stale" ] && [ "$stale" != "None" ]; then
+  while IFS= read -r key; do
+    [ -z "$key" ] && continue
+    docker run --rm "${aws_env[@]}" amazon/aws-cli:2.23.6 \
+      s3 rm "s3://{{ scheduled_backup_s3_bucket }}/$key" --endpoint-url "{{ scheduled_backup_s3_endpoint }}"
+  done <<<"$stale"
+fi
+
+echo "Scheduled database backup complete: $label.dump.gz"

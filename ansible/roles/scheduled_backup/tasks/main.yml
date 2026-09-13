@@ -1,0 +1,109 @@
+---
+# See defaults/main.yml and this role's own header comment for why this
+# runs by hand (via the `admin` account, alongside bootstrap.yml) rather
+# than as part of deploy.yml: installing root-owned systemd units needs
+# root, which the deploy SSH user deliberately doesn't have.
+- name: Require S3 configuration
+  ansible.builtin.assert:
+    that:
+      - scheduled_backup_s3_bucket | length > 0
+    fail_msg: >-
+      Set DB_BACKUP_S3_BUCKET (or pass scheduled_backup_s3_bucket) before running this role
+      — see ansible/README.md's "Scheduled backups" section.
+
+- name: Ensure the scripts directory exists
+  ansible.builtin.file:
+    path: "{{ scheduled_backup_app_dir }}/scripts"
+    state: directory
+    owner: "{{ scheduled_backup_app_user }}"
+    group: "{{ scheduled_backup_app_user }}"
+    mode: '0750'
+
+- name: Install the scheduled backup script
+  ansible.builtin.template:
+    src: backup.sh.j2
+    dest: "{{ scheduled_backup_app_dir }}/scripts/backup.sh"
+    owner: "{{ scheduled_backup_app_user }}"
+    group: "{{ scheduled_backup_app_user }}"
+    mode: '0750'
+
+- name: Ensure the credential directory exists
+  ansible.builtin.file:
+    path: /etc/cs2predictor
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# Optional: only (re-)encrypts when a value is actually supplied (e.g.
+# `--extra-vars scheduled_backup_s3_access_key_id=... scheduled_backup_s3_secret_access_key=...`,
+# never committed). Skipped, and the existing .cred files left untouched,
+# whenever this role runs without them — see "Rotating the S3 credential"
+# in ansible/README.md for the one-time/rotation procedure.
+- name: (Re-)encrypt the S3 access key ID
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail && printf '%s' "$SCHEDULED_BACKUP_SECRET"
+      | systemd-creds encrypt --name=aws_access_key_id - /etc/cs2predictor/aws_access_key_id.cred
+    executable: /bin/bash
+  environment:
+    SCHEDULED_BACKUP_SECRET: "{{ scheduled_backup_s3_access_key_id | default('') }}"
+  when: scheduled_backup_s3_access_key_id | default('') | length > 0
+  no_log: true
+  changed_when: true
+
+- name: (Re-)encrypt the S3 secret access key
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail && printf '%s' "$SCHEDULED_BACKUP_SECRET"
+      | systemd-creds encrypt --name=aws_secret_access_key - /etc/cs2predictor/aws_secret_access_key.cred
+    executable: /bin/bash
+  environment:
+    SCHEDULED_BACKUP_SECRET: "{{ scheduled_backup_s3_secret_access_key | default('') }}"
+  when: scheduled_backup_s3_secret_access_key | default('') | length > 0
+  no_log: true
+  changed_when: true
+
+- name: Confirm the encrypted credential files exist
+  # Catches the case where this role runs for the first time without
+  # ever supplying the secrets above — the timer would otherwise install
+  # cleanly and then fail every single run.
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/cs2predictor/aws_access_key_id.cred
+    - /etc/cs2predictor/aws_secret_access_key.cred
+  register: scheduled_backup_cred_files
+
+- name: Require the encrypted credential files on a first install
+  ansible.builtin.assert:
+    that: scheduled_backup_cred_files.results | map(attribute='stat.exists') | list is all
+    fail_msg: >-
+      /etc/cs2predictor/{aws_access_key_id,aws_secret_access_key}.cred don't exist yet — re-run this role with
+      scheduled_backup_s3_access_key_id/scheduled_backup_s3_secret_access_key set once to create them
+      (see ansible/README.md's "Scheduled backups" section).
+
+- name: Install the systemd service unit
+  ansible.builtin.template:
+    src: cs2predictor-backup.service.j2
+    dest: /etc/systemd/system/cs2predictor-backup.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: scheduled_backup_service_unit
+
+- name: Install the systemd timer unit
+  ansible.builtin.template:
+    src: cs2predictor-backup.timer.j2
+    dest: /etc/systemd/system/cs2predictor-backup.timer
+    owner: root
+    group: root
+    mode: '0644'
+  register: scheduled_backup_timer_unit
+
+- name: Reload systemd and enable the timer
+  ansible.builtin.systemd:
+    name: cs2predictor-backup.timer
+    daemon_reload: "{{ scheduled_backup_service_unit is changed or scheduled_backup_timer_unit is changed }}"
+    enabled: true
+    state: started
