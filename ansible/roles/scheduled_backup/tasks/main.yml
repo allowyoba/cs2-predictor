@@ -83,6 +83,20 @@
       scheduled_backup_s3_access_key_id/scheduled_backup_s3_secret_access_key set once to create them
       (see ansible/README.md's "Scheduled backups" section).
 
+# systemd-creds encrypt creates its output world-readable by default — the
+# ciphertext alone doesn't decrypt without the host-only key at
+# /var/lib/systemd/credential.secret (root-only), but there's no reason
+# any non-root user needs read access to it at all.
+- name: Lock down the encrypted credential files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - /etc/cs2predictor/aws_access_key_id.cred
+    - /etc/cs2predictor/aws_secret_access_key.cred
+
 - name: Install the systemd service unit
   ansible.builtin.template:
     src: cs2predictor-backup.service.j2

@@ -66,7 +66,11 @@ tidy: ## go mod tidy, then fail if go.mod/go.sum drifted
 	git diff --exit-code go.mod go.sum
 
 .PHONY: check
-check: fmt-check vet lint test ## Everything CI runs, minus the integration test and docker build
+# vet isn't listed here: golangci-lint's govet linter (enabled in
+# .golangci.yml) already runs the same passes, so a separate `go vet` step
+# would just duplicate that work. `make vet` stays as its own target for a
+# fast standalone check.
+check: fmt-check lint test ## Everything CI runs, minus the integration test and docker build
 
 ## --- Tests ---
 
