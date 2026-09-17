@@ -153,7 +153,7 @@ environment; `webhook.yml` uses only the connection-related ones (`APP_USER` is 
 | `LIQUIPEDIA_API_KEY`    | Secret   | Optional. Written into the server `.env`; required only once `LIQUIPEDIA_ENABLED=true` |
 | `HLTV_ENABLED`, `APIFY_RANKING_CHECK_INTERVAL`, `APIFY_MAX_TEAMS` | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
 | `APIFY_TOKEN`           | Secret   | Optional. Written into the server `.env`; required only once `HLTV_ENABLED=true` |
-| `DB_BACKUP_ENABLED`, `DB_BACKUP_RETENTION_COUNT`, `DB_BACKUP_STORAGE` | Variable | Optional. Read directly by Ansible, not written to `.env`; unset defaults to enabled, keep 5, filesystem — see "Database backups" below |
+| `DB_BACKUP_ENABLED`, `DB_BACKUP_RETENTION_COUNT`, `DB_BACKUP_STORAGE` | Variable | Optional. Read directly by Ansible, not written to `.env`; unset defaults to enabled, keep 10, filesystem — see "Database backups" below |
 | `DB_BACKUP_S3_ENDPOINT`, `DB_BACKUP_S3_REGION`, `DB_BACKUP_S3_BUCKET`, `DB_BACKUP_S3_PREFIX` | Variable | Optional, only used when `DB_BACKUP_STORAGE=s3`; endpoint/region default to Yandex Cloud Object Storage |
 | `DB_BACKUP_S3_ACCESS_KEY_ID`, `DB_BACKUP_S3_SECRET_ACCESS_KEY` | Secret   | Required only once `DB_BACKUP_STORAGE=s3` |
 
@@ -261,12 +261,12 @@ anything about the deploy changes. A failed backup fails the deploy the same way
 until it succeeds. The one exception is a genuine first install — there's no previous database to back up yet, so the
 role skips itself when no `deployment.json` from an earlier deploy exists.
 
-Every setting defaults safely with nothing configured: backups are enabled, the newest 5 are kept, and they're stored
+Every setting defaults safely with nothing configured: backups are enabled, the newest 10 are kept, and they're stored
 under `<APP_PATH>/backups/database` on the VM's own filesystem (`ansible/roles/database_backup/defaults/main.yml`).
 Set `DB_BACKUP_STORAGE=s3` to upload to an S3-compatible bucket instead — `DB_BACKUP_S3_ENDPOINT`/`DB_BACKUP_S3_REGION`
 default to Yandex Cloud Object Storage (`https://storage.yandexcloud.net`, `ru-central1`), this project's default
 provider, but any S3-compatible endpoint works by overriding them. Retention is a straight count cap
-(`DB_BACKUP_RETENTION_COUNT`, default 5) rather than an age window, applied identically on both storages: after each
+(`DB_BACKUP_RETENTION_COUNT`, default 10) rather than an age window, applied identically on both storages: after each
 backup, everything but the newest N is deleted — the newest N filesystem files by mtime, or the newest N objects
 under the S3 prefix (`aws s3api list-objects-v2` + `s3 rm`, run through the AWS CLI's official Docker image since the
 deploy host has no `aws` binary or sudo access to install one). `DB_BACKUP_S3_ACCESS_KEY_ID`/`DB_BACKUP_S3_SECRET_ACCESS_KEY`
