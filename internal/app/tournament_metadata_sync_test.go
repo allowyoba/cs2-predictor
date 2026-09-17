@@ -20,7 +20,7 @@ type fakeTournamentCatalog struct {
 	err    error
 }
 
-func (f *fakeTournamentCatalog) SearchEvents(context.Context, string, int, bool) ([]competition.Event, error) {
+func (f *fakeTournamentCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
 }
 func (f *fakeTournamentCatalog) FindEvent(context.Context, common.EventID) (*competition.Event, error) {

@@ -3,6 +3,7 @@ package pandascore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,27 +35,78 @@ func NewProvider(config Config, client *http.Client) *Provider {
 
 func (p *Provider) ProviderName() string { return "PANDASCORE" }
 
+// gameSpec is one game's slice of PandaScore's API: its own path prefix and
+// (CS2 only) an extra filter — PandaScore's /csgo path still serves the
+// pre-rebrand CS:GO game too, so cs-2 narrows it; /dota2 has no such split
+// and needs no filter at all (confirmed against PandaScore's own API
+// reference: no videogame_title filter exists for Dota 2 endpoints).
+type gameSpec struct {
+	code       competition.GameCode
+	pathPrefix string
+	filter     string
+}
+
+var supportedGames = []gameSpec{
+	{code: competition.GameCS2, pathPrefix: "csgo", filter: "filter[videogame_title]=cs-2"},
+	{code: competition.GameDota2, pathPrefix: "dota2"},
+}
+
+func (g gameSpec) withFilter(path string) string {
+	if g.filter == "" {
+		return path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + g.filter
+}
+
 // UpcomingEvents refreshes the local event catalog from PandaScore's
-// tournament endpoints. We still expose a PandaScore *series* as our domain
-// Event (so one subscription covers all child stages), but enrich it with
-// tournament-level tier information and the series' full/league name.
+// tournament endpoints, once per supported game (see supportedGames). We
+// still expose a PandaScore *series* as our domain Event (so one
+// subscription covers all child stages), but enrich it with tournament-level
+// tier information and the series' full/league name.
 //
 // This matches PandaScore's current hierarchy (League -> Series -> Tournament
 // -> Match) and avoids an N+1 "fetch tournaments for each series" pattern:
-// three paginated tournament lists are enough for the whole catalog.
-//
-//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
+// three paginated tournament lists per game are enough for the whole catalog.
 func (p *Provider) UpcomingEvents(ctx context.Context) ([]competition.Event, error) {
-	const cs2Filter = "filter[videogame_title]=cs-2"
-	upcoming, err := fetchPages[tournamentDTO](ctx, p, "/csgo/tournaments/upcoming?"+cs2Filter, -1)
+	var events []competition.Event
+	var errs []error
+	for _, game := range supportedGames {
+		gameEvents, err := p.upcomingEventsForGame(ctx, game)
+		if err != nil {
+			// One game's endpoint having a bad day must not also take down
+			// every other game's discovery. Only escalated to a real error
+			// below if every game failed — CompetitionProviderGateway.execute
+			// discards the whole result on any error (it's a failover
+			// chain, not a partial-success API), so a per-game error here
+			// would silently throw away a healthy game's events too.
+			errs = append(errs, fmt.Errorf("%s: %w", game.code, err))
+			p.log.Error("upcoming events failed for one game, continuing with the rest", "game", game.code, "error", err)
+			continue
+		}
+		events = append(events, gameEvents...)
+	}
+	p.log.Info("upcoming events synchronized", "count", len(events), "failedGames", len(errs))
+	if len(errs) == len(supportedGames) {
+		return nil, errors.Join(errs...)
+	}
+	return events, nil
+}
+
+//nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
+func (p *Provider) upcomingEventsForGame(ctx context.Context, game gameSpec) ([]competition.Event, error) {
+	upcoming, err := fetchPages[tournamentDTO](ctx, p, game.withFilter("/"+game.pathPrefix+"/tournaments/upcoming"), -1)
 	if err != nil {
 		return nil, err
 	}
-	running, err := fetchPages[tournamentDTO](ctx, p, "/csgo/tournaments/running?"+cs2Filter, -1)
+	running, err := fetchPages[tournamentDTO](ctx, p, game.withFilter("/"+game.pathPrefix+"/tournaments/running"), -1)
 	if err != nil {
 		return nil, err
 	}
-	past, err := fetchPages[tournamentDTO](ctx, p, "/csgo/tournaments/past?"+cs2Filter+"&sort=-end_at", 1)
+	past, err := fetchPages[tournamentDTO](ctx, p, game.withFilter("/"+game.pathPrefix+"/tournaments/past")+"&sort=-end_at", 1)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +129,7 @@ func (p *Provider) UpcomingEvents(ctx context.Context) ([]competition.Event, err
 		if serie.League.ID == 0 && serie.League.Name == "" {
 			serie.League = dto.League
 		}
-		e := mapEvent(serie, now)
+		e := mapEvent(serie, game.code, now)
 		e.Status = status
 		if e.StartsAt == nil {
 			e.StartsAt = dto.BeginAt
@@ -116,7 +168,6 @@ func (p *Provider) UpcomingEvents(ctx context.Context) ([]competition.Event, err
 	for _, e := range bySeries {
 		events = append(events, e)
 	}
-	p.log.Info("upcoming events synchronized", "count", len(events))
 	return events, nil
 }
 
@@ -126,6 +177,26 @@ func (p *Provider) UpcomingEvents(ctx context.Context) ([]competition.Event, err
 // are independent HTTP calls, so up to config.MaxConcurrency of them run in
 // parallel to cut wall-clock sync time; a single batch's failure cancels the
 // rest (errgroup) and the first error is returned.
+// specFor looks up a GameCode's gameSpec — the events passed to Matches
+// come back from UpcomingEvents, so a code that isn't in supportedGames
+// would mean a caller round-tripped an Event this provider never produced.
+func specFor(code competition.GameCode) (gameSpec, bool) {
+	for _, g := range supportedGames {
+		if g.code == code {
+			return g, true
+		}
+	}
+	return gameSpec{}, false
+}
+
+// gameBatch pairs a game's endpoint spec with one batch of that game's own
+// events — events must never mix across games in a single filter[serie_id]
+// request, since the path prefix and filter differ per game.
+type gameBatch struct {
+	game  gameSpec
+	batch []competition.Event
+}
+
 func (p *Provider) Matches(ctx context.Context, events []competition.Event) ([]competition.Match, error) {
 	batchSize := p.config.EventBatchSize
 	if batchSize < 1 {
@@ -136,32 +207,49 @@ func (p *Provider) Matches(ctx context.Context, events []competition.Event) ([]c
 		concurrency = 1
 	}
 
-	var batches [][]competition.Event
-	for start := 0; start < len(events); start += batchSize {
-		end := start + batchSize
-		if end > len(events) {
-			end = len(events)
+	byGame := map[competition.GameCode][]competition.Event{}
+	var order []competition.GameCode
+	for _, e := range events {
+		if _, seen := byGame[e.Game]; !seen {
+			order = append(order, e.Game)
 		}
-		batches = append(batches, events[start:end])
+		byGame[e.Game] = append(byGame[e.Game], e)
+	}
+
+	var batches []gameBatch
+	for _, code := range order {
+		game, ok := specFor(code)
+		if !ok {
+			p.log.Error("skipping matches for an unsupported game code", "game", code)
+			continue
+		}
+		group := byGame[code]
+		for start := 0; start < len(group); start += batchSize {
+			end := start + batchSize
+			if end > len(group) {
+				end = len(group)
+			}
+			batches = append(batches, gameBatch{game: game, batch: group[start:end]})
+		}
 	}
 
 	results := make([][]competition.Match, len(batches))
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(concurrency)
-	for i, batch := range batches {
+	for i, gb := range batches {
 		g.Go(func() error {
-			ids := make([]string, 0, len(batch))
-			for _, e := range batch {
+			ids := make([]string, 0, len(gb.batch))
+			for _, e := range gb.batch {
 				ids = append(ids, e.ExternalID)
 			}
-			path := "/csgo/matches?filter[serie_id]=" + strings.Join(ids, ",") + "&filter[videogame_title]=cs-2"
+			path := gb.game.withFilter("/" + gb.game.pathPrefix + "/matches?filter[serie_id]=" + strings.Join(ids, ","))
 			dtos, err := fetchPages[matchDTO](ctx, p, path, -1)
 			if err != nil {
 				return err
 			}
 			batchMatches := make([]competition.Match, 0, len(dtos))
 			for _, dto := range dtos {
-				batchMatches = append(batchMatches, mapMatch(dto))
+				batchMatches = append(batchMatches, mapMatch(dto, gb.game.code))
 			}
 			results[i] = batchMatches
 			return nil

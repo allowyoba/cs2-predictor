@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -34,6 +35,11 @@ func (r *ChatRepository) Find(ctx context.Context, chatID common.ChatID) (*chat.
 		return nil, err
 	}
 	s.ChatID = common.ChatID{Value: id}
+	games, err := r.enabledGames(ctx, []int64{id})
+	if err != nil {
+		return nil, err
+	}
+	s.EnabledGames = games[id]
 	return &s, nil
 }
 
@@ -49,14 +55,72 @@ func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error
 	defer rows.Close()
 
 	var out []chat.Settings
+	var ids []int64
 	for rows.Next() {
 		var s chat.Settings
 		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
+		ids = append(ids, s.ChatID.Value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	games, err := r.enabledGames(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].EnabledGames = games[out[i].ChatID.Value]
+	}
+	return out, nil
+}
+
+// enabledGames batch-resolves each chat id's enabled games in one round
+// trip — the same batching pattern providerCodes/gameCodes use in
+// competition.go, for the same reason: avoids an N+1 query per chat.
+func (r *ChatRepository) enabledGames(ctx context.Context, chatIDs []int64) (map[int64][]competition.GameCode, error) {
+	out := map[int64][]competition.GameCode{}
+	if len(chatIDs) == 0 {
+		return out, nil
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT ceg.chat_id, g.code FROM chat_enabled_game ceg JOIN game g ON g.id = ceg.game_id WHERE ceg.chat_id = ANY($1)`,
+		chatIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var chatID int64
+		var code string
+		if err := rows.Scan(&chatID, &code); err != nil {
+			return nil, err
+		}
+		out[chatID] = append(out[chatID], competition.GameCode(code))
 	}
 	return out, rows.Err()
+}
+
+// SetEnabledGames replaces the chat's whole set in one transaction — small,
+// fixed-cardinality (currently at most len(competition.Games)), so a
+// straight delete-then-insert-each needs no batching.
+func (r *ChatRepository) SetEnabledGames(ctx context.Context, chatID common.ChatID, games []competition.GameCode) error {
+	return RunInTx(ctx, r.pool, func(ctx context.Context) error {
+		ex := executor(ctx, r.pool)
+		if _, err := ex.Exec(ctx, `DELETE FROM chat_enabled_game WHERE chat_id = $1`, chatID.Value); err != nil {
+			return err
+		}
+		for _, g := range games {
+			if _, err := ex.Exec(ctx,
+				`INSERT INTO chat_enabled_game(chat_id, game_id) SELECT $1, id FROM game WHERE code = $2`,
+				chatID.Value, string(g)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // Save upserts by primary key, preserving created_at from an existing row —

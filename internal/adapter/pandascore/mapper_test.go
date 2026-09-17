@@ -20,7 +20,7 @@ func TestMapMatch(t *testing.T) {
 		Results:    []resultDTO{{TeamID: 1, Score: 2}, {TeamID: 2, Score: 1}},
 	}
 
-	match := mapMatch(dto)
+	match := mapMatch(dto, competition.GameCS2)
 
 	if match.Status != competition.MatchFinished {
 		t.Errorf("status = %s, want FINISHED", match.Status)
@@ -63,8 +63,8 @@ func TestMapMatch_TeamOrderIsStableRegardlessOfOpponentsArrayOrder(t *testing.T)
 	bFirst := base
 	bFirst.Opponents = []opponentDTO{{Opponent: &namedDTO{ID: 2, Name: "B"}}, {Opponent: &namedDTO{ID: 1, Name: "A"}}}
 
-	m1 := mapMatch(aFirst)
-	m2 := mapMatch(bFirst)
+	m1 := mapMatch(aFirst, competition.GameCS2)
+	m2 := mapMatch(bFirst, competition.GameCS2)
 
 	if m1.FirstTeam == nil || m2.FirstTeam == nil || m1.FirstTeam.ID != m2.FirstTeam.ID {
 		t.Fatalf("FirstTeam differs depending on opponents[] order: %+v vs %+v", m1.FirstTeam, m2.FirstTeam)
@@ -98,7 +98,7 @@ func TestMapMatch_MissingResultsEntryLeavesScoreUnset(t *testing.T) {
 		Results: []resultDTO{{TeamID: 2, Score: 2}},
 	}
 
-	match := mapMatch(dto)
+	match := mapMatch(dto, competition.GameCS2)
 
 	if match.Score != nil {
 		t.Errorf("score = %+v, want nil (unresolved) when one team's result is missing", match.Score)
@@ -114,7 +114,7 @@ func TestMapEvent_AppendsYearWhenNotAlreadyInName(t *testing.T) {
 		BeginAt: timePtr(time.Date(2027, 1, 1, 10, 0, 0, 0, time.UTC)),
 		EndAt:   timePtr(time.Date(2027, 1, 10, 10, 0, 0, 0, time.UTC))}
 
-	event := mapEvent(dto, now)
+	event := mapEvent(dto, competition.GameCS2, now)
 	if event.Name != "IEM Cologne 2027" {
 		t.Errorf("name = %q, want %q", event.Name, "IEM Cologne 2027")
 	}

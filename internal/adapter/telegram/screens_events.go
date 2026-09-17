@@ -116,7 +116,7 @@ func (h *UpdateHandler) renderEventBrowse(ctx context.Context, target replyTarge
 	// duplicate add buttons. Request want itself (not a fixed cap) so paging
 	// deep enough no longer silently loses the "›" Next button just because
 	// a fixed request size undershot how many rows this page needs.
-	found, err := h.Catalog.SearchEvents(ctx, "", want, topTierOnly)
+	found, err := h.Catalog.SearchEvents(ctx, "", want, topTierOnly, settings.EnabledGames)
 	if err != nil {
 		return err
 	}

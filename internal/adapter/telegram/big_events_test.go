@@ -202,7 +202,7 @@ type searchCatalog struct {
 	gotTopTierOnly bool
 }
 
-func (c *searchCatalog) SearchEvents(_ context.Context, _ string, _ int, topTierOnly bool) ([]competition.Event, error) {
+func (c *searchCatalog) SearchEvents(_ context.Context, _ string, _ int, topTierOnly bool, _ []competition.GameCode) ([]competition.Event, error) {
 	c.gotTopTierOnly = topTierOnly
 	return c.results, nil
 }
@@ -348,4 +348,61 @@ func (s *dataSubsForTopicButtonTest) ActiveEventIDs(context.Context) ([]common.E
 }
 func (s *dataSubsForTopicButtonTest) Subscriptions(context.Context, common.ChatID) ([]subscription.EventSubscription, error) {
 	return s.subs, nil
+}
+
+// TestSettingsGamesToggleCallback_TogglesAndRequiresManager mirrors
+// TestSettingsTopTierCallback_TogglesAndRequiresManager for
+// "settings:games:toggle:<code>": a manager can turn a game on and back
+// off, a plain member cannot change it at all.
+func TestSettingsGamesToggleCallback_TogglesAndRequiresManager(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+
+	data := "settings:games:toggle:" + string(competition.GameDota2)
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.GameEnabled(competition.GameDota2) {
+		t.Fatal("expected Dota2 enabled after one toggle")
+	}
+	if len(*calls) == 0 {
+		t.Fatal("expected the games view to be re-rendered after toggling")
+	}
+
+	// A plain member must not be able to toggle it back off.
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleMember})
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	stillOn, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stillOn.GameEnabled(competition.GameDota2) {
+		t.Fatal("a plain member's toggle attempt must be denied, Dota2 should remain enabled")
+	}
+
+	// Toggling again as a manager must turn it back off, and must not
+	// disturb any other already-enabled game.
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	toggledOff, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toggledOff.GameEnabled(competition.GameDota2) {
+		t.Fatal("expected Dota2 disabled after a second toggle")
+	}
 }

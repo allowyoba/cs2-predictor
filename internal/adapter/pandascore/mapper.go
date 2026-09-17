@@ -10,7 +10,19 @@ import (
 	"cs2predictor/internal/platform/common"
 )
 
-func mapEvent(dto seriesDTO, now time.Time) competition.Event {
+// idNamespace prefixes the deterministic-UUID seed for non-CS2 games only —
+// CS2's "pandascore:event:<id>" etc. must never change, or every already-
+// synced CS2 event/team/match would get a new UUID on the next sync,
+// silently orphaning every existing subscription/history row that
+// references the old one. A new game just gets its own namespaced prefix.
+func idNamespace(game competition.GameCode) string {
+	if game == competition.GameCS2 {
+		return "pandascore:"
+	}
+	return "pandascore:" + string(game) + ":"
+}
+
+func mapEvent(dto seriesDTO, game competition.GameCode, now time.Time) competition.Event {
 	name := seriesDisplayName(dto)
 
 	var status competition.EventStatus
@@ -30,8 +42,8 @@ func mapEvent(dto seriesDTO, now time.Time) competition.Event {
 	}
 
 	return competition.Event{
-		ID:         common.EventID{Value: common.NameUUID("pandascore:event:" + strconv.FormatInt(dto.ID, 10))},
-		Game:       competition.GameCS2,
+		ID:         common.EventID{Value: common.NameUUID(idNamespace(game) + "event:" + strconv.FormatInt(dto.ID, 10))},
+		Game:       game,
 		Name:       name,
 		ExternalID: strconv.FormatInt(dto.ID, 10),
 		Status:     status,
@@ -142,9 +154,9 @@ func mapTier(tier *string) competition.EventTier {
 	}
 }
 
-func mapTeam(dto namedDTO) competition.Team {
+func mapTeam(dto namedDTO, game competition.GameCode) competition.Team {
 	return competition.Team{
-		ID:         common.TeamID{Value: common.NameUUID("pandascore:team:" + strconv.FormatInt(dto.ID, 10))},
+		ID:         common.TeamID{Value: common.NameUUID(idNamespace(game) + "team:" + strconv.FormatInt(dto.ID, 10))},
 		Name:       dto.Name,
 		ExternalID: strconv.FormatInt(dto.ID, 10),
 		Location:   strings.ToUpper(strings.TrimSpace(dto.Location)),
@@ -152,7 +164,7 @@ func mapTeam(dto namedDTO) competition.Team {
 }
 
 //nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
-func mapMatch(dto matchDTO) competition.Match {
+func mapMatch(dto matchDTO, game competition.GameCode) competition.Match {
 	var opponents []namedDTO
 	for _, o := range dto.Opponents {
 		if o.Opponent != nil {
@@ -178,11 +190,11 @@ func mapMatch(dto matchDTO) competition.Match {
 
 	var first, second *competition.Team
 	if len(opponents) >= 1 {
-		t := mapTeam(opponents[0])
+		t := mapTeam(opponents[0], game)
 		first = &t
 	}
 	if len(opponents) >= 2 {
-		t := mapTeam(opponents[1])
+		t := mapTeam(opponents[1], game)
 		second = &t
 	}
 
@@ -252,8 +264,8 @@ func mapMatch(dto matchDTO) competition.Match {
 	}
 
 	return competition.Match{
-		ID:              common.MatchID{Value: common.NameUUID("pandascore:match:" + strconv.FormatInt(dto.ID, 10))},
-		EventID:         common.EventID{Value: common.NameUUID(fmt.Sprintf("pandascore:event:%d", dto.Serie.ID))},
+		ID:              common.MatchID{Value: common.NameUUID(idNamespace(game) + "match:" + strconv.FormatInt(dto.ID, 10))},
+		EventID:         common.EventID{Value: common.NameUUID(fmt.Sprintf("%sevent:%d", idNamespace(game), dto.Serie.ID))},
 		ExternalID:      strconv.FormatInt(dto.ID, 10),
 		FirstTeam:       first,
 		SecondTeam:      second,

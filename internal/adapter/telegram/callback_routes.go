@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
@@ -212,6 +213,8 @@ var callbackRoutes = []callbackRoute{
 	{match: exact("settings:locale"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsLocale},
 	{match: exact("settings:top_tier"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsTopTier},
 	{match: exact("settings:auto_subscribe"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribe},
+	{match: exact("settings:games"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).gamesView)},
+	{match: prefixed("settings:games:toggle:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsGamesToggle},
 	{match: prefixed("subscribe:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.subscribe(ctx, cb, target, settings, strings.TrimPrefix(data, "subscribe:"))
 	}},
@@ -679,4 +682,43 @@ func routeSettingsAutoSubscribe(h *UpdateHandler, ctx context.Context, cb *Callb
 		return false, err
 	}
 	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
+}
+
+// routeSettingsGamesToggle flips one game on or off for this chat —
+// SetEnabledGames replaces the whole set, so this always builds the full
+// next set rather than issuing a single-row add/remove.
+func routeSettingsGamesToggle(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	code := competition.GameCode(strings.TrimPrefix(data, "settings:games:toggle:"))
+	var supported bool
+	for _, g := range competition.Games {
+		if g == code {
+			supported = true
+			break
+		}
+	}
+	if !supported {
+		return false, newValidationError("unknown game code %q", code)
+	}
+
+	var next []competition.GameCode
+	if settings.GameEnabled(code) {
+		for _, g := range settings.EnabledGames {
+			if g != code {
+				next = append(next, g)
+			}
+		}
+	} else {
+		next = append(append([]competition.GameCode{}, settings.EnabledGames...), code)
+	}
+	if err := h.Chats.SetEnabledGames(ctx, settings.ChatID, next); err != nil {
+		return false, err
+	}
+	settings.EnabledGames = next
+
+	state := "off"
+	if settings.GameEnabled(code) {
+		state = "on"
+	}
+	h.logAdminAction(ctx, settings.ChatID, &cb.From, "games", string(code)+":"+state)
+	return true, h.gamesView(ctx, target, settings)
 }

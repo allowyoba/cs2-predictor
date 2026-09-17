@@ -31,7 +31,7 @@ type fakeSyncCatalog struct {
 func newFakeSyncCatalog() *fakeSyncCatalog {
 	return &fakeSyncCatalog{events: map[common.EventID]competition.Event{}}
 }
-func (f *fakeSyncCatalog) SearchEvents(context.Context, string, int, bool) ([]competition.Event, error) {
+func (f *fakeSyncCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
 }
 func (f *fakeSyncCatalog) FindEvent(_ context.Context, id common.EventID) (*competition.Event, error) {
@@ -109,6 +109,9 @@ func (f *fakeSyncChats) Find(_ context.Context, chatID common.ChatID) (*chat.Set
 }
 func (f *fakeSyncChats) Save(_ context.Context, s chat.Settings) (chat.Settings, error) {
 	return s, nil
+}
+func (f *fakeSyncChats) SetEnabledGames(context.Context, common.ChatID, []competition.GameCode) error {
+	return nil
 }
 func (f *fakeSyncChats) IsModerator(context.Context, common.ChatID, common.UserID) (bool, error) {
 	return false, nil
@@ -189,8 +192,8 @@ func TestDiscoverEvents_AnnouncesNewTopTierEventToActiveChatsNotYetSubscribed(t 
 	subscribedChat, unsubscribedChat := common.ChatID{Value: -1}, common.ChatID{Value: -2}
 	subs.subscribedByEvent = map[common.EventID][]common.ChatID{event.ID: {subscribedChat}}
 	chats := &fakeSyncChats{active: []chat.Settings{
-		{ChatID: subscribedChat, Active: true},
-		{ChatID: unsubscribedChat, Active: true},
+		{ChatID: subscribedChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+		{ChatID: unsubscribedChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
 	}}
 	outbox := &fakeSyncOutbox{}
 	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
@@ -220,8 +223,8 @@ func TestDiscoverEvents_AutoSubscribesChatsThatOptedIn(t *testing.T) {
 	subs := &fakeSyncSubs{}
 	autoChat, plainChat := common.ChatID{Value: -1}, common.ChatID{Value: -2}
 	chats := &fakeSyncChats{active: []chat.Settings{
-		{ChatID: autoChat, Active: true, AutoSubscribeTopTier: true},
-		{ChatID: plainChat, Active: true},
+		{ChatID: autoChat, Active: true, AutoSubscribeTopTier: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+		{ChatID: plainChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
 	}}
 	outbox := &fakeSyncOutbox{}
 	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
@@ -256,8 +259,8 @@ func TestDiscoverEvents_AutoSubscribeFailureDoesNotStopTheRestOfTheBatch(t *test
 	subs := &fakeSyncSubs{subscribeErr: errors.New("db unavailable")}
 	failingChat, plainChat := common.ChatID{Value: -1}, common.ChatID{Value: -2}
 	chats := &fakeSyncChats{active: []chat.Settings{
-		{ChatID: failingChat, Active: true, AutoSubscribeTopTier: true},
-		{ChatID: plainChat, Active: true},
+		{ChatID: failingChat, Active: true, AutoSubscribeTopTier: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+		{ChatID: plainChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
 	}}
 	outbox := &fakeSyncOutbox{}
 	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
@@ -277,7 +280,7 @@ func TestDiscoverEvents_DoesNotReannounceOnASubsequentSyncTick(t *testing.T) {
 	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{event}}
 	catalog := newFakeSyncCatalog()
 	subs := &fakeSyncSubs{}
-	chats := &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true}}}
+	chats := &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}}}}
 	outbox := &fakeSyncOutbox{}
 	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
 
@@ -298,7 +301,7 @@ func TestDiscoverEvents_ContinuesPastOneEventsFailure(t *testing.T) {
 	catalog := newFakeSyncCatalog()
 	catalog.failSaveFor = &failing.ID
 	subs := &fakeSyncSubs{}
-	chats := &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true}}}
+	chats := &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}}}}
 	outbox := &fakeSyncOutbox{}
 	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
 
@@ -321,7 +324,7 @@ func TestDiscoverEvents_DoesNotAnnounceNonTopTierEvent(t *testing.T) {
 	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{event}}
 	catalog := newFakeSyncCatalog()
 	subs := &fakeSyncSubs{}
-	chats := &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true}}}
+	chats := &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}}}}
 	outbox := &fakeSyncOutbox{}
 	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
 
@@ -448,4 +451,31 @@ func TestReconcileTeamOrder(t *testing.T) {
 			t.Errorf("match unexpectedly changed: %+v", got)
 		}
 	})
+}
+
+// A chat that hasn't enabled the event's game must not be offered it or
+// auto-subscribed to it at all — the whole point of per-chat game
+// preferences (see chat.Settings.GameEnabled).
+func TestDiscoverEvents_SkipsChatsThatHaveNotEnabledTheEventsGame(t *testing.T) {
+	event := topTierEvent("IEM Katowice")
+	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{event}}
+	catalog := newFakeSyncCatalog()
+	subs := &fakeSyncSubs{}
+	noGames, wrongGame, rightGame := common.ChatID{Value: -1}, common.ChatID{Value: -2}, common.ChatID{Value: -3}
+	chats := &fakeSyncChats{active: []chat.Settings{
+		{ChatID: noGames, Active: true},
+		{ChatID: wrongGame, Active: true, EnabledGames: []competition.GameCode{competition.GameDota2}},
+		{ChatID: rightGame, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+	}}
+	outbox := &fakeSyncOutbox{}
+	sync := newTestSync(t, provider, catalog, subs, chats, outbox)
+
+	sync.DiscoverEvents(context.Background())
+
+	if len(outbox.enqueued) != 1 {
+		t.Fatalf("expected exactly 1 announcement (only the chat with CS2 enabled), got %d: %+v", len(outbox.enqueued), outbox.enqueued)
+	}
+	if outbox.enqueued[0].aggregateID != "-3:big-event:"+event.ID.Value.String() {
+		t.Fatalf("expected the CS2-enabled chat's notification, got %+v", outbox.enqueued[0])
+	}
 }

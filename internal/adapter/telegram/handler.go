@@ -724,7 +724,7 @@ func (h *UpdateHandler) searchEvents(ctx context.Context, msg *Message, settings
 
 	// Fetch a wider candidate set before removing tournaments already added
 	// to this chat, so subscriptions do not make the search page look empty.
-	found, err := h.Catalog.SearchEvents(ctx, query, 100, topTierOnly)
+	found, err := h.Catalog.SearchEvents(ctx, query, 100, topTierOnly, settings.EnabledGames)
 	if err != nil {
 		return err
 	}

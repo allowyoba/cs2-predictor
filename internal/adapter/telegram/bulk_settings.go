@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"reflect"
 	"strings"
 
 	"cs2predictor/internal/domain/chat"
@@ -162,7 +163,7 @@ func (h *UpdateHandler) bulkApply(ctx context.Context, cb *CallbackQuery, screen
 		}
 		updated := target
 		setting.apply(settings, &updated)
-		if updated == target {
+		if reflect.DeepEqual(updated, target) {
 			continue // already the same value; nothing to write or to log
 		}
 		if _, err := h.Chats.Save(ctx, updated); err != nil {
