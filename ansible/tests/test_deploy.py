@@ -248,11 +248,14 @@ esac
 
     def test_database_backup_prunes_files_beyond_the_retention_count(self):
         self.write_previous_deployment()
+        # Set explicitly rather than relying on the default, so this test
+        # doesn't need updating every time the default itself changes.
+        self.env["DB_BACKUP_RETENTION_COUNT"] = "5"
         backup_dir = self.db_backup_dir()
         backup_dir.mkdir(parents=True)
-        # 5 pre-existing backups (the default retention count) plus the one
-        # this deploy creates itself must leave exactly 5: the newest 5,
-        # i.e. everything except the very oldest pre-existing file.
+        # 5 pre-existing backups (the configured retention count) plus the
+        # one this deploy creates itself must leave exactly 5: the newest
+        # 5, i.e. everything except the very oldest pre-existing file.
         oldest = backup_dir / "db-v0.9.0-20000101T000000Z.dump.gz"
         names = [
             "db-v0.9.0-20000101T000000Z.dump.gz",

@@ -11,7 +11,7 @@ scheduled_backup_app_dir: "{{ app_dir | default('/opt/cs2predictor') }}"
 
 # Same meaning and defaults as database_backup's own vars — this timer
 # runs the same kind of backup, just decoupled from any deploy.
-scheduled_backup_retention_count: "{{ lookup('env', 'DB_BACKUP_RETENTION_COUNT') | default('5', true) | int }}"
+scheduled_backup_retention_count: "{{ lookup('env', 'DB_BACKUP_RETENTION_COUNT') | default('10', true) | int }}"
 scheduled_backup_s3_endpoint: "{{ lookup('env', 'DB_BACKUP_S3_ENDPOINT') | default('https://storage.yandexcloud.net', true) }}"
 scheduled_backup_s3_region: "{{ lookup('env', 'DB_BACKUP_S3_REGION') | default('ru-central1', true) }}"
 scheduled_backup_s3_bucket: "{{ lookup('env', 'DB_BACKUP_S3_BUCKET') | default('', true) }}"
