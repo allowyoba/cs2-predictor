@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -19,8 +20,11 @@ type fakeRepo struct {
 	permissions []Permission
 }
 
-func (f fakeRepo) Find(context.Context, common.ChatID) (*Settings, error)            { return nil, nil }
-func (f fakeRepo) Save(_ context.Context, s Settings) (Settings, error)              { return s, nil }
+func (f fakeRepo) Find(context.Context, common.ChatID) (*Settings, error) { return nil, nil }
+func (f fakeRepo) Save(_ context.Context, s Settings) (Settings, error)   { return s, nil }
+func (f fakeRepo) SetEnabledGames(context.Context, common.ChatID, []competition.GameCode) error {
+	return nil
+}
 func (f fakeRepo) MigrateChatID(context.Context, common.ChatID, common.ChatID) error { return nil }
 func (f fakeRepo) IsModerator(context.Context, common.ChatID, common.UserID) (bool, error) {
 	return f.moderator, nil

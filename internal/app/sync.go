@@ -324,6 +324,9 @@ func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event
 		if alreadySubscribed[settings.ChatID] {
 			continue
 		}
+		if !settings.GameEnabled(event.Game) {
+			continue
+		}
 		// AutoSubscribeTopTier skips the offer entirely and just joins the
 		// chat to the tournament — still announced, but as a fait accompli
 		// ("auto-subscribed") rather than a "want to add this?" the chat

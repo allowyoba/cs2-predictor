@@ -83,7 +83,7 @@ type dataCatalog struct {
 	unstartedMatches map[common.EventID][]competition.Match
 }
 
-func (c *dataCatalog) SearchEvents(context.Context, string, int, bool) ([]competition.Event, error) {
+func (c *dataCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
 }
 func (c *dataCatalog) FindEvent(_ context.Context, id common.EventID) (*competition.Event, error) {

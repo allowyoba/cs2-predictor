@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -35,6 +36,7 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		{button(timezoneLabel, "settings:timezone")},
 		{button(topTierLabel, "settings:top_tier")},
 		{button(autoSubscribeLabel, "settings:auto_subscribe")},
+		{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
 		{button(h.Texts.Get("settings.moderators", settings.Locale), "settings:moderators")},
 		{button(h.Texts.Get("settings.history", settings.Locale), "settings:history")},
 	}}
@@ -47,6 +49,37 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 	}
 	kb.InlineKeyboard = append(kb.InlineKeyboard, []InlineButton{h.backButton(settings.Locale, "menu:main")})
 	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
+}
+
+// gameLabelKey maps a GameCode to its i18n key — the only place that
+// mapping is spelled out, so gamesView and any future per-game copy agree.
+func gameLabelKey(code competition.GameCode) string {
+	switch code {
+	case competition.GameCS2:
+		return "game.cs2"
+	case competition.GameDota2:
+		return "game.dota2"
+	default:
+		return "game.unknown"
+	}
+}
+
+// gamesView lists every supported game as a toggle — a chat starts with
+// none enabled (see chat_enabled_game's migration), so this is also the
+// only place a chat ever turns one on for the first time.
+func (h *UpdateHandler) gamesView(ctx context.Context, target replyTarget, settings chat.Settings) error {
+	rows := make([][]InlineButton, 0, len(competition.Games)+1)
+	for _, code := range competition.Games {
+		mark := "⬜️ "
+		if settings.GameEnabled(code) {
+			mark = "✅ "
+		}
+		label := mark + h.Texts.Get(gameLabelKey(code), settings.Locale)
+		rows = append(rows, []InlineButton{button(label, "settings:games:toggle:"+string(code))})
+	}
+	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:settings")})
+	text := bold(h.Texts.Get("settings.games_title", settings.Locale))
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // moderatorName resolves a moderator's stored display name so the history
@@ -73,7 +106,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // adding its kind here fails that test.
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
-	"top_tier", "auto_subscribe", "event_topic", "moderator_added", "moderator_removed",
+	"top_tier", "auto_subscribe", "games", "event_topic", "moderator_added", "moderator_removed",
 	"moderator_permissions_changed", "invitation_created", "invitation_revoked", "invitation_accepted",
 }
 

@@ -17,7 +17,7 @@ type fakeCatalogForCompletion struct {
 	matches map[common.EventID][]competition.Match
 }
 
-func (f *fakeCatalogForCompletion) SearchEvents(context.Context, string, int, bool) ([]competition.Event, error) {
+func (f *fakeCatalogForCompletion) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
 }
 func (f *fakeCatalogForCompletion) FindEvent(context.Context, common.EventID) (*competition.Event, error) {
@@ -73,6 +73,9 @@ func (fakeChatsForCompletion) Find(_ context.Context, chatID common.ChatID) (*ch
 }
 func (fakeChatsForCompletion) Save(_ context.Context, s chat.Settings) (chat.Settings, error) {
 	return s, nil
+}
+func (fakeChatsForCompletion) SetEnabledGames(context.Context, common.ChatID, []competition.GameCode) error {
+	return nil
 }
 func (fakeChatsForCompletion) IsModerator(context.Context, common.ChatID, common.UserID) (bool, error) {
 	return false, nil
