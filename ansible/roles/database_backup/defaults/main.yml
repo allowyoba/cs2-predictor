@@ -8,9 +8,10 @@ db_backup_enabled: "{{ lookup('env', 'DB_BACKUP_ENABLED') | default('true', true
 
 # How many backups are kept before the oldest are pruned — a count, not an
 # age window, so "keep 5 backups" holds regardless of how often a backup
-# actually runs (once per deploy, or daily via ansible/backup.yml). Applies
-# the same way to both "fs" (newest N files kept) and "s3" (newest N objects
-# under the prefix kept) storage.
+# actually runs (once per deploy, or daily via the scheduled_backup systemd
+# timer — see ansible/scheduled_backup.yml). Applies the same way to both
+# "fs" (newest N files kept) and "s3" (newest N objects under the prefix
+# kept) storage.
 db_backup_retention_count: "{{ lookup('env', 'DB_BACKUP_RETENTION_COUNT') | default('5', true) | int }}"
 
 # "fs" (a local directory under app_dir) or "s3" (an S3-compatible bucket —
