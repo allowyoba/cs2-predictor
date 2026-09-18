@@ -169,3 +169,44 @@ func TestMatch_ParticipantsKnownAndShouldCancelPrediction(t *testing.T) {
 		}
 	}
 }
+
+// TestMatch_MainStreamURL covers the deliberately narrow selection: only
+// the provider's main (always-official) broadcast, and only when it's in
+// English — never a non-main community stream, and never another language
+// just because no English one was reported.
+func TestMatch_MainStreamURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		streams []Stream
+		wantURL string
+		wantOK  bool
+	}{
+		{"no streams at all", nil, "", false},
+		{
+			"main English wins over a non-main Russian community stream",
+			[]Stream{
+				{Language: "ru", URL: "https://twitch.tv/betboom_cs_ru3", Main: false, Official: false},
+				{Language: "en", URL: "https://kick.com/cct_cs2", Main: true, Official: true},
+			},
+			"https://kick.com/cct_cs2", true,
+		},
+		{
+			"main stream in a non-English language is not returned",
+			[]Stream{{Language: "pt", URL: "https://kick.com/gaules", Main: true, Official: true}},
+			"", false,
+		},
+		{
+			"English stream that isn't the main one is not returned",
+			[]Stream{{Language: "en", URL: "https://twitch.tv/somecaster", Main: false, Official: false}},
+			"", false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			url, ok := (Match{Streams: c.streams}).MainStreamURL()
+			if url != c.wantURL || ok != c.wantOK {
+				t.Errorf("MainStreamURL() = %q, %v, want %q, %v", url, ok, c.wantURL, c.wantOK)
+			}
+		})
+	}
+}

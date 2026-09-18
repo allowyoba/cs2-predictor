@@ -102,6 +102,54 @@ func TestUpcoming_LimitsNearestEligibleMatchesBeforeGrouping(t *testing.T) {
 	}
 }
 
+// TestUpcoming_RendersMainEnglishStreamLinkOnly checks the "📺 Трансляция"
+// line: shown for a match with a main English broadcast, omitted for one
+// whose only stream is a non-main Russian community channel — no per-chat
+// language fallback, matching MainStreamURL's own narrow selection.
+func TestUpcoming_RendersMainEnglishStreamLinkOnly(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	h, _ := newTestHandler(t, server)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	h.Clock = common.FixedClock(now)
+	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: "UTC"}
+	withStream, withoutStream := common.NewEventID(), common.NewEventID()
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	streamedAt := now.Add(time.Hour)
+	noStreamAt := now.Add(2 * time.Hour)
+	h.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{EventID: withStream}, {EventID: withoutStream}}}
+	h.Catalog = &dataCatalog{
+		events: map[common.EventID]competition.Event{
+			withStream: {ID: withStream, Name: "Streamed Cup"}, withoutStream: {ID: withoutStream, Name: "Dark Cup"},
+		},
+		unstartedMatches: map[common.EventID][]competition.Match{
+			withStream: {{ID: common.NewMatchID(), EventID: withStream, ScheduledAt: &streamedAt, Format: format,
+				FirstTeam: &competition.Team{Name: "A"}, SecondTeam: &competition.Team{Name: "B"},
+				Streams: []competition.Stream{
+					{Language: "ru", URL: "https://www.twitch.tv/betboom_cs_ru3"},
+					{Language: "en", URL: "https://kick.com/cct_cs2", Main: true, Official: true},
+				}}},
+			withoutStream: {{ID: common.NewMatchID(), EventID: withoutStream, ScheduledAt: &noStreamAt, Format: format,
+				FirstTeam: &competition.Team{Name: "C"}, SecondTeam: &competition.Team{Name: "D"},
+				Streams: []competition.Stream{{Language: "ru", URL: "https://www.twitch.tv/betboom_cs_ru3"}}}},
+		},
+	}
+	if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
+		t.Fatal(err)
+	}
+	body := lastText(*calls)
+	wantLink := `📺 <a href="https://kick.com/cct_cs2">` + h.Texts.Get("upcoming.stream", settings.Locale) + `</a>`
+	if !strings.Contains(body, wantLink) {
+		t.Fatalf("expected the main English stream link %q in:\n%s", wantLink, body)
+	}
+	if strings.Contains(body, "betboom_cs_ru3") {
+		t.Fatalf("non-main Russian community stream must not be linked:\n%s", body)
+	}
+	if got := strings.Count(body, h.Texts.Get("upcoming.stream", settings.Locale)); got != 1 {
+		t.Fatalf("expected the stream label exactly once (only for the match with a main English broadcast), got %d in:\n%s", got, body)
+	}
+}
+
 func TestUpcoming_EmptyWhenNoEligibleMatches(t *testing.T) {
 	server, calls := newRecordingServer(t)
 	defer server.Close()

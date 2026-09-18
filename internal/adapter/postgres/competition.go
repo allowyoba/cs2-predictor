@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -278,7 +279,7 @@ func (r *CompetitionRepository) SaveEvent(ctx context.Context, e competition.Eve
 // LEFT JOINs, so listing N matches costs one query rather than N.
 const matchSelect = `
 	SELECT m.id, m.event_id, m.external_id, m.status, m.series_kind, m.series_size,
-	       m.scheduled_at, m.actual_started_at, m.first_score, m.second_score,
+	       m.scheduled_at, m.actual_started_at, m.first_score, m.second_score, m.streams,
 	       es.name, es.external_id,
 	       t1.id, t1.name, t1.external_id, t1.location,
 	       t2.id, t2.name, t2.external_id, t2.location
@@ -294,12 +295,13 @@ func scanMatch(row interface {
 }) (*competition.Match, error) {
 	var m competition.Match
 	var firstScore, secondScore *int
+	var streamsRaw []byte
 	var stageName, stageExternalID *string
 	var t1ID, t2ID *[16]byte
 	var t1Name, t1ExternalID, t1Location, t2Name, t2ExternalID, t2Location *string
 
 	if err := row.Scan(&m.ID.Value, &m.EventID.Value, &m.ExternalID, &m.Status, &m.Format.Kind, &m.Format.Size,
-		&m.ScheduledAt, &m.ActualStartedAt, &firstScore, &secondScore,
+		&m.ScheduledAt, &m.ActualStartedAt, &firstScore, &secondScore, &streamsRaw,
 		&stageName, &stageExternalID,
 		&t1ID, &t1Name, &t1ExternalID, &t1Location,
 		&t2ID, &t2Name, &t2ExternalID, &t2Location); err != nil {
@@ -307,6 +309,11 @@ func scanMatch(row interface {
 	}
 	if firstScore != nil && secondScore != nil {
 		m.Score = &competition.MatchScore{First: *firstScore, Second: *secondScore}
+	}
+	if len(streamsRaw) > 0 {
+		if err := json.Unmarshal(streamsRaw, &m.Streams); err != nil {
+			return nil, fmt.Errorf("decode match streams: %w", err)
+		}
 	}
 	if stageName != nil {
 		m.Stage = stageName
@@ -452,18 +459,26 @@ func (r *CompetitionRepository) SaveMatch(ctx context.Context, m competition.Mat
 			firstScore = &m.Score.First
 			secondScore = &m.Score.Second
 		}
+		var streamsRaw []byte
+		if len(m.Streams) > 0 {
+			var err error
+			streamsRaw, err = json.Marshal(m.Streams)
+			if err != nil {
+				return err
+			}
+		}
 
 		if _, err := ex.Exec(ctx,
 			`INSERT INTO esport_match(id, event_id, stage_id, provider_id, external_id, status, series_kind, series_size,
-			    scheduled_at, actual_started_at, first_score, second_score, version, created_at, updated_at)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), now())
+			    scheduled_at, actual_started_at, first_score, second_score, streams, version, created_at, updated_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now(), now())
 			 ON CONFLICT (id) DO UPDATE SET event_id=excluded.event_id, stage_id=excluded.stage_id,
 			   provider_id=excluded.provider_id, external_id=excluded.external_id, status=excluded.status,
 			   series_kind=excluded.series_kind, series_size=excluded.series_size, scheduled_at=excluded.scheduled_at,
 			   actual_started_at=excluded.actual_started_at, first_score=excluded.first_score, second_score=excluded.second_score,
-			   version=excluded.version, updated_at=now()`,
+			   streams=excluded.streams, version=excluded.version, updated_at=now()`,
 			m.ID.Value, m.EventID.Value, stageUUID, providerID, m.ExternalID, m.Status, m.Format.Kind, m.Format.Size,
-			m.ScheduledAt, m.ActualStartedAt, firstScore, secondScore, version); err != nil {
+			m.ScheduledAt, m.ActualStartedAt, firstScore, secondScore, streamsRaw, version); err != nil {
 			return err
 		}
 

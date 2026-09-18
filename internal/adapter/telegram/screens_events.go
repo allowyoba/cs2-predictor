@@ -478,7 +478,7 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, locale co
 				lastDay = day
 				lines = append(lines, "", italic(escapeHTML(h.dayHeading(item.when, locale, now))))
 			}
-			lines = append(lines, upcomingMatchLines(item))
+			lines = append(lines, h.upcomingMatchLines(item, locale))
 		}
 		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
@@ -486,8 +486,9 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, locale co
 }
 
 // upcomingMatchLines renders one match under its day heading. Time and teams
-// are the primary line; format and stage are secondary metadata.
-func upcomingMatchLines(item upcomingMatch) string {
+// are the primary line; format and stage are secondary metadata; a stream
+// link, when the provider reported one for this match, comes last.
+func (h *UpdateHandler) upcomingMatchLines(item upcomingMatch, locale common.LocaleCode) string {
 	first, second := formatTeamCompact(item.match.FirstTeam), formatTeamCompact(item.match.SecondTeam)
 	match := matchStatusIcon(item.match.Status) + " " + code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
 	meta := item.match.Format.Label()
@@ -496,7 +497,11 @@ func upcomingMatchLines(item upcomingMatch) string {
 			meta += " · " + stage
 		}
 	}
-	return match + "\n  " + escapeHTML(meta)
+	lines := match + "\n  " + escapeHTML(meta)
+	if url, ok := item.match.MainStreamURL(); ok {
+		lines += "\n  📺 <a href=\"" + escapeHTML(url) + "\">" + h.Texts.Get("upcoming.stream", locale) + "</a>"
+	}
+	return lines
 }
 
 func matchStatusIcon(status competition.MatchStatus) string {

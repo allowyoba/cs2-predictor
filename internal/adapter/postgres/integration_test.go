@@ -1057,9 +1057,14 @@ func TestCompetitionRepository_FindMatchesBatchFetchesStageAndBothTeams(t *testi
 	stage := "Final"
 	future := time.Now().Add(time.Hour).UTC()
 
+	streams := []competition.Stream{
+		{Language: "ru", URL: "https://www.twitch.tv/betboom_cs_ru3"},
+		{Language: "en", URL: "https://kick.com/cct_cs2", Main: true, Official: true},
+	}
 	notStarted := competition.Match{
 		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "m1", Status: competition.MatchNotStarted,
 		Format: format, FirstTeam: &firstTeam, SecondTeam: &secondTeam, Stage: &stage, ScheduledAt: &future,
+		Streams: streams,
 	}
 	if _, err := catalog.SaveMatch(ctx, notStarted); err != nil {
 		t.Fatal(err)
@@ -1092,6 +1097,9 @@ func TestCompetitionRepository_FindMatchesBatchFetchesStageAndBothTeams(t *testi
 	}
 	if got.Stage == nil || *got.Stage != "Final" {
 		t.Fatalf("expected stage hydrated, got %v", got.Stage)
+	}
+	if url, ok := got.MainStreamURL(); !ok || url != "https://kick.com/cct_cs2" {
+		t.Fatalf("expected streams round-tripped through the jsonb column, MainStreamURL() = %q, %v", url, ok)
 	}
 }
 

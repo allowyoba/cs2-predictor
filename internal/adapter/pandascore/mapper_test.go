@@ -105,6 +105,33 @@ func TestMapMatch_MissingResultsEntryLeavesScoreUnset(t *testing.T) {
 	}
 }
 
+// TestMapMatch_StreamsListMapsEntriesAndDropsEmptyURLs mirrors a real
+// streams_list payload: a non-main Russian community stream, the official
+// English main broadcast, and a language slot PandaScore reported with no
+// raw_url at all (must not become an empty-string link).
+func TestMapMatch_StreamsListMapsEntriesAndDropsEmptyURLs(t *testing.T) {
+	beginAt := time.Date(2026, 9, 18, 14, 0, 0, 0, time.UTC)
+	dto := matchDTO{
+		ID: 9, Status: "not_started", BeginAt: &beginAt,
+		Serie: namedDTO{ID: 4, Name: "Event"},
+		StreamsList: []streamDTO{
+			{Language: "ru", RawURL: "https://www.twitch.tv/betboom_cs_ru3"},
+			{Language: "en", RawURL: "https://kick.com/cct_cs2", Main: true, Official: true},
+			{Language: "fr", RawURL: ""},
+		},
+	}
+
+	match := mapMatch(dto, competition.GameCS2)
+
+	if len(match.Streams) != 2 {
+		t.Fatalf("streams = %+v, want 2 (the empty-raw_url entry dropped)", match.Streams)
+	}
+	url, ok := match.MainStreamURL()
+	if !ok || url != "https://kick.com/cct_cs2" {
+		t.Errorf("MainStreamURL() = %q, %v, want the official English kick.com URL", url, ok)
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 func TestMapEvent_AppendsYearWhenNotAlreadyInName(t *testing.T) {

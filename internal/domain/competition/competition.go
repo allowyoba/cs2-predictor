@@ -5,6 +5,7 @@ package competition
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"cs2predictor/internal/platform/common"
@@ -251,6 +252,38 @@ type Match struct {
 	Format          SeriesFormat
 	Score           *MatchScore
 	StageExternalID *string
+	// Streams are the broadcasts the provider reported for this match —
+	// not every match has one, and a lower-tier match having none is
+	// normal, not a mapping bug.
+	Streams []Stream
+}
+
+// Stream is one broadcast of a match, as reported by the data provider
+// (PandaScore's streams_list).
+type Stream struct {
+	// Language is the provider's own code (PandaScore reports ISO 639-1,
+	// e.g. "ru", "en") — compared case-insensitively since providers are
+	// inconsistent about casing.
+	Language string
+	URL      string
+	// Main is the provider's own "featured" broadcast for the match; always
+	// Official when true (per PandaScore's field docs).
+	Main     bool
+	Official bool
+}
+
+// MainStreamURL returns the provider's official English broadcast for this
+// match, if it reported one. Deliberately narrow: only the main stream (per
+// PandaScore, always the official one) and only English — never a
+// community/unofficial streamer's channel, and never falls back to another
+// language just because English wasn't listed.
+func (m Match) MainStreamURL() (string, bool) {
+	for _, s := range m.Streams {
+		if s.Main && strings.EqualFold(s.Language, "en") {
+			return s.URL, true
+		}
+	}
+	return "", false
 }
 
 // ParticipantsKnown is true only once both teams are resolved (qualifier

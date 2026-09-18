@@ -276,5 +276,26 @@ func mapMatch(dto matchDTO, game competition.GameCode) competition.Match {
 		Format:          format,
 		Score:           score,
 		StageExternalID: stageExternalID,
+		Streams:         mapStreams(dto.StreamsList),
 	}
+}
+
+// mapStreams drops entries with no URL — PandaScore has been observed
+// listing a stream language slot with an empty raw_url, which is not
+// something a chat can be sent as a link.
+func mapStreams(dtos []streamDTO) []competition.Stream {
+	var out []competition.Stream
+	for _, s := range dtos {
+		url := strings.TrimSpace(s.RawURL)
+		if url == "" {
+			continue
+		}
+		out = append(out, competition.Stream{
+			Language: strings.TrimSpace(s.Language),
+			URL:      url,
+			Main:     s.Main,
+			Official: s.Official,
+		})
+	}
+	return out
 }
