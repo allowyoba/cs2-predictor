@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -89,6 +90,14 @@ func (s *RankingSync) Dispatch(ctx context.Context) {
 
 func (s *RankingSync) sync(ctx context.Context) {
 	ranked, err := s.Provider.FetchRankings(ctx)
+	if errors.Is(err, enrichment.ErrFetchPending) {
+		// The provider started (or is still waiting on) a remote job it
+		// will collect on a later tick. Neither a success nor a failure:
+		// recording either would make a provider that simply takes minutes
+		// look healthy-but-stale or outright broken in /provider_status.
+		s.Log.Info("ranking sync waiting on the provider's remote job", "source", s.Source)
+		return
+	}
 	if err != nil {
 		s.recordFailure(ctx, err)
 		return

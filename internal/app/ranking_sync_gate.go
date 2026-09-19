@@ -16,46 +16,47 @@ type RankingSyncGate interface {
 	ShouldRun(ctx context.Context, source enrichment.Source) (bool, error)
 }
 
-// apifyUpdateWeekday/apifyEndOfDayHour describe HLTV's own weekly update
-// cadence — confirmed to publish a fresh ranking every Monday — and the
-// point in that day this gate treats as "safe to assume today's number is
-// final" (HLTV gives no exact publish time).
-const (
-	apifyUpdateWeekday = time.Monday
-	apifyEndOfDayHour  = 23 // UTC
-)
+// apifyEndOfDayHour is how far into HLTV's own update day (Monday) this
+// gate waits before treating that day's ranking as final — HLTV gives no
+// exact publish time.
+const apifyEndOfDayHour = 23 // UTC
 
-// ApifyRankingGate caps a paid, Apify-backed RankingSync to at most once a
-// calendar week (Monday 00:00 UTC through the following Sunday): it fires
-// only on HLTV's own update day (Monday), at or after the end-of-day cutoff
-// above, and only if this source hasn't already succeeded since that
-// week began. Deliberately simple and tournament-independent — an earlier
-// version also fetched early for an imminent/running tournament, but that
-// doubled the number of trigger conditions to reason about for a benefit
-// that wasn't worth the complexity: HLTV only republishes weekly regardless,
-// so a mid-week fetch could still only ever return the same Monday numbers.
+// ApifyRankingGate caps a paid, Apify-backed RankingSync to at most one
+// fetch per calendar week: it opens at the Monday end-of-day cutoff above
+// and stays open for the rest of that week until this job's own run has
+// actually been collected. Deliberately simple and tournament-independent —
+// HLTV only republishes weekly regardless, so a mid-week fetch could still
+// only ever return the same Monday numbers.
+//
+// The window is the whole rest of the week rather than Monday's last hour
+// alone because a single failed attempt used to cost seven days of stale
+// rankings: the hourly tick that hit the cutoff was, in practice, the only
+// attempt the week ever got. Staying open costs nothing extra — the run
+// itself is what's billed, and the provider refuses to start a second one
+// for work already done or under way (see enrichment.ProviderRun).
+//
+// "Already ran this week" is answered from that same ProviderRun and not
+// from SyncState, because a Source can have two jobs writing it: the paid
+// Apify Valve feed shares enrichment.SourceValveVRS with the free, frequent
+// valvevrs one, whose successes kept this gate shut every week of its
+// existence — the paid Valve ranking was never once fetched.
 type ApifyRankingGate struct {
-	State enrichment.SyncStateRepository
+	Runs enrichment.ProviderRunRepository
+	// Key is the actor's ranking mode ("hltv"/"valve"), matching the Key
+	// the provider records its run under.
+	Key   string
 	Clock common.Clock
 }
 
 func (g *ApifyRankingGate) ShouldRun(ctx context.Context, source enrichment.Source) (bool, error) {
 	now := g.Clock.Now().UTC()
-	st, err := g.State.State(ctx, source)
+	weekStart := common.StartOfWeekUTC(now)
+	run, err := g.Runs.Run(ctx, source, g.Key)
 	if err != nil {
 		return false, err
 	}
-	if st.LastSuccessAt != nil && !st.LastSuccessAt.UTC().Before(startOfWeekUTC(now)) {
-		return false, nil // already fetched this week — covers the restart/redeploy case too, since Dispatch runs immediately on startup
+	if run != nil && run.Status == enrichment.RunStatusCollected && !run.PeriodStart.Before(weekStart) {
+		return false, nil // this week's ranking is already in
 	}
-	return now.Weekday() == apifyUpdateWeekday && now.Hour() >= apifyEndOfDayHour, nil
-}
-
-// startOfWeekUTC returns 00:00 UTC of t's calendar week's Monday — t is
-// assumed already UTC. Used to test "already ran this week" against a
-// week defined the same way HLTV's own Monday cadence is.
-func startOfWeekUTC(t time.Time) time.Time {
-	day := t.Truncate(24 * time.Hour)
-	daysSinceMonday := (int(day.Weekday()) - int(time.Monday) + 7) % 7
-	return day.AddDate(0, 0, -daysSinceMonday)
+	return !now.Before(weekStart.Add(apifyEndOfDayHour * time.Hour)), nil
 }

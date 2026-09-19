@@ -2,6 +2,7 @@ package enrichment
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"cs2predictor/internal/domain/competition"
@@ -151,4 +152,45 @@ type SyncStateRepository interface {
 	RecordSuccess(ctx context.Context, provider Source) error
 	RecordFailure(ctx context.Context, provider Source, errText string) error
 	State(ctx context.Context, provider Source) (*SyncState, error)
+}
+
+// ErrFetchPending is returned by a RankingProvider whose fetch is a remote
+// job that hasn't finished yet — the work is under way and will be
+// collected on a later tick. It is not a failure: RankingSync neither
+// records it against the source's health nor counts it as a success, so a
+// slow provider never looks like a broken one.
+var ErrFetchPending = errors.New("provider fetch still running")
+
+// ProviderRun tracks one long-running fetch a provider started remotely and
+// will collect later, across ticks and restarts. It exists so a fetch that
+// outlives the request that started it is never started twice — decisive
+// for a provider billed per run.
+type ProviderRun struct {
+	Provider Source
+	// Key separates several kinds of run under one Source — the Apify
+	// actor's rankingType, say, where one actor produces two rankings.
+	Key    string
+	RunID  string
+	Status string
+	// Attempts counts the runs started since PeriodStart, so a provider
+	// that keeps failing costs a bounded number of runs per period instead
+	// of one per tick.
+	Attempts    int
+	PeriodStart time.Time
+	StartedAt   time.Time
+}
+
+// RunStatusCollected marks a ProviderRun whose result has been read and
+// stored. The row is kept, rather than deleted, because "this period's run
+// is already done" is what a weekly gate has to check — and it cannot ask
+// SyncState for it when two jobs write the same Source (a paid weekly feed
+// alongside a free frequent one, where the free one's successes would
+// otherwise permanently convince the paid one it has already run).
+const RunStatusCollected = "COLLECTED"
+
+// ProviderRunRepository persists ProviderRun. Keyed on (Provider, Key).
+type ProviderRunRepository interface {
+	SaveRun(ctx context.Context, run ProviderRun) error
+	Run(ctx context.Context, provider Source, key string) (*ProviderRun, error)
+	ClearRun(ctx context.Context, provider Source, key string) error
 }

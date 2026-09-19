@@ -334,6 +334,31 @@ func TestRankingSync_GateErrorSkipsWithoutFailingDispatch(t *testing.T) {
 	}
 }
 
+// A provider whose fetch is a remote job still running is neither healthy-
+// and-done nor broken: recording either would misreport it in
+// /provider_status and, for a success, close the weekly gate on data that
+// never arrived.
+func TestRankingSync_PendingFetchIsNeitherSuccessNorFailure(t *testing.T) {
+	store := newFakeEnrichmentStore()
+	sync := &RankingSync{
+		Source:   enrichment.SourceHLTV,
+		Provider: &fakeRankingProvider{err: enrichment.ErrFetchPending},
+		Teams:    &fakeTeamLister{},
+		Rankings: store, Identity: store, State: store,
+		Gate: fakeRankingSyncGate{allow: true},
+		Lock: fakeClusterLock{}, Log: slog.Default(),
+	}
+	sync.Dispatch(context.Background())
+
+	st, err := store.State(context.Background(), enrichment.SourceHLTV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastSuccessAt != nil || st.LastErrorAt != nil || st.ConsecutiveFailures != 0 {
+		t.Fatalf("a pending fetch must leave sync state untouched, got %+v", st)
+	}
+}
+
 func TestValveVRSSync_ReusesConfirmedExternalIDMappingOnSubsequentRuns(t *testing.T) {
 	teamID := common.NewTeamID()
 	store := newFakeEnrichmentStore()

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -257,4 +258,35 @@ func lastKeyboardCall(t *testing.T, calls []map[string]any) map[string]any {
 	}
 	t.Fatalf("no recorded call carried a reply_markup: %+v", calls)
 	return nil
+}
+
+// Group management belongs to exactly one place: the hub. It used to be
+// offered twice — once there, and again as a row inside the personal
+// dashboard — and the second copy was shown to everyone, including the
+// majority who manage nothing and could only ever reach an empty list.
+func TestPrivateStatsMenu_DoesNotDuplicateGroupManagement(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	userID := common.UserID{Value: 1}
+	chatID := common.ChatID{Value: -1}
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Title: "Test Chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.RecordManaged(context.Background(), chatID, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(1, "hub:personal")); err != nil {
+		t.Fatal(err)
+	}
+	buttons, _ := findKeyboardButtons([]map[string]any{lastKeyboardCall(t, *calls)})
+	if slices.Contains(buttons, "manage:chats") {
+		t.Fatalf("the personal dashboard must not offer group management; buttons: %v", buttons)
+	}
+	// Still one tap away: the back row leads to the hub, which carries the
+	// single remaining entry.
+	if !slices.Contains(buttons, "hub:root") {
+		t.Fatalf("expected a back row to the hub, got %v", buttons)
+	}
 }
