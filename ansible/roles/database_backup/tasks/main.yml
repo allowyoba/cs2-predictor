@@ -109,6 +109,32 @@
               Set DB_BACKUP_S3_BUCKET, DB_BACKUP_S3_ACCESS_KEY_ID and DB_BACKUP_S3_SECRET_ACCESS_KEY to back up to S3
               (see ansible/README.md).
 
+        # The credentials go into a private file the Docker CLI reads,
+        # rather than into each task's `environment:`. Ansible's no_log is
+        # all-or-nothing per task: hiding the secrets that way also hid
+        # every AWS CLI error message, and a failed upload then looked
+        # identical whatever the cause — a missing binary once (see the
+        # comment below), an expired key, a bucket policy. With the secrets
+        # confined to this one no_log'd task, the commands themselves can
+        # report what actually went wrong.
+        - name: Stage the S3 credentials for the AWS CLI container
+          ansible.builtin.tempfile:
+            state: file
+            prefix: cs2predictor-s3-creds-
+          register: db_backup_s3_creds
+          changed_when: false
+
+        - name: Write the S3 credentials
+          ansible.builtin.copy:
+            dest: "{{ db_backup_s3_creds.path }}"
+            content: |
+              AWS_ACCESS_KEY_ID={{ lookup('env', 'DB_BACKUP_S3_ACCESS_KEY_ID') }}
+              AWS_SECRET_ACCESS_KEY={{ lookup('env', 'DB_BACKUP_S3_SECRET_ACCESS_KEY') }}
+              AWS_DEFAULT_REGION={{ db_backup_s3_region }}
+            mode: '0600'
+          no_log: true
+          changed_when: false
+
         # Run through the official AWS CLI image rather than a host-
         # installed `aws` binary: neither this role nor any other ever
         # installed one (a real incident — the tasks below once assumed it
@@ -128,12 +154,8 @@
               - --rm
               - -v
               - "{{ db_backup_staging.path }}:/data:ro"
-              - -e
-              - AWS_ACCESS_KEY_ID
-              - -e
-              - AWS_SECRET_ACCESS_KEY
-              - -e
-              - AWS_DEFAULT_REGION
+              - --env-file
+              - "{{ db_backup_s3_creds.path }}"
               - amazon/aws-cli:2.23.6
               - s3
               - cp
@@ -141,12 +163,7 @@
               - "s3://{{ db_backup_s3_bucket }}/{{ db_backup_s3_prefix }}{{ db_backup_label }}.dump.gz"
               - --endpoint-url
               - "{{ db_backup_s3_endpoint }}"
-          environment:
-            AWS_ACCESS_KEY_ID: "{{ lookup('env', 'DB_BACKUP_S3_ACCESS_KEY_ID') }}"
-            AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'DB_BACKUP_S3_SECRET_ACCESS_KEY') }}"
-            AWS_DEFAULT_REGION: "{{ db_backup_s3_region }}"
           changed_when: true
-          no_log: true
 
         - name: List S3 backups beyond the retention count, oldest first
           # JMESPath does the "keep the newest N" slicing itself
@@ -159,12 +176,8 @@
               - docker
               - run
               - --rm
-              - -e
-              - AWS_ACCESS_KEY_ID
-              - -e
-              - AWS_SECRET_ACCESS_KEY
-              - -e
-              - AWS_DEFAULT_REGION
+              - --env-file
+              - "{{ db_backup_s3_creds.path }}"
               - amazon/aws-cli:2.23.6
               - s3api
               - list-objects-v2
@@ -178,13 +191,8 @@
               - "sort_by(Contents || `[]`, &LastModified)[:-{{ db_backup_retention_count | int }}].Key"
               - --output
               - text
-          environment:
-            AWS_ACCESS_KEY_ID: "{{ lookup('env', 'DB_BACKUP_S3_ACCESS_KEY_ID') }}"
-            AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'DB_BACKUP_S3_SECRET_ACCESS_KEY') }}"
-            AWS_DEFAULT_REGION: "{{ db_backup_s3_region }}"
           register: db_backup_s3_stale
           changed_when: false
-          no_log: true
 
         - name: Delete S3 backups beyond the retention count
           vars:
@@ -200,25 +208,16 @@
               - docker
               - run
               - --rm
-              - -e
-              - AWS_ACCESS_KEY_ID
-              - -e
-              - AWS_SECRET_ACCESS_KEY
-              - -e
-              - AWS_DEFAULT_REGION
+              - --env-file
+              - "{{ db_backup_s3_creds.path }}"
               - amazon/aws-cli:2.23.6
               - s3
               - rm
               - "s3://{{ db_backup_s3_bucket }}/{{ item }}"
               - --endpoint-url
               - "{{ db_backup_s3_endpoint }}"
-          environment:
-            AWS_ACCESS_KEY_ID: "{{ lookup('env', 'DB_BACKUP_S3_ACCESS_KEY_ID') }}"
-            AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'DB_BACKUP_S3_SECRET_ACCESS_KEY') }}"
-            AWS_DEFAULT_REGION: "{{ db_backup_s3_region }}"
           loop: "{{ db_backup_s3_stale_keys }}"
           changed_when: true
-          no_log: true
 
     - name: Report the backup outcome
       ansible.builtin.debug:
@@ -229,3 +228,9 @@
         path: "{{ db_backup_staging.path }}"
         state: absent
       when: db_backup_staging is defined and db_backup_staging.path is defined
+
+    - name: Remove the staged S3 credentials
+      ansible.builtin.file:
+        path: "{{ db_backup_s3_creds.path }}"
+        state: absent
+      when: db_backup_s3_creds is defined and db_backup_s3_creds.path is defined
