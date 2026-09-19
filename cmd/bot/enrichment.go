@@ -21,6 +21,9 @@ import (
 // backgroundJob pairs a scheduled sync job's Dispatch method with the
 // interval it should be ticked at — see runBackground in main.go.
 type backgroundJob struct {
+	// name labels this job's heartbeat gauge, so "the HLTV sync stopped
+	// running" is answerable without reading logs.
+	name     string
 	interval time.Duration
 	dispatch func(ctx context.Context)
 }
@@ -62,7 +65,7 @@ func buildEnrichment(
 			Teams: repo, Rankings: repo, Identity: repo, State: state, Snapshots: repo,
 			Lock: lock, Log: log,
 		}
-		b.Jobs = append(b.Jobs, backgroundJob{cfg.ValveVRSSyncInterval, sync.Dispatch})
+		b.Jobs = append(b.Jobs, backgroundJob{"valve-vrs", cfg.ValveVRSSyncInterval, sync.Dispatch})
 	}
 
 	// hltvSync and vrsApifySync are a paired weekly fetch — both hit the
@@ -94,8 +97,8 @@ func buildEnrichment(
 		hltvSync := newSync(enrichment.SourceHLTV, apifyhltv.DefaultConfig(cfg.HLTVAPIToken), "")
 		vrsApifySync := newSync(enrichment.SourceValveVRS, apifyhltv.DefaultValveConfig(cfg.HLTVAPIToken), "cs2predictor:ranking-sync:VALVE_VRS_APIFY")
 		b.Jobs = append(b.Jobs,
-			backgroundJob{cfg.ApifyRankingCheckInterval, hltvSync.Dispatch},
-			backgroundJob{cfg.ApifyRankingCheckInterval, vrsApifySync.Dispatch},
+			backgroundJob{"hltv-rankings", cfg.ApifyRankingCheckInterval, hltvSync.Dispatch},
+			backgroundJob{"valve-vrs-apify", cfg.ApifyRankingCheckInterval, vrsApifySync.Dispatch},
 		)
 		// A run can finish while the bot is down — during the deploy that
 		// restarts it, most of all. Reading that finished run costs
@@ -124,7 +127,7 @@ func buildEnrichment(
 			Catalog: catalog, Subscriptions: subscriptions,
 			Form: repo, H2H: repo, State: state, Lock: lock, Log: log,
 		}
-		b.Jobs = append(b.Jobs, backgroundJob{cfg.GRIDSyncInterval, sync.Dispatch})
+		b.Jobs = append(b.Jobs, backgroundJob{"grid", cfg.GRIDSyncInterval, sync.Dispatch})
 		b.Sources = append(b.Sources, enrichment.SourceGRID)
 	}
 
@@ -134,7 +137,7 @@ func buildEnrichment(
 			Catalog:  catalog, Subscriptions: subscriptions,
 			Metadata: repo, State: state, Lock: lock, Log: log,
 		}
-		b.Jobs = append(b.Jobs, backgroundJob{cfg.LiquipediaSyncInterval, sync.Dispatch})
+		b.Jobs = append(b.Jobs, backgroundJob{"liquipedia", cfg.LiquipediaSyncInterval, sync.Dispatch})
 		b.Sources = append(b.Sources, enrichment.SourceLiquipedia)
 	}
 

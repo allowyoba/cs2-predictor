@@ -222,6 +222,7 @@ func run() error {
 		ProviderGateway:          gateway,
 		EnrichmentState:          enrichmentRepo,
 		EnrichmentSources:        enrichmentSources,
+		DeadLetters:              outbox,
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 
@@ -277,12 +278,24 @@ func run() error {
 		},
 	}
 
+	// The two watchdogs. Neither can be satisfied by the readiness probe:
+	// a bot whose webhook Telegram cannot reach, and a message the outbox
+	// has given up on, both leave a perfectly healthy process behind.
+	webhookWatchdog := &app.WebhookWatchdog{
+		Inspector: telegramClient, Alerter: adminAlerter, Metrics: metrics, Clock: clock, Log: log,
+		PendingThreshold: cfg.DeliveryBacklogAlert,
+	}
+	deadLetters := &app.DeadLetterWatch{Store: outbox, Alerter: adminAlerter, Metrics: metrics, Log: log}
+
 	// backgroundJobs tracks every scheduler goroutine so shutdown can wait
 	// for them to actually stop (they each respect ctx via RunFixedDelay's
 	// select) before the deferred pool.Close() runs — otherwise a job still
 	// mid-query when the process exits could hit a closed pool.
 	var backgroundJobs sync.WaitGroup
-	runBackground := func(delay time.Duration, job func(ctx context.Context)) {
+	// name is what the job's heartbeat gauge is labelled with: a job that
+	// silently stops being scheduled produces no error and no missing
+	// counter — only a timestamp that stops moving.
+	runBackground := func(name string, delay time.Duration, job func(ctx context.Context)) {
 		backgroundJobs.Add(1)
 		go func() {
 			defer backgroundJobs.Done()
@@ -296,27 +309,34 @@ func run() error {
 				jobCtx, cancel := context.WithTimeout(ctx, cfg.JobTimeout)
 				defer cancel()
 				job(jobCtx)
+				metrics.RecordJobRun(name, time.Now())
 			})
 		}()
 	}
 	if cfg.SchedulingEnabled {
-		runBackground(cfg.SyncEventsDelay, synchronizer.DiscoverEvents)
-		runBackground(cfg.SyncMatchesDelay, synchronizer.SynchronizeMatches)
-		runBackground(cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
-		runBackground(cfg.DigestCheckDelay, digests.Dispatch)
+		runBackground("discover-events", cfg.SyncEventsDelay, synchronizer.DiscoverEvents)
+		runBackground("synchronize-matches", cfg.SyncMatchesDelay, synchronizer.SynchronizeMatches)
+		runBackground("close-due-polls", cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
+		runBackground("digests", cfg.DigestCheckDelay, digests.Dispatch)
 		if cfg.EventEveLead >= 0 {
-			runBackground(cfg.DigestCheckDelay, eve.Dispatch)
+			runBackground("event-eve", cfg.DigestCheckDelay, eve.Dispatch)
 		}
-		runBackground(cfg.OutboxDelay, dispatcher.Dispatch)
+		runBackground("outbox", cfg.OutboxDelay, dispatcher.Dispatch)
 		for _, job := range enrichmentBuilt.Jobs {
-			runBackground(job.interval, job.dispatch)
+			runBackground("enrichment-"+job.name, job.interval, job.dispatch)
 		}
 		if cfg.PollReminderLead > 0 {
-			runBackground(cfg.PollReminderCheckDelay, reminders.Dispatch)
+			runBackground("poll-reminders", cfg.PollReminderCheckDelay, reminders.Dispatch)
 		}
 		if cfg.Retention.Interval > 0 {
-			runBackground(cfg.Retention.Interval, retention.Dispatch)
+			runBackground("retention", cfg.Retention.Interval, retention.Dispatch)
 		}
+		// The two watchdogs: one asks Telegram whether it can still reach
+		// this bot, the other reports messages the outbox has given up on.
+		// Both exist because their failures are otherwise completely
+		// silent — see app.WebhookWatchdog and app.DeadLetterWatch.
+		runBackground("webhook-watchdog", cfg.WatchdogInterval, webhookWatchdog.Check)
+		runBackground("dead-letter-watch", cfg.WatchdogInterval, deadLetters.Check)
 	}
 	defer backgroundJobs.Wait()
 

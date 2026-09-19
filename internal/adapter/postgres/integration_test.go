@@ -3193,3 +3193,75 @@ func TestChatRepository_MigrateChatIDDeletesOldRowWhenNewIDAlreadyExists(t *test
 		t.Fatalf("expected the new id's existing row to be left untouched, got %+v, err=%v", settings, err)
 	}
 }
+
+// A message that exhausts its retries disappears from every other query
+// here, which is exactly why the operator view and the replay have to work
+// against the real schema — nothing else would ever notice them again.
+func TestOutbox_DeadLettersAreVisibleAndReplayable(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	outbox := pg.NewOutbox(pool)
+
+	id, err := outbox.Enqueue(ctx, "TELEGRAM_CHAT", "-1:recap", "telegram.result-recap", `{"chatId":-1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := outbox.Pending(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var occurredAt time.Time
+	for _, m := range pending {
+		if m.ID == id {
+			occurredAt = m.OccurredAt
+		}
+	}
+	if occurredAt.IsZero() {
+		t.Fatal("expected the new message to be pending")
+	}
+
+	// Burn the whole retry budget the way a permanently failing publisher
+	// would.
+	for i := 0; i < common.OutboxMaxAttempts; i++ {
+		if err := outbox.Failed(ctx, id, occurredAt, "chat not found"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groups, err := outbox.DeadLetters(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *common.DeadLetterGroup
+	for i := range groups {
+		if groups[i].EventType == "telegram.result-recap" {
+			found = &groups[i]
+		}
+	}
+	if found == nil || found.Count < 1 {
+		t.Fatalf("expected the exhausted message to show up as a dead letter, got %+v", groups)
+	}
+	if found.LastError == "" {
+		t.Fatal("the operator needs the error that killed it, not just a count")
+	}
+
+	replayed, err := outbox.ReplayDeadLetters(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed < 1 {
+		t.Fatalf("expected at least the one message to be released, got %d", replayed)
+	}
+	after, err := outbox.Pending(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back bool
+	for _, m := range after {
+		if m.ID == id {
+			back = true
+		}
+	}
+	if !back {
+		t.Fatal("a replayed message must be selectable for delivery again")
+	}
+}

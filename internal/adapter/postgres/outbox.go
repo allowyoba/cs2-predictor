@@ -76,3 +76,43 @@ func (o *Outbox) Failed(ctx context.Context, id uuid.UUID, occurredAt time.Time,
 		 WHERE id = $1 AND occurred_at = $2`, id, occurredAt, errText)
 	return err
 }
+
+// DeadLetters and ReplayDeadLetters are the operator's view of the
+// messages Pending has given up on: attempts at the ceiling, never
+// published, and invisible to every other query here.
+func (o *Outbox) DeadLetters(ctx context.Context) ([]common.DeadLetterGroup, error) {
+	rows, err := executor(ctx, o.pool).Query(ctx,
+		`SELECT event_type, count(*), min(occurred_at), max(occurred_at),
+		        coalesce((array_agg(last_error ORDER BY occurred_at DESC))[1], '')
+		   FROM outbox_event
+		  WHERE published_at IS NULL AND attempts >= $1
+		  GROUP BY event_type
+		  ORDER BY count(*) DESC, event_type`, common.OutboxMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []common.DeadLetterGroup
+	for rows.Next() {
+		var g common.DeadLetterGroup
+		if err := rows.Scan(&g.EventType, &g.Count, &g.Oldest, &g.Newest, &g.LastError); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ReplayDeadLetters resets the attempt count so the ordinary dispatcher
+// picks these up again on its next run. next_attempt_at goes back to now
+// rather than staying at whatever the last backoff computed, so a replay
+// asked for by a human happens immediately.
+func (o *Outbox) ReplayDeadLetters(ctx context.Context) (int, error) {
+	tag, err := executor(ctx, o.pool).Exec(ctx,
+		`UPDATE outbox_event SET attempts = 0, next_attempt_at = now()
+		  WHERE published_at IS NULL AND attempts >= $1`, common.OutboxMaxAttempts)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}

@@ -59,6 +59,16 @@ type Config struct {
 	// app.DefaultEventEveLead; negative turns the nudge off entirely,
 	// which is the documented way to opt out of it.
 	EventEveLead time.Duration
+	// WatchdogInterval paces the two health watchers (the Telegram webhook
+	// and the outbox's dead letters). Both are cheap — one API call and
+	// one grouped count — and both cover failures that are otherwise
+	// invisible, so the default is frequent enough to notice within
+	// minutes rather than hours.
+	WatchdogInterval time.Duration
+	// DeliveryBacklogAlert is how many updates Telegram may be holding
+	// before that alone counts as broken delivery. A working webhook
+	// drains its queue in seconds.
+	DeliveryBacklogAlert int
 
 	// TeamMatchOperatorChatIDs receive a ping when a new team-identity
 	// review request needs attention, and are the only chat ids allowed to
@@ -415,6 +425,12 @@ func LoadConfig() (Config, error) {
 	}
 	// The day-before tournament nudge. Unset means DefaultEventEveLead; a
 	// negative value turns it off.
+	if cfg.WatchdogInterval, err = envDuration("WATCHDOG_INTERVAL", 5*time.Minute); err != nil {
+		return Config{}, err
+	}
+	if cfg.DeliveryBacklogAlert, err = envInt("WEBHOOK_BACKLOG_ALERT", 100); err != nil {
+		return Config{}, err
+	}
 	if cfg.EventEveLead, err = envDuration("EVENT_EVE_LEAD", DefaultEventEveLead); err != nil {
 		return Config{}, err
 	}

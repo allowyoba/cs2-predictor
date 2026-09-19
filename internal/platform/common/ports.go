@@ -52,6 +52,51 @@ type Outbox interface {
 	Failed(ctx context.Context, id uuid.UUID, occurredAt time.Time, errText string) error
 }
 
+// WebhookInfo is Telegram's own account of how delivery to this bot is
+// going, as reported by getWebhookInfo.
+type WebhookInfo struct {
+	URL string
+	// PendingUpdateCount is how many updates Telegram is holding because
+	// it could not hand them over.
+	PendingUpdateCount int
+	// LastErrorAt/LastErrorMessage describe the most recent delivery
+	// failure, zero when Telegram has never failed to reach this bot.
+	LastErrorAt      time.Time
+	LastErrorMessage string
+	IPAddress        string
+}
+
+// WebhookInspector reads that report. Implemented by the Telegram client,
+// consumed by app.WebhookWatchdog.
+type WebhookInspector interface {
+	WebhookInfo(ctx context.Context) (WebhookInfo, error)
+}
+
+// DeadLetterStore is the operator's view of messages that ran out of
+// retries. Separate from Outbox because nothing on the delivery path needs
+// it: a dead letter is only ever looked at, or deliberately replayed, by a
+// human — see app.DeadLetterWatch and the /outbox command.
+type DeadLetterStore interface {
+	// DeadLetters counts undelivered messages that have exhausted their
+	// retry budget, grouped by event type, worst first.
+	DeadLetters(ctx context.Context) ([]DeadLetterGroup, error)
+	// ReplayDeadLetters puts them back in the delivery queue by clearing
+	// their attempt count, and returns how many were released. Delivery
+	// itself is unchanged: a message that fails again simply exhausts its
+	// budget again rather than looping forever.
+	ReplayDeadLetters(ctx context.Context) (int, error)
+}
+
+// DeadLetterGroup is one event type's dead letters: how many, when the
+// oldest and newest arrived, and the error the last one recorded.
+type DeadLetterGroup struct {
+	EventType string
+	Count     int
+	Oldest    time.Time
+	Newest    time.Time
+	LastError string
+}
+
 // OutboxPublisher fans an outbox message out to its destination (Telegram)
 // by event type.
 type OutboxPublisher interface {
@@ -216,6 +261,15 @@ const (
 	// without it, an administrator has no way to tell a still-broken
 	// provider from one that quietly healed.
 	AdminAlertProviderRecovered AdminAlertKind = "provider_recovered"
+	// AdminAlertWebhookBroken reports that Telegram is failing to deliver
+	// updates to this bot. Nothing else notices: the process is healthy,
+	// the database answers, and the chats simply go quiet.
+	AdminAlertWebhookBroken AdminAlertKind = "webhook_broken"
+	// AdminAlertWebhookRecovered closes that loop.
+	AdminAlertWebhookRecovered AdminAlertKind = "webhook_recovered"
+	// AdminAlertDeadLetters reports messages that have run out of retries
+	// and will never be delivered without a deliberate replay.
+	AdminAlertDeadLetters AdminAlertKind = "dead_letters"
 )
 
 // AdminAlertNotification is the payload for the "telegram.admin-alert"
@@ -234,6 +288,10 @@ type AdminAlertNotification struct {
 	Provider string `json:"provider,omitempty"`
 	Failures int    `json:"failures,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	// Count carries the "how many" of a kind that is about a quantity:
+	// undelivered updates for the webhook kinds, dead letters for
+	// AdminAlertDeadLetters.
+	Count int `json:"count,omitempty"`
 }
 
 // ReleaseAnnouncementStore records which releases have already been
