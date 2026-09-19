@@ -253,7 +253,7 @@ func newTestTeamMatchService(snapshot []enrichment.RankedTeam) (*TeamMatchServic
 // same way the old single-source EnsureRequest used to.
 func ensureRequestSingle(t *testing.T, svc *TeamMatchService, team competition.Team) *common.RequestID {
 	t.Helper()
-	ids := svc.EnsureRequests(context.Background(), team)
+	ids := svc.EnsureRequests(context.Background(), competition.GameCS2, team)
 	if len(ids) > 1 {
 		t.Fatalf("expected at most one request id for a single-source test, got %v", ids)
 	}
@@ -458,7 +458,7 @@ func TestEnsureRequests_ChecksEachConfiguredSourceIndependently(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ids := svc.EnsureRequests(context.Background(), team)
+	ids := svc.EnsureRequests(context.Background(), competition.GameCS2, team)
 	if len(ids) != 1 {
 		t.Fatalf("expected exactly one pending request (Valve only), got %v", ids)
 	}
@@ -531,5 +531,28 @@ func TestAskChatHelpers_NoOpWhenRequestAlreadyResolved(t *testing.T) {
 	}
 	if len(outbox.enqueued) != 0 {
 		t.Fatalf("expected no asks for an already-resolved request, got %+v", outbox.enqueued)
+	}
+}
+
+// Valve's VRS and HLTV rank Counter-Strike teams only, so a Dota 2 match
+// must not open an identity request at all — a crowd-review question about
+// a team no feed covers is unanswerable, and an auto-accepted name
+// collision would be worse.
+func TestEnsureRequests_SkipsGamesTheRankingFeedsDoNotCover(t *testing.T) {
+	team := competition.Team{ID: common.NewTeamID(), Name: "BetBoom Team"}
+	// A snapshot that would otherwise match by name: the game, not the
+	// absence of a candidate, has to be what stops this.
+	svc, requests, _, identity := newTestTeamMatchService([]enrichment.RankedTeam{
+		{Source: enrichment.SourceValveVRS, Identity: enrichment.TeamIdentity{Name: "BetBoom Team"}},
+	})
+
+	if ids := svc.EnsureRequests(context.Background(), competition.GameDota2, team); len(ids) != 0 {
+		t.Fatalf("expected no identity request for a Dota 2 team, got %v", ids)
+	}
+	if len(requests.byID) != 0 {
+		t.Fatalf("expected no request to be written, got %d", len(requests.byID))
+	}
+	if len(identity.saved) != 0 {
+		t.Fatalf("expected no identity to be auto-accepted, got %+v", identity.saved)
 	}
 }

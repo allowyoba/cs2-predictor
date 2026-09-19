@@ -296,12 +296,23 @@ func (s *CompetitionSynchronization) ensureTeamsMatched(ctx context.Context, m c
 	if s.TeamMatch == nil {
 		return nil
 	}
+	// The game decides whether there is anything to resolve at all, and it
+	// lives on the event rather than the match — see
+	// TeamMatchService.EnsureRequests for why a non-CS2 team is not worth
+	// asking a ranking feed about.
+	event, err := s.Catalog.FindEvent(ctx, m.EventID)
+	if err != nil || event == nil {
+		if err != nil {
+			s.Log.Error("event lookup failed, skipping team identity resolution", "matchId", m.ID.Value, "error", err)
+		}
+		return nil
+	}
 	var pending []common.RequestID
 	for _, team := range [2]*competition.Team{m.FirstTeam, m.SecondTeam} {
 		if team == nil {
 			continue
 		}
-		pending = append(pending, s.TeamMatch.EnsureRequests(ctx, *team)...)
+		pending = append(pending, s.TeamMatch.EnsureRequests(ctx, event.Game, *team)...)
 	}
 	return pending
 }

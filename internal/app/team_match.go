@@ -70,7 +70,15 @@ type TeamMatchService struct {
 // request id for each Source that ended up needing review — never one for
 // a Source the team was auto-accepted on, or isn't plausibly ranked by at
 // all.
-func (s *TeamMatchService) EnsureRequests(ctx context.Context, team competition.Team) []common.RequestID {
+func (s *TeamMatchService) EnsureRequests(ctx context.Context, game competition.GameCode, team competition.Team) []common.RequestID {
+	// Every ranking feed wired here — Valve's VRS and HLTV — ranks
+	// Counter-Strike teams and nothing else. Asking them about a Dota 2
+	// team can only produce a wrong answer: at best no candidate, at worst
+	// a plausible-looking name collision that then gets crowd-reviewed by
+	// people who have no way to tell it is nonsense.
+	if game != competition.GameCS2 {
+		return nil
+	}
 	var pending []common.RequestID
 	for _, source := range s.Sources {
 		id, err := s.ensureRequest(ctx, team, source)
