@@ -306,3 +306,38 @@ func TestUpcoming_NamesTheGameOnlyWhenMoreThanOneIsFollowed(t *testing.T) {
 		t.Fatalf("a single-game chat needs no game label:\n%s", single)
 	}
 }
+
+// The upcoming list names teams the same way the poll does, flags included
+// — the two are the only places a team is named, and a flag in one but not
+// the other reads as a bug.
+func TestUpcoming_CarriesTheTeamsCountryFlags(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	h, _ := newTestHandler(t, server)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	h.Clock = common.FixedClock(now)
+	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: "UTC"}
+	event := common.NewEventID()
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	at := now.Add(time.Hour)
+	h.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{EventID: event}}}
+	h.Catalog = &dataCatalog{
+		events: map[common.EventID]competition.Event{event: {ID: event, Name: "Major"}},
+		unstartedMatches: map[common.EventID][]competition.Match{event: {{
+			ID: common.NewMatchID(), EventID: event, ScheduledAt: &at, Format: format,
+			FirstTeam:  &competition.Team{Name: "Spirit", Location: "RU"},
+			SecondTeam: &competition.Team{Name: "Falcons"}, // country unknown
+		}}},
+	}
+
+	if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
+		t.Fatal(err)
+	}
+	body := lastText(*calls)
+	if !strings.Contains(body, "🇷🇺") {
+		t.Fatalf("expected the known team's flag:\n%s", body)
+	}
+	if !strings.Contains(body, "Falcons") {
+		t.Fatalf("a team without a country must still be named:\n%s", body)
+	}
+}

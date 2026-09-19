@@ -960,3 +960,22 @@ func TestSend_NamesTheGameOnlyWhenTheChatFollowsMoreThanOne(t *testing.T) {
 		t.Fatalf("a single-game chat needs no game marker:\n%s", single)
 	}
 }
+
+// The flag rides in the poll's question, next to the team it belongs to —
+// the only place a "team badge" fits: the question is plain text and the
+// description is HTML without image support.
+func TestSend_QuestionCarriesTheTeamsCountryFlags(t *testing.T) {
+	poll := sendTestPoll(t, nil, PollEnrichmentSources{},
+		competition.Team{ID: common.NewTeamID(), Name: "Spirit", Location: "RU"},
+		competition.Team{ID: common.NewTeamID(), Name: "Falcons"}) // country unknown
+
+	if !strings.Contains(poll.question, "🇷🇺 Spirit") {
+		t.Fatalf("expected the flag next to the team it belongs to, got %q", poll.question)
+	}
+	if strings.Contains(poll.question, " Falcons") && strings.Contains(poll.question, "🏳") {
+		t.Fatalf("an unknown country must not become a placeholder flag: %q", poll.question)
+	}
+	if !strings.Contains(poll.question, "Falcons") {
+		t.Fatalf("the second team must still be named: %q", poll.question)
+	}
+}
