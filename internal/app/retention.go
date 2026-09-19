@@ -62,7 +62,7 @@ func (s *RetentionSweep) sweep(ctx context.Context) {
 	targets := []target{
 		{"processed_telegram_update", s.ProcessedUpdatesTTL, s.Store.DeleteProcessedUpdatesBefore},
 		{"outbox_event", s.PublishedOutboxTTL, s.Store.DeletePublishedOutboxBefore},
-		{"pending_unsubscribe", s.ResolvedRequestsTTL, s.Store.DeleteResolvedUnsubscribesBefore},
+		{"pending_approval", s.ResolvedRequestsTTL, s.Store.DeleteResolvedUnsubscribesBefore},
 		{"admin_action_log", s.AdminActionsTTL, s.Store.DeleteAdminActionsBefore},
 	}
 

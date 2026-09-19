@@ -133,7 +133,7 @@ func TestRetentionSweep_ContinuesAfterOneTableFails(t *testing.T) {
 		t.Fatal("outbox must still be swept after the updates delete failed")
 	}
 	if _, swept := store.cutoffs["pending"]; !swept {
-		t.Fatal("pending_unsubscribe must still be swept after the updates delete failed")
+		t.Fatal("pending_approval must still be swept after the updates delete failed")
 	}
 }
 
