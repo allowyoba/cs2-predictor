@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -177,5 +178,67 @@ func TestUpcomingEvents_FetchesBothGamesAndTagsThemCorrectly(t *testing.T) {
 	// the same numeric serie id across games.
 	if byGame[competition.GameCS2].ID == byGame[competition.GameDota2].ID {
 		t.Fatal("CS2 and Dota2 events must not share an ID")
+	}
+}
+
+// Every query parameter has to go through gameSpec.endpoint, because only
+// it knows whether the query string is already open. Concatenating one at a
+// call site produced "/dota2/tournaments/past&sort=-end_at" — a path, not a
+// query — which PandaScore answers with 404 "Route not found". CS2 hid it:
+// its videogame_title filter had already added the "?".
+func TestGameSpec_Endpoint(t *testing.T) {
+	cs2 := gameSpec{code: competition.GameCS2, pathPrefix: "csgo", filter: "filter[videogame_title]=cs-2"}
+	dota := gameSpec{code: competition.GameDota2, pathPrefix: "dota2"}
+
+	cases := []struct {
+		name string
+		game gameSpec
+		path string
+		args []string
+		want string
+	}{
+		{"filtered game, no extra parameters", cs2, "/csgo/tournaments/upcoming", nil,
+			"/csgo/tournaments/upcoming?filter[videogame_title]=cs-2"},
+		{"unfiltered game, no extra parameters", dota, "/dota2/tournaments/upcoming", nil,
+			"/dota2/tournaments/upcoming"},
+		{"filtered game plus a sort", cs2, "/csgo/tournaments/past", []string{"sort=-end_at"},
+			"/csgo/tournaments/past?filter[videogame_title]=cs-2&sort=-end_at"},
+		{"unfiltered game plus a sort opens the query itself", dota, "/dota2/tournaments/past", []string{"sort=-end_at"},
+			"/dota2/tournaments/past?sort=-end_at"},
+		{"several parameters", dota, "/dota2/matches", []string{"filter[serie_id]=1,2", "sort=-end_at"},
+			"/dota2/matches?filter[serie_id]=1,2&sort=-end_at"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.game.endpoint(c.path, c.args...); got != c.want {
+				t.Errorf("endpoint() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// The end-to-end counterpart: whatever the provider asks for, the path must
+// stay a path. A stray "&" in it is what made Dota 2's past tournaments 404
+// on every sync since the game was added.
+func TestUpcomingEvents_NeverPutsQueryParametersInThePath(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if strings.ContainsAny(r.URL.Path, "&?=") {
+			t.Errorf("query parameter leaked into the path: %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	config := DefaultConfig()
+	config.BaseURL = server.URL
+	config.Token = "t"
+	if _, err := NewProvider(config, server.Client()).UpcomingEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(paths, "/dota2/tournaments/past") {
+		t.Fatalf("expected a clean Dota2 past-tournaments path, got %v", paths)
 	}
 }

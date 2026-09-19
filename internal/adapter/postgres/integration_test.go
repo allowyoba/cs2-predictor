@@ -928,6 +928,55 @@ func TestChatRepository_StreamLanguageRoundTrips(t *testing.T) {
 	}
 }
 
+// The in-flight Apify run has to survive a restart — that persistence is
+// the whole reason a timed-out fetch no longer pays for a second run.
+func TestEnrichmentRepository_ProviderRunRoundTripsAndClears(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	repo := pg.NewEnrichmentRepository(pool)
+
+	if got, err := repo.Run(ctx, enrichment.SourceHLTV, "hltv"); err != nil || got != nil {
+		t.Fatalf("expected no run before one is saved, got %+v, err %v", got, err)
+	}
+
+	period := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	started := period.Add(23 * time.Hour)
+	run := enrichment.ProviderRun{
+		Provider: enrichment.SourceHLTV, Key: "hltv", RunID: "abc123",
+		Status: "RUNNING", Attempts: 1, PeriodStart: period, StartedAt: started,
+	}
+	if err := repo.SaveRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Run(ctx, enrichment.SourceHLTV, "hltv")
+	if err != nil || got == nil {
+		t.Fatalf("expected the run back, got %+v, err %v", got, err)
+	}
+	if got.RunID != "abc123" || got.Attempts != 1 || !got.PeriodStart.Equal(period) || !got.StartedAt.Equal(started) {
+		t.Fatalf("round-tripped run = %+v, want %+v", *got, run)
+	}
+
+	// The other ranking mode of the same actor is tracked separately.
+	if other, err := repo.Run(ctx, enrichment.SourceValveVRS, "valve"); err != nil || other != nil {
+		t.Fatalf("expected (provider, key) to be independent, got %+v, err %v", other, err)
+	}
+
+	run.Attempts = 2
+	run.RunID = "def456"
+	if err := repo.SaveRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.Run(ctx, enrichment.SourceHLTV, "hltv"); got.RunID != "def456" || got.Attempts != 2 {
+		t.Fatalf("expected the second save to replace the first, got %+v", *got)
+	}
+
+	if err := repo.ClearRun(ctx, enrichment.SourceHLTV, "hltv"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.Run(ctx, enrichment.SourceHLTV, "hltv"); err != nil || got != nil {
+		t.Fatalf("expected the run to be gone after ClearRun, got %+v, err %v", got, err)
+	}
+}
+
 // TestOutbox_PendingPublishedAndBackoff verifies the enqueue -> pending ->
 // published lifecycle, and that Failed schedules a future retry (so a
 // second Pending call right after a failure doesn't return the same

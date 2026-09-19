@@ -112,14 +112,18 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 	}
 	// Grouped by function rather than a flat dump: stats/analytics first
 	// (this screen's primary purpose), then the person's own activity, then
-	// navigation (manage groups) and personal preferences tucked behind one
-	// "Settings" entry point (notifications/language/rename all move to
-	// privateSettingsMenu), then help/back last — standard progressive
-	// disclosure instead of listing every leaf action at the top level.
+	// personal preferences tucked behind one "Settings" entry point
+	// (notifications/language/rename all move to privateSettingsMenu), then
+	// help/back last — standard progressive disclosure instead of listing
+	// every leaf action at the top level.
+	//
+	// Group management is deliberately absent: it is a mode of its own and
+	// lives on the hub (modeHub's "hub:manage"), which the back row below
+	// returns to. Repeating it here offered it to everyone, including the
+	// majority who manage nothing and would only reach an empty list.
 	if len(available) == 0 {
 		rows := [][]InlineButton{
 			{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
-			{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
 			{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
 			{button(h.Texts.Get("menu.help", locale), "pstats:help")},
 		}
@@ -136,7 +140,6 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(h.Texts.Get("stats.all_time", locale), "pstats:all"), button(h.Texts.Get("insights.title", locale), "pstats:insights")},
 		{button(h.Texts.Get("private.chats", locale), "pstats:chats:0"), button(h.Texts.Get("stats.other_period", locale), "pstats:years")},
 		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
-		{button(h.Texts.Get("dm.manage_chats", locale), "manage:chats")},
 		{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
 		{button(h.Texts.Get("menu.help", locale), "pstats:help")},
 	}
