@@ -36,9 +36,14 @@ type Poll struct {
 	TopicID           *int64
 	TelegramPollID    *string
 	TelegramMessageID *int64
-	Options           []Option
-	Status            PollStatus
-	ClosesAt          time.Time
+	// StreamURL is the broadcast this poll's chat has already been given a
+	// link to, empty until one has been announced. Closing a poll compares
+	// the match's current broadcast against it so the same link is never
+	// posted twice.
+	StreamURL string
+	Options   []Option
+	Status    PollStatus
+	ClosesAt  time.Time
 	// FirstTeamID/SecondTeamID anchor which physical team Options' "first"
 	// and "second" refer to, captured once at creation from the match
 	// snapshot the poll was actually rendered from. PandaScore's own

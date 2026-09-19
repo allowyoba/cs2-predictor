@@ -41,6 +41,9 @@ type PollGateway struct {
 	texts      *Texts
 	log        *slog.Logger
 	enrichment PollEnrichmentSources
+
+	// StreamRecorder is optional; see PollStreamRecorder.
+	StreamRecorder PollStreamRecorder
 }
 
 func NewPollGateway(client *Client, catalog competition.Catalog, chats chat.Repository, texts *Texts, log *slog.Logger, enrichmentSources PollEnrichmentSources) *PollGateway {
@@ -522,8 +525,71 @@ func (g *PollGateway) clearTopic(ctx context.Context, chatID common.ChatID, even
 	return nil
 }
 
+// PollStreamRecorder remembers which broadcast a chat has already been sent
+// for a poll. Optional: with no recorder wired the announcement still goes
+// out, it just cannot be proven a second attempt would not repeat it.
+type PollStreamRecorder interface {
+	MarkPollStreamAnnounced(ctx context.Context, pollID common.PollID, streamURL string) error
+}
+
 func (g *PollGateway) Close(ctx context.Context, poll prediction.Poll) error {
-	return g.stop(ctx, poll)
+	if err := g.stop(ctx, poll); err != nil {
+		return err
+	}
+	// Closing is the moment the match actually starts, which is both the
+	// last point a broadcast can still appear and the first point a link is
+	// of any use to the chat — a URL posted with the poll hours earlier is
+	// dead weight until now. Failing to announce must never fail the
+	// closure itself: the poll is closed, settlement depends on it, and a
+	// missing link is a cosmetic loss.
+	if err := g.announceStream(ctx, poll); err != nil {
+		g.log.Warn("could not announce the match broadcast", "pollId", poll.ID.Value, "error", err)
+	}
+	return nil
+}
+
+// announceStream posts the match's broadcast link as a reply to the poll,
+// unless the chat has already been given that exact link or the providers
+// still list no official stream.
+func (g *PollGateway) announceStream(ctx context.Context, poll prediction.Poll) error {
+	if poll.TelegramMessageID == nil {
+		return nil
+	}
+	match, err := g.catalog.FindMatch(ctx, poll.MatchID)
+	if err != nil || match == nil {
+		return err
+	}
+	settings, err := g.chats.Find(ctx, poll.ChatID)
+	if err != nil {
+		return err
+	}
+	locale, preferred := common.LocaleRU, common.LocaleRU
+	if settings != nil {
+		locale, preferred = settings.Locale, settings.StreamLocale()
+	}
+	stream, ok := match.StreamFor(preferred)
+	if !ok || stream.URL == poll.StreamURL {
+		return nil
+	}
+	payload := map[string]any{
+		"chat_id":    poll.ChatID.Value,
+		"text":       g.texts.Get("poll.stream_appeared", locale, streamLine(g.texts, locale, preferred, stream)),
+		"parse_mode": "HTML",
+		// The link is the message; a preview card of a stream page would
+		// double its height for nothing.
+		"link_preview_options": map[string]any{"is_disabled": true},
+		"reply_parameters":     map[string]any{"message_id": *poll.TelegramMessageID, "allow_sending_without_reply": true},
+	}
+	if poll.TopicID != nil {
+		payload["message_thread_id"] = *poll.TopicID
+	}
+	if err := sendToChat(ctx, g.client, g.chats, payload); err != nil {
+		return err
+	}
+	if g.StreamRecorder == nil {
+		return nil
+	}
+	return g.StreamRecorder.MarkPollStreamAnnounced(ctx, poll.ID, stream.URL)
 }
 func (g *PollGateway) Cancel(ctx context.Context, poll prediction.Poll) error {
 	return g.stop(ctx, poll)
