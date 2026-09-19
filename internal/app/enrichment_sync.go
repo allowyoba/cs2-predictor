@@ -152,6 +152,13 @@ func (s *RankingSync) apply(ctx context.Context, ranked []enrichment.RankedTeam,
 // restarts it, even — and the weekly gate would otherwise leave that
 // already-paid-for ranking unread for days.
 //
+// The provider call happens OUTSIDE the cluster lock on purpose. That lock
+// pins a pooled database connection for as long as it is held, and this
+// fetch is network I/O against someone else's API: holding a connection
+// across it starved the pool on the first deploy that shipped this, and
+// every background job then died on its own timeout waiting to acquire one.
+// Fetch first, lock only to write.
+//
 // Deliberately never starts remote work and never records a failure: this
 // is opportunistic catch-up, and a provider that cannot answer right now
 // still has its ordinary scheduled run ahead of it.
@@ -160,15 +167,15 @@ func (s *RankingSync) RefreshFromCache(ctx context.Context) {
 	if !ok {
 		return
 	}
-	_, err := s.Lock.Execute(ctx, s.lockKey()+":startup-refresh", func(ctx context.Context) error {
-		ranked, err := cached.FetchLatestCached(ctx)
-		if err != nil {
-			s.Log.Warn("startup ranking refresh failed, leaving the scheduled sync to it", "source", s.Source, "error", err)
-			return nil
-		}
-		if len(ranked) == 0 {
-			return nil
-		}
+	ranked, err := cached.FetchLatestCached(ctx)
+	if err != nil {
+		s.Log.Warn("startup ranking refresh failed, leaving the scheduled sync to it", "source", s.Source, "error", err)
+		return
+	}
+	if len(ranked) == 0 {
+		return
+	}
+	_, err = s.Lock.Execute(ctx, s.lockKey()+":startup-refresh", func(ctx context.Context) error {
 		fresher, err := s.newerThanRecorded(ctx, ranked)
 		if err != nil || !fresher {
 			return err
