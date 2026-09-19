@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
@@ -40,6 +41,13 @@ type CompetitionSynchronization struct {
 	Clock     common.Clock
 	Metrics   *Metrics
 	Log       *slog.Logger
+	// MatchSyncColdInterval is how often the match sync sweeps every
+	// subscribed tournament rather than only the ones with something
+	// happening. Zero disables the split and fetches everything on every
+	// run. Only ever read and written by the match sync itself, which one
+	// cluster lock serializes.
+	MatchSyncColdInterval time.Duration
+	lastFullMatchSync     time.Time
 }
 
 func (s *CompetitionSynchronization) guarded(ctx context.Context, name string, action func(ctx context.Context) error) {
@@ -148,6 +156,16 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 		if len(activeEvents) == 0 {
 			return nil
 		}
+		// Not every subscribed tournament needs asking about every few
+		// minutes. A match that starts on Saturday cannot change in a way
+		// anybody notices on Wednesday, while a match being played right
+		// now changes every round. Splitting the two is what keeps the
+		// provider's request budget spent on the matches people are
+		// actually watching — see selectEventsToSync.
+		activeEvents = s.selectEventsToSync(ctx, activeEvents)
+		if len(activeEvents) == 0 {
+			return nil
+		}
 
 		// Matches can return both a non-empty slice AND an error: one
 		// provider group failing (e.g. an open circuit breaker) must not
@@ -204,6 +222,99 @@ func (s *CompetitionSynchronization) CloseDuePolls(ctx context.Context) {
 		}
 		return nil
 	})
+}
+
+// MatchSyncHotLead is how close a match has to be before its tournament is
+// polled at the full rate. Poll creation happens hours ahead and every
+// downstream reaction (closing, settling) keys off a status change, so an
+// hour and a half is comfortably more than the freshness anybody can
+// perceive — while still covering a schedule that moved.
+const MatchSyncHotLead = 90 * time.Minute
+
+// selectEventsToSync narrows an active-subscription list to the
+// tournaments worth asking the provider about on this run.
+//
+// A tournament is "hot" — polled every run — when something about it can
+// change in the next few minutes: a match starting soon, a match in play,
+// or a match whose start time has passed but whose result has not arrived
+// yet. Everything else is "cold" and is swept in full on a slower timer,
+// so a schedule change days ahead is still picked up, just not sixty times
+// an hour.
+//
+// A tournament this bot has never fetched matches for is always hot: with
+// no local matches there is nothing to decide from, and the first fetch is
+// what creates its polls.
+func (s *CompetitionSynchronization) selectEventsToSync(ctx context.Context, events []competition.Event) []competition.Event {
+	now := s.Clock.Now()
+	if s.MatchSyncColdInterval <= 0 || now.Sub(s.lastFullMatchSync) >= s.MatchSyncColdInterval {
+		s.lastFullMatchSync = now
+		return events
+	}
+
+	hot, known, ok := s.classifyEvents(ctx, events, now)
+	if !ok {
+		// Without the local picture there is no safe way to skip anything.
+		return events
+	}
+	selected := make([]competition.Event, 0, len(events))
+	for _, e := range events {
+		// An event nothing is known about yet is always fetched: with no
+		// local matches there is nothing to decide from, and that first
+		// fetch is what creates its polls. A finished one is exempt —
+		// there is nothing left to learn about it between sweeps.
+		if hot[e.ID] || (!known[e.ID] && e.Status != competition.EventFinished) {
+			selected = append(selected, e)
+		}
+	}
+	return selected
+}
+
+// classifyEvents answers, per event, "can anything about this change in
+// the next few minutes" (hot) and "do we know anything about it at all"
+// (known). ok is false when the local picture could not be read, which the
+// caller treats as "fetch everything" rather than risking a silent skip.
+func (s *CompetitionSynchronization) classifyEvents(ctx context.Context, events []competition.Event,
+	now time.Time) (hot, known map[common.EventID]bool, ok bool) {
+	ids := make([]common.EventID, 0, len(events))
+	for _, e := range events {
+		ids = append(ids, e.ID)
+	}
+	unstarted, err := s.Catalog.FindUnstartedMatchesForEvents(ctx, ids)
+	if err != nil {
+		s.Log.Error("could not classify events for the match sync, fetching all of them", "error", err)
+		return nil, nil, false
+	}
+	hot, known = map[common.EventID]bool{}, map[common.EventID]bool{}
+	for _, m := range unstarted {
+		known[m.EventID] = true
+		// A match with no published time could start at any moment, and
+		// one whose time has passed is either about to start or already
+		// over and owed a result.
+		if m.ScheduledAt == nil || !m.ScheduledAt.After(now.Add(MatchSyncHotLead)) {
+			hot[m.EventID] = true
+		}
+	}
+
+	live, isLiveCatalog := s.Catalog.(competition.LiveMatchCatalog)
+	if !isLiveCatalog {
+		// No way to ask which matches are in play: a running tournament
+		// has to be assumed live rather than silently under-polled.
+		for _, e := range events {
+			if e.Status == competition.EventRunning {
+				hot[e.ID] = true
+			}
+		}
+		return hot, known, true
+	}
+	running, err := live.EventsWithLiveMatches(ctx, ids)
+	if err != nil {
+		s.Log.Error("could not check for live matches, fetching all events", "error", err)
+		return nil, nil, false
+	}
+	for _, id := range running {
+		known[id], hot[id] = true, true
+	}
+	return hot, known, true
 }
 
 // reconcileTeamOrder anchors incoming's FirstTeam/SecondTeam (and, with it,

@@ -100,7 +100,8 @@ func run() error {
 	pandaConfig := pandascore.Config{
 		BaseURL: cfg.PandaScore.BaseURL, Token: cfg.PandaScore.Token,
 		PageSize: cfg.PandaScore.PageSize, EventBatchSize: cfg.PandaScore.EventBatchSize,
-		MaxConcurrency: cfg.PandaScore.MaxConcurrency,
+		MaxConcurrency:  cfg.PandaScore.MaxConcurrency,
+		MatchWindowPast: cfg.PandaScore.MatchWindowPast, MatchWindowFuture: cfg.PandaScore.MatchWindowFuture,
 	}
 	providers := []competition.DataProvider{pandascore.NewProvider(pandaConfig, httpClient)}
 
@@ -229,6 +230,7 @@ func run() error {
 		Gateway: gateway, Catalog: catalog, Subscriptions: subscriptions, Chats: chats, ActiveChats: chats,
 		Predictions: predictionService, Settlement: settlement, EventCompletion: completion, TeamMatch: teamMatch,
 		Outbox: outbox, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
+		MatchSyncColdInterval: cfg.SyncMatchesColdInterval,
 	}
 	digests := &app.DigestScheduler{
 		Chats: chats, Scoring: scoringRepo, Insights: scoringRepo, Store: reportStore,
