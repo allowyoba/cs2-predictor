@@ -141,6 +141,10 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.systemToolsMenu(ctx, target, userID, locale)
 	case data == "hub:provider_status":
 		err = h.providerStatusView(ctx, target, userID, locale)
+	case data == "hub:outbox":
+		err = h.outboxStatusView(ctx, target, userID, locale)
+	case data == "hub:outbox:replay":
+		err = h.replayDeadLetters(ctx, cb, target, userID, locale)
 	case data == "hub:team_match_operators":
 		err = h.listTeamMatchOperators(ctx, target, userID, locale)
 	case data == "tmatch_admin:add":
