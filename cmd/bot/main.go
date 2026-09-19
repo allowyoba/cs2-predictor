@@ -205,6 +205,13 @@ func run() error {
 		}
 	}
 
+	// The Ideas channel. Its limits live in feedback.Policy; a deployment
+	// can loosen or tighten them, but never to nothing — see LoadConfig.
+	feedbackService := &app.FeedbackService{
+		Repo: pg.NewFeedbackRepository(pool), Outbox: outbox, Policy: cfg.Feedback,
+		Clock: clock, Metrics: metrics, Log: log, AdminChatIDs: cfg.TeamMatchOperatorChatIDs,
+	}
+
 	updateHandler := &telegram.UpdateHandler{
 		Dedup: dedup, Predictions: predictionService, Chats: chats, Authorization: authorization,
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
@@ -224,6 +231,7 @@ func run() error {
 		EnrichmentState:          enrichmentRepo,
 		EnrichmentSources:        enrichmentSources,
 		DeadLetters:              outbox,
+		Feedback:                 feedbackService,
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 
@@ -277,6 +285,7 @@ func run() error {
 			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewEventEvePublisher(telegramClient, chats, texts),
+			telegram.NewSuggestionPublisher(telegramClient, chats, texts, metrics),
 		},
 	}
 

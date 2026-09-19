@@ -294,6 +294,19 @@ type AdminAlertNotification struct {
 	Count int `json:"count,omitempty"`
 }
 
+// SuggestionNotification is the payload for the "telegram.suggestion"
+// outbox event type: one accepted idea, delivered to an administrator
+// chat. The sender is named so a reply is possible at all — an idea worth
+// acting on is usually worth asking a question about first.
+type SuggestionNotification struct {
+	ChatID       int64  `json:"chatId"`
+	SuggestionID string `json:"suggestionId"`
+	UserID       int64  `json:"userId"`
+	DisplayName  string `json:"displayName"`
+	Username     string `json:"username,omitempty"`
+	Text         string `json:"text"`
+}
+
 // ReleaseAnnouncementStore records which releases have already been
 // announced, so a restart, a second instance or a rollback-and-forward
 // cannot repeat the same announcement. Claim returns true only for the

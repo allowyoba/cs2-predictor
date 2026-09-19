@@ -277,6 +277,10 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.helpView(ctx, target, locale, "pstats:menu")
 	case data == "pstats:rename":
 		err = h.renameMenu(ctx, target, userID, locale)
+	case data == "idea:menu":
+		err = h.suggestionMenu(ctx, target, locale)
+	case data == "idea:write":
+		err = h.requestSuggestion(ctx, common.ChatID{Value: cb.Message.Chat.ID}, locale)
 	case data == cbRenameAsk():
 		err = h.requestNickname(ctx, common.ChatID{Value: cb.Message.Chat.ID}, locale)
 	case data == cbRenameReset():

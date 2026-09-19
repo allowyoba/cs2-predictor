@@ -157,6 +157,7 @@ func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTar
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
+		{button(h.Texts.Get("idea.title", locale), "idea:menu")},
 		{h.backButton(locale, "pstats:menu")},
 	}
 	return h.respond(ctx, target, h.Texts.Get("private.settings_title", locale), &InlineKeyboard{InlineKeyboard: rows})

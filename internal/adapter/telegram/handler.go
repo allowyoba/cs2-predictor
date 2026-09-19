@@ -141,6 +141,10 @@ type UpdateHandler struct {
 	// DeadLetters backs the undelivered-messages panel next to it. Nil
 	// omits the panel, exactly like the sections above.
 	DeadLetters common.DeadLetterStore
+
+	// Feedback backs the Ideas screen (see suggestions.go). Nil turns the
+	// channel off: the button says so rather than failing on use.
+	Feedback *app.FeedbackService
 }
 
 // requireManager wraps chat.AuthorizationService.RequireManager: on success
@@ -521,6 +525,12 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		return h.providerStatusView(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/help"):
 		return h.helpView(ctx, sendTarget(chatID, nil), locale, "pstats:menu")
+	case !strings.HasPrefix(text, "/") && h.isSuggestion(msg, locale):
+		// Same reasoning as the rename reply below: user-scoped, so it
+		// must work in every DM rather than only with a managed-chat
+		// session open.
+		return h.handleCommandError(ctx, chat.Settings{ChatID: chatID, Locale: locale}, nil, text,
+			h.applySuggestionReply(ctx, msg, msg.From, locale, text))
 	case !strings.HasPrefix(text, "/") && isRenameReply(msg, locale, h.Texts):
 		// User-scoped, not chat-scoped — unlike the events-search reply
 		// below, this must work for every DM, not only someone with an
@@ -555,6 +565,15 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		// old "groups only" dead end.
 		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	}
+}
+
+// isSuggestion reports whether this message answers the Ideas prompt,
+// using whichever size limit the running policy states in it.
+func (h *UpdateHandler) isSuggestion(msg *Message, locale common.LocaleCode) bool {
+	if h.Feedback == nil {
+		return false
+	}
+	return isSuggestionReply(msg, locale, h.Texts, h.Feedback.Policy.MaxRunes)
 }
 
 // adminDeepLinkPrefix is the "/start <prefix><base36 chat id>" payload
