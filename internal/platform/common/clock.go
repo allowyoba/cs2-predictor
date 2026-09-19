@@ -20,3 +20,13 @@ func SystemUTCClock() Clock { return systemUTCClock{} }
 type FixedClock time.Time
 
 func (f FixedClock) Now() time.Time { return time.Time(f) }
+
+// StartOfWeekUTC returns 00:00 UTC of t's calendar week's Monday. Shared
+// because the weekly cadence it defines has to mean exactly the same thing
+// to the job that decides when to fetch and to the provider that decides
+// whether an already-finished remote run still counts as this week's.
+func StartOfWeekUTC(t time.Time) time.Time {
+	day := t.UTC().Truncate(24 * time.Hour)
+	daysSinceMonday := (int(day.Weekday()) - int(time.Monday) + 7) % 7
+	return day.AddDate(0, 0, -daysSinceMonday)
+}

@@ -216,6 +216,39 @@ func (r *EnrichmentRepository) Claim(ctx context.Context, version, commit string
 	return tag.RowsAffected() == 1, nil
 }
 
+// --- enrichment.ProviderRunRepository ---
+
+func (r *EnrichmentRepository) SaveRun(ctx context.Context, run enrichment.ProviderRun) error {
+	_, err := executor(ctx, r.pool).Exec(ctx, `
+		INSERT INTO provider_run(provider, key, run_id, status, attempts, period_start, started_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7, now())
+		ON CONFLICT (provider, key) DO UPDATE SET
+		  run_id = excluded.run_id, status = excluded.status, attempts = excluded.attempts,
+		  period_start = excluded.period_start, started_at = excluded.started_at, updated_at = now()`,
+		string(run.Provider), run.Key, run.RunID, run.Status, run.Attempts, run.PeriodStart, run.StartedAt)
+	return err
+}
+
+func (r *EnrichmentRepository) Run(ctx context.Context, provider enrichment.Source, key string) (*enrichment.ProviderRun, error) {
+	run := enrichment.ProviderRun{Provider: provider, Key: key}
+	err := executor(ctx, r.pool).QueryRow(ctx,
+		`SELECT run_id, status, attempts, period_start, started_at FROM provider_run WHERE provider = $1 AND key = $2`,
+		string(provider), key).Scan(&run.RunID, &run.Status, &run.Attempts, &run.PeriodStart, &run.StartedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // nothing in flight — not an error
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (r *EnrichmentRepository) ClearRun(ctx context.Context, provider enrichment.Source, key string) error {
+	_, err := executor(ctx, r.pool).Exec(ctx,
+		`DELETE FROM provider_run WHERE provider = $1 AND key = $2`, string(provider), key)
+	return err
+}
+
 // --- enrichment.SyncStateRepository ---
 
 func (r *EnrichmentRepository) RecordSuccess(ctx context.Context, provider enrichment.Source) error {

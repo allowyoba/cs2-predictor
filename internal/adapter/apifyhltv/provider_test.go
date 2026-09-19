@@ -3,15 +3,102 @@ package apifyhltv
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/platform/common"
 )
+
+// A Monday 23:00 UTC — the instant the weekly gate opens, and the one the
+// real incident happened at.
+var testNow = time.Date(2026, 9, 14, 23, 0, 0, 0, time.UTC)
+
+// fakeApify stands in for the Apify REST API across the whole run
+// lifecycle. Every handler is optional; a request to an unstubbed path
+// fails the test rather than silently 404ing, since "which endpoint did it
+// call" is exactly what these tests are about.
+type fakeApify struct {
+	t *testing.T
+
+	// runs started via POST /v2/acts/{id}/runs, in order.
+	started []actorInput
+	// nextRunID is handed out for each started run.
+	nextRunID string
+	// runsByID answers GET /v2/actor-runs/{id}.
+	runsByID map[string]runInfo
+	// succeeded answers GET /v2/acts/{id}/runs?status=SUCCEEDED.
+	succeeded []runInfo
+	// outputs answers GET /v2/key-value-stores/{id}/records/OUTPUT.
+	outputs map[string]string
+
+	mu       sync.Mutex
+	requests []string
+}
+
+func newFakeApify(t *testing.T) *fakeApify {
+	t.Helper()
+	return &fakeApify{t: t, nextRunID: "run-new", runsByID: map[string]runInfo{}, outputs: map[string]string{}}
+}
+
+func (f *fakeApify) serve() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
+		f.mu.Unlock()
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			f.t.Errorf("Authorization = %q, want Bearer test-token", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/runs"):
+			var input actorInput
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			f.mu.Lock()
+			f.started = append(f.started, input)
+			f.mu.Unlock()
+			_, _ = fmt.Fprintf(w, `{"data":{"id":%q,"status":"RUNNING"}}`, f.nextRunID)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v2/actor-runs/"):
+			run, ok := f.runsByID[strings.TrimPrefix(r.URL.Path, "/v2/actor-runs/")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"type":"record-not-found"}}`))
+				return
+			}
+			body, _ := json.Marshal(map[string]any{"data": run})
+			_, _ = w.Write(body)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/runs"):
+			body, _ := json.Marshal(map[string]any{"data": map[string]any{"items": f.succeeded}})
+			_, _ = w.Write(body)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v2/key-value-stores/"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v2/key-value-stores/"), "/records/OUTPUT")
+			output, ok := f.outputs[id]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"type":"record-not-found"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(output))
+		default:
+			f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func (f *fakeApify) startedRuns() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.started)
+}
 
 func newTestProvider(t *testing.T, server *httptest.Server, maxTeams int) *Provider {
 	t.Helper()
@@ -19,17 +106,16 @@ func newTestProvider(t *testing.T, server *httptest.Server, maxTeams int) *Provi
 		BaseURL: server.URL, ActorID: "paco_nassa~hltv-org-team-ranking", Token: "test-token", MaxTeams: maxTeams,
 		RankingType: "hltv", Source: enrichment.SourceHLTV,
 	}
-	return NewProvider(config, server.Client())
+	return NewProvider(config, server.Client(), newMemoryRunStore(), common.FixedClock(testNow))
 }
 
-// sampleActorRunResponse is a trimmed, real run-sync-get-dataset-items
-// response (captured against the live actor) — the dataset holds one item
-// per RUN, not per team: the whole scrape result, with the actual teams
-// nested under "rankings", and each team's roster reported as a top-level
-// "players" array rather than nested under "team".
-const sampleActorRunResponse = `[
-	{
-		"scrapedAt": "2026-09-11T21:57:15.554Z",
+// sampleOutput is a trimmed, real OUTPUT record (captured against the live
+// actor): the whole scrape result, with the teams nested under "rankings"
+// and each team's roster as a top-level "players" array rather than nested
+// under "team". The run's dataset deliberately isn't used — it holds only
+// the bare "rankings" array, with neither scrapedAt nor rankingType.
+const sampleOutput = `{
+		"scrapedAt": "2026-09-14T23:02:19.554Z",
 		"rankingType": "hltv",
 		"totalTeams": 2,
 		"parameters": {"rankingType": "hltv", "maxTeams": 2},
@@ -52,26 +138,66 @@ const sampleActorRunResponse = `[
 				"isNew": false,
 				"players": ["karrigan", "NiKo", "TeSeS", "m0NESY", "kyousuke"]
 			}
-		]
-	}
-]`
+	]
+}`
 
-func TestFetchRankings_ParsesRealActorResponseShape(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(sampleActorRunResponse))
-	}))
+func finishedAt(offset time.Duration) *time.Time {
+	at := testNow.Add(offset)
+	return &at
+}
+
+// The first tick of a period starts a run and reports it as pending — not
+// as data, and not as a failure.
+func TestFetchRankings_FirstTickStartsARunAndReportsPending(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
 	defer server.Close()
 
-	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
+	provider := newTestProvider(t, server, 30)
+	_, err := provider.FetchRankings(context.Background())
+	if !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("err = %v, want ErrFetchPending", err)
+	}
+	if fake.startedRuns() != 1 {
+		t.Fatalf("started %d runs, want 1", fake.startedRuns())
+	}
+	if fake.started[0].RankingType != "hltv" || fake.started[0].MaxTeams != 30 {
+		t.Fatalf("actor input = %+v, want hltv/30", fake.started[0])
+	}
+	run, err := provider.runs.Run(context.Background(), enrichment.SourceHLTV, "hltv")
+	if err != nil || run == nil {
+		t.Fatalf("expected the started run to be recorded, got %+v, %v", run, err)
+	}
+	if run.RunID != "run-new" || run.Attempts != 1 || !run.PeriodStart.Equal(common.StartOfWeekUTC(testNow)) {
+		t.Fatalf("recorded run = %+v", *run)
+	}
+}
+
+// The tick after that collects the finished run's result — the whole point
+// of recording the run id.
+func TestFetchRankings_LaterTickCollectsTheStartedRun(t *testing.T) {
+	fake := newFakeApify(t)
+	fake.outputs["ds-1"] = sampleOutput
+	server := fake.serve()
+	defer server.Close()
+	provider := newTestProvider(t, server, 30)
+
+	if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("first tick: err = %v, want ErrFetchPending", err)
+	}
+	// Still running on the next tick: still pending, still no second run.
+	fake.runsByID["run-new"] = runInfo{ID: "run-new", Status: statusRunning}
+	if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("second tick: err = %v, want ErrFetchPending", err)
+	}
+	// Finished: the data arrives, and the run is marked as this period's.
+	fake.runsByID["run-new"] = runInfo{ID: "run-new", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-1", FinishedAt: finishedAt(2 * time.Minute)}
+	rankings, err := provider.FetchRankings(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rankings) != 2 {
-		t.Fatalf("got %d rankings, want 2: %+v", len(rankings), rankings)
-	}
-	if rankings[0].Identity.Name != "Spirit" || *rankings[0].GlobalRank != 1 || *rankings[0].Points != 1000 {
-		t.Fatalf("unexpected first ranking: %+v", rankings[0])
+	if len(rankings) != 2 || rankings[0].Identity.Name != "Spirit" || *rankings[0].GlobalRank != 1 || *rankings[0].Points != 1000 {
+		t.Fatalf("unexpected rankings: %+v", rankings)
 	}
 	wantRoster := []string{"sh1ro", "magixx", "tN1R", "zont1x", "donk"}
 	if !slices.Equal(rankings[0].Identity.Roster, wantRoster) {
@@ -82,64 +208,161 @@ func TestFetchRankings_ParsesRealActorResponseShape(t *testing.T) {
 			t.Fatalf("expected Source=HLTV, got %q", r.Source)
 		}
 	}
+	if fake.startedRuns() != 1 {
+		t.Fatalf("started %d runs across three ticks, want exactly 1", fake.startedRuns())
+	}
+	// Kept, not cleared: this record is what tells the weekly gate the
+	// period is done (see enrichment.RunStatusCollected).
+	run, _ := provider.runs.Run(context.Background(), enrichment.SourceHLTV, "hltv")
+	if run == nil || run.Status != enrichment.RunStatusCollected || run.PeriodStart.Before(common.StartOfWeekUTC(testNow)) {
+		t.Fatalf("expected the run marked collected for this period, got %+v", run)
+	}
 }
 
-func TestFetchRankings_EmptyDatasetProducesNoRankings(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[]`))
-	}))
+// The incident this whole lifecycle exists for: the run succeeded on
+// Apify's side but we lost track of it (an HTTP timeout back then, a
+// redeploy in general). Its result must be adopted for free rather than
+// paid for a second time.
+func TestFetchRankings_AdoptsAFinishedRunInsteadOfPayingAgain(t *testing.T) {
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{{ID: "run-lost", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-1", FinishedAt: finishedAt(2 * time.Minute)}}
+	fake.outputs["ds-1"] = sampleOutput
+	server := fake.serve()
 	defer server.Close()
 
-	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
+	rankings, err := newTestProvider(t, server, 30).FetchRankings(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rankings) != 0 {
-		t.Fatalf("expected no rankings for an empty dataset, got %+v", rankings)
+	if len(rankings) != 2 {
+		t.Fatalf("got %d rankings, want the adopted run's 2", len(rankings))
+	}
+	if fake.startedRuns() != 0 {
+		t.Fatal("a run whose result already exists must never be started again")
 	}
 }
 
-// The request must send the actor's documented input shape and
-// authenticate via the Authorization header, never a ?token= query
-// parameter (see the package doc comment for why).
-func TestFetchRankings_SendsExpectedRequestShape(t *testing.T) {
-	var gotPath, gotAuth string
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[]`))
-	}))
+// A successful run from before this period is last week's ranking — it must
+// not be mistaken for this week's, or the ranking would freeze forever.
+func TestFetchRankings_IgnoresAFinishedRunFromAnEarlierPeriod(t *testing.T) {
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{{ID: "run-old", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-old", FinishedAt: finishedAt(-7 * 24 * time.Hour)}}
+	fake.outputs["ds-old"] = sampleOutput
+	server := fake.serve()
 	defer server.Close()
 
-	if _, err := newTestProvider(t, server, 30).FetchRankings(context.Background()); err != nil {
+	if _, err := newFakeProviderTick(t, server); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("err = %v, want a fresh run to be started", err)
+	}
+	if fake.startedRuns() != 1 {
+		t.Fatalf("started %d runs, want 1", fake.startedRuns())
+	}
+}
+
+func newFakeProviderTick(t *testing.T, server *httptest.Server) ([]enrichment.RankedTeam, error) {
+	t.Helper()
+	return newTestProvider(t, server, 30).FetchRankings(context.Background())
+}
+
+// One actor serves both of our rankings, so "the last successful run" is
+// regularly the other ranking's. Its dataset must be skipped — never filed
+// as ours — and our own run from the same period adopted instead.
+func TestFetchRankings_SkipsTheOtherRankingsDatasetAndAdoptsItsOwn(t *testing.T) {
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{
+		{ID: "run-valve", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-valve", FinishedAt: finishedAt(10 * time.Minute)},
+		{ID: "run-hltv", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-1", FinishedAt: finishedAt(2 * time.Minute)},
+	}
+	fake.outputs["ds-valve"] = strings.Replace(sampleOutput, `"rankingType": "hltv"`, `"rankingType": "valve"`, 1)
+	fake.outputs["ds-1"] = sampleOutput
+	server := fake.serve()
+	defer server.Close()
+
+	rankings, err := newTestProvider(t, server, 30).FetchRankings(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/v2/acts/paco_nassa~hltv-org-team-ranking/run-sync-get-dataset-items" {
-		t.Fatalf("path = %q", gotPath)
+	if len(rankings) != 2 {
+		t.Fatalf("got %d rankings, want the HLTV run's 2", len(rankings))
 	}
-	if gotAuth != "Bearer test-token" {
-		t.Fatalf("Authorization = %q, want Bearer test-token", gotAuth)
+	if fake.startedRuns() != 0 {
+		t.Fatal("our own finished run was there to adopt; nothing should have been started")
 	}
-	if gotBody["rankingType"] != "hltv" {
-		t.Fatalf("rankingType = %v, want hltv", gotBody["rankingType"])
+}
+
+// The cost guarantee: however often the job ticks, a period pays for at
+// most MaxRunsPerPeriod runs. Every tick here sees its run end as FAILED,
+// which is the only way another one is ever started within a period.
+func TestFetchRankings_NeverStartsMoreThanMaxRunsPerPeriod(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
+	defer server.Close()
+	provider := newTestProvider(t, server, 30)
+	provider.config.MaxRunsPerPeriod = 2
+
+	var lastErr error
+	for tick := 0; tick < 10; tick++ {
+		_, lastErr = provider.FetchRankings(context.Background())
+		fake.runsByID["run-new"] = runInfo{ID: "run-new", Status: "FAILED"}
 	}
-	if gotBody["maxTeams"] != float64(30) {
-		t.Fatalf("maxTeams = %v, want 30", gotBody["maxTeams"])
+	if fake.startedRuns() != 2 {
+		t.Fatalf("started %d runs over 10 ticks, want the cap of 2", fake.startedRuns())
 	}
-	if _, tokenLeaked := gotBody["token"]; tokenLeaked {
-		t.Fatal("token must never be sent in the request body")
+	if lastErr == nil || errors.Is(lastErr, enrichment.ErrFetchPending) {
+		t.Fatalf("err = %v, want a real error once the period's budget is spent", lastErr)
+	}
+}
+
+// A transient API error while checking on a run must not orphan it: the
+// next tick has to still know about the run, or it would pay for a second.
+func TestFetchRankings_KeepsTheRunRecordedWhenTheStatusCheckFails(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
+	defer server.Close()
+	provider := newTestProvider(t, server, 30)
+
+	if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatal(err)
+	}
+	// runsByID has no entry for run-new, so the status check 404s.
+	if _, err := provider.FetchRankings(context.Background()); err == nil {
+		t.Fatal("expected the failed status check to surface as an error")
+	}
+	run, _ := provider.runs.Run(context.Background(), enrichment.SourceHLTV, "hltv")
+	if run == nil || run.RunID != "run-new" {
+		t.Fatalf("expected run-new to still be recorded, got %+v", run)
+	}
+	if fake.startedRuns() != 1 {
+		t.Fatalf("started %d runs, want 1", fake.startedRuns())
+	}
+}
+
+// The run is started through the async endpoint (not the old blocking
+// run-sync one), authenticated by header, and never carries the token in
+// the body.
+func TestFetchRankings_StartsRunsViaTheAsyncEndpoint(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
+	defer server.Close()
+
+	if _, err := newTestProvider(t, server, 30).FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatal(err)
+	}
+	for _, req := range fake.requests {
+		if strings.Contains(req, "run-sync") {
+			t.Fatalf("the blocking run-sync endpoint must not be used any more: %s", req)
+		}
+	}
+	if want := "POST /v2/acts/paco_nassa~hltv-org-team-ranking/runs"; !slices.Contains(fake.requests, want) {
+		t.Fatalf("requests = %v, want %q", fake.requests, want)
 	}
 }
 
 func TestFetchRankings_SkipsItemsWithNoTeamName(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"rankings": [{"place": 1, "team": {"name": ""}, "points": 500}]}]`))
-	}))
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{{ID: "r", Status: statusSucceeded, DefaultKeyValueStoreID: "ds", FinishedAt: finishedAt(time.Minute)}}
+	fake.outputs["ds"] = `{"rankingType":"hltv","rankings":[{"place":1,"team":{"name":""},"points":500}]}`
+	server := fake.serve()
 	defer server.Close()
 
 	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
@@ -186,26 +409,32 @@ func TestDefaultValveConfig_DiffersFromDefaultConfigOnlyByRankingTypeAndSource(t
 	}
 }
 
-// FetchRankings must send whichever rankingType Config carries and tag
-// results with whichever Source Config carries — the actor's "valve" mode
-// output is otherwise byte-identical in shape to its "hltv" mode.
+// The valve mode must send its own rankingType and tag results with its own
+// Source — the actor's two modes are otherwise byte-identical in shape.
 func TestFetchRankings_ValveModeSendsValveRankingTypeAndTagsSourceValveVRS(t *testing.T) {
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(sampleActorRunResponse))
-	}))
+	fake := newFakeApify(t)
+	fake.outputs["ds-valve"] = strings.Replace(sampleOutput, `"rankingType": "hltv"`, `"rankingType": "valve"`, 1)
+	server := fake.serve()
 	defer server.Close()
 
-	provider := NewProvider(DefaultValveConfig("test-token"), server.Client())
-	provider.config.BaseURL = server.URL
+	config := DefaultValveConfig("test-token")
+	config.BaseURL = server.URL
+	config.ActorID = "paco_nassa~hltv-org-team-ranking"
+	provider := NewProvider(config, server.Client(), newMemoryRunStore(), common.FixedClock(testNow))
+
+	if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatal(err)
+	}
+	if fake.started[0].RankingType != "valve" {
+		t.Fatalf("rankingType = %v, want valve", fake.started[0].RankingType)
+	}
+	fake.runsByID["run-new"] = runInfo{ID: "run-new", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-valve", FinishedAt: finishedAt(time.Minute)}
 	rankings, err := provider.FetchRankings(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotBody["rankingType"] != "valve" {
-		t.Fatalf("rankingType = %v, want valve", gotBody["rankingType"])
+	if len(rankings) == 0 {
+		t.Fatal("expected the valve dataset to be accepted by the valve provider")
 	}
 	for _, r := range rankings {
 		if r.Source != enrichment.SourceValveVRS {
@@ -214,22 +443,20 @@ func TestFetchRankings_ValveModeSendsValveRankingTypeAndTagsSourceValveVRS(t *te
 	}
 }
 
-// PublishedAt must reflect the actor's own scrapedAt, not whenever
-// FetchRankings happened to be called — the sample response's scrapedAt is
-// 2026-09-11T21:57:15.554Z, deliberately far from "now" so a regression to
-// time.Now() would fail this immediately rather than by coincidence.
+// PublishedAt must reflect the actor's own scrapedAt, not whenever the
+// dataset happened to be read.
 func TestFetchRankings_PublishedAtUsesScrapedAtNotFetchTime(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(sampleActorRunResponse))
-	}))
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{{ID: "r", Status: statusSucceeded, DefaultKeyValueStoreID: "ds", FinishedAt: finishedAt(3 * time.Minute)}}
+	fake.outputs["ds"] = sampleOutput
+	server := fake.serve()
 	defer server.Close()
 
 	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := time.Date(2026, 9, 11, 21, 57, 15, 554000000, time.UTC)
+	want := time.Date(2026, 9, 14, 23, 2, 19, 554000000, time.UTC)
 	for _, r := range rankings {
 		if !r.PublishedAt.Equal(want) {
 			t.Fatalf("PublishedAt = %v, want the run's own scrapedAt %v", r.PublishedAt, want)
@@ -238,15 +465,14 @@ func TestFetchRankings_PublishedAtUsesScrapedAtNotFetchTime(t *testing.T) {
 }
 
 // A missing/zero scrapedAt must not silently produce the Unix epoch as
-// PublishedAt — it should fall back to the old fetch-time behavior instead.
+// PublishedAt — it falls back to when the run actually finished.
 func TestFetchRankings_FallsBackToFetchTimeWhenScrapedAtIsMissing(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"rankings": [{"place": 1, "team": {"name": "Spirit"}, "points": 1000}]}]`))
-	}))
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{{ID: "r", Status: statusSucceeded, DefaultKeyValueStoreID: "ds", FinishedAt: finishedAt(time.Minute)}}
+	fake.outputs["ds"] = `{"rankingType":"hltv","rankings":[{"place":1,"team":{"name":"Spirit"},"points":1000}]}`
+	server := fake.serve()
 	defer server.Close()
 
-	before := time.Now().Add(-time.Second)
 	rankings, err := newTestProvider(t, server, 50).FetchRankings(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -254,8 +480,8 @@ func TestFetchRankings_FallsBackToFetchTimeWhenScrapedAtIsMissing(t *testing.T) 
 	if len(rankings) != 1 {
 		t.Fatalf("got %d rankings, want 1", len(rankings))
 	}
-	if rankings[0].PublishedAt.Before(before) {
-		t.Fatalf("PublishedAt = %v, want it no earlier than the fallback fetch time", rankings[0].PublishedAt)
+	if want := testNow.Add(time.Minute); !rankings[0].PublishedAt.Equal(want) {
+		t.Fatalf("PublishedAt = %v, want the run's finish time %v", rankings[0].PublishedAt, want)
 	}
 }
 
@@ -263,22 +489,62 @@ func TestFetchRankings_FallsBackToFetchTimeWhenScrapedAtIsMissing(t *testing.T) 
 // (which would let the actor fall back to its own default team count
 // instead of honoring an explicit operator choice).
 func TestFetchRankings_SendsMaxTeamsZeroExplicitly(t *testing.T) {
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[]`))
-	}))
+	fake := newFakeApify(t)
+	server := fake.serve()
 	defer server.Close()
 
-	if _, err := newTestProvider(t, server, 0).FetchRankings(context.Background()); err != nil {
+	if _, err := newTestProvider(t, server, 0).FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
 		t.Fatal(err)
 	}
-	maxTeams, present := gotBody["maxTeams"]
-	if !present {
-		t.Fatal("expected maxTeams to be present in the request body even when 0")
+	body, err := json.Marshal(fake.started[0])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if maxTeams != float64(0) {
-		t.Fatalf("maxTeams = %v, want 0", maxTeams)
+	if !strings.Contains(string(body), `"maxTeams":0`) {
+		t.Fatalf("actor input = %s, want an explicit maxTeams:0", body)
+	}
+}
+
+// The startup path: a run that finished while the bot was down is read
+// back for free, and no new run is started to get it.
+func TestFetchLatestCached_ReadsTheLastFinishedRunWithoutStartingOne(t *testing.T) {
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{
+		{ID: "run-other", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-valve", FinishedAt: finishedAt(-time.Hour)},
+		{ID: "run-mine", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-1", FinishedAt: finishedAt(-2 * time.Hour)},
+	}
+	fake.outputs["ds-valve"] = strings.Replace(sampleOutput, `"rankingType": "hltv"`, `"rankingType": "valve"`, 1)
+	fake.outputs["ds-1"] = sampleOutput
+	server := fake.serve()
+	defer server.Close()
+
+	teams, err := newTestProvider(t, server, 30).FetchLatestCached(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(teams) != 2 || teams[0].Identity.Name != "Spirit" {
+		t.Fatalf("expected the hltv run's teams, got %+v", teams)
+	}
+	if fake.startedRuns() != 0 {
+		t.Fatal("reading a finished run must never start a new one")
+	}
+}
+
+// Nothing finished recently is not an error: the scheduled job will start a
+// run when its window opens.
+func TestFetchLatestCached_NoFinishedRunIsNotAnError(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
+	defer server.Close()
+
+	teams, err := newTestProvider(t, server, 30).FetchLatestCached(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(teams) != 0 {
+		t.Fatalf("expected nothing to adopt, got %+v", teams)
+	}
+	if fake.startedRuns() != 0 {
+		t.Fatal("expected no run to be started")
 	}
 }

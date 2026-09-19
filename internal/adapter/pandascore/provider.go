@@ -51,15 +51,26 @@ var supportedGames = []gameSpec{
 	{code: competition.GameDota2, pathPrefix: "dota2"},
 }
 
-func (g gameSpec) withFilter(path string) string {
-	if g.filter == "" {
-		return path
+// endpoint builds this game's URL for path, appending the game filter (when
+// it has one) plus any extra query parameters. Every parameter goes through
+// here rather than being concatenated at the call site: the first one needs
+// "?" and the rest need "&", and getting that wrong silently produced
+// /dota2/tournaments/past&sort=-end_at — a path PandaScore answers with 404
+// "Route not found", which is exactly how Dota 2's past tournaments went
+// unsynced from the day the game was added. CS2 hid the bug, because its
+// own filter had already opened the query string.
+func (g gameSpec) endpoint(path string, params ...string) string {
+	if g.filter != "" {
+		params = append([]string{g.filter}, params...)
 	}
-	sep := "?"
-	if strings.Contains(path, "?") {
-		sep = "&"
+	for _, param := range params {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		path += sep + param
 	}
-	return path + sep + g.filter
+	return path
 }
 
 // UpcomingEvents refreshes the local event catalog from PandaScore's
@@ -98,15 +109,15 @@ func (p *Provider) UpcomingEvents(ctx context.Context) ([]competition.Event, err
 
 //nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (p *Provider) upcomingEventsForGame(ctx context.Context, game gameSpec) ([]competition.Event, error) {
-	upcoming, err := fetchPages[tournamentDTO](ctx, p, game.withFilter("/"+game.pathPrefix+"/tournaments/upcoming"), -1)
+	upcoming, err := fetchPages[tournamentDTO](ctx, p, game.endpoint("/"+game.pathPrefix+"/tournaments/upcoming"), -1)
 	if err != nil {
 		return nil, err
 	}
-	running, err := fetchPages[tournamentDTO](ctx, p, game.withFilter("/"+game.pathPrefix+"/tournaments/running"), -1)
+	running, err := fetchPages[tournamentDTO](ctx, p, game.endpoint("/"+game.pathPrefix+"/tournaments/running"), -1)
 	if err != nil {
 		return nil, err
 	}
-	past, err := fetchPages[tournamentDTO](ctx, p, game.withFilter("/"+game.pathPrefix+"/tournaments/past")+"&sort=-end_at", 1)
+	past, err := fetchPages[tournamentDTO](ctx, p, game.endpoint("/"+game.pathPrefix+"/tournaments/past", "sort=-end_at"), 1)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +253,7 @@ func (p *Provider) Matches(ctx context.Context, events []competition.Event) ([]c
 			for _, e := range gb.batch {
 				ids = append(ids, e.ExternalID)
 			}
-			path := gb.game.withFilter("/" + gb.game.pathPrefix + "/matches?filter[serie_id]=" + strings.Join(ids, ","))
+			path := gb.game.endpoint("/"+gb.game.pathPrefix+"/matches", "filter[serie_id]="+strings.Join(ids, ","))
 			dtos, err := fetchPages[matchDTO](ctx, p, path, -1)
 			if err != nil {
 				return err

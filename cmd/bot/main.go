@@ -340,6 +340,14 @@ func run() error {
 		}
 	}()
 
+	// Opportunistic catch-up before serving: adopt anything a provider
+	// already finished while this process was down — a weekly feed would
+	// otherwise sit unread until its next window, even though the result
+	// exists (and was paid for) already.
+	for _, task := range enrichmentBuilt.StartupTasks {
+		task(ctx)
+	}
+
 	// Announced from here rather than by the deploy pipeline: this reports
 	// the build that is actually serving, however it got here — a pipeline
 	// deploy, a manual rollback, or a restart onto a hand-changed image.

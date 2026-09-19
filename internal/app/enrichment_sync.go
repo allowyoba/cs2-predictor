@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/platform/common"
@@ -89,11 +91,26 @@ func (s *RankingSync) Dispatch(ctx context.Context) {
 
 func (s *RankingSync) sync(ctx context.Context) {
 	ranked, err := s.Provider.FetchRankings(ctx)
+	if errors.Is(err, enrichment.ErrFetchPending) {
+		// The provider started (or is still waiting on) a remote job it
+		// will collect on a later tick. Neither a success nor a failure:
+		// recording either would make a provider that simply takes minutes
+		// look healthy-but-stale or outright broken in /provider_status.
+		s.Log.Info("ranking sync waiting on the provider's remote job", "source", s.Source)
+		return
+	}
 	if err != nil {
 		s.recordFailure(ctx, err)
 		return
 	}
 
+	s.apply(ctx, ranked, "rankings synchronized")
+}
+
+// apply caches the feed, matches it against the local catalog and records
+// the success. Shared by the scheduled sync and the startup refresh so both
+// leave the database in exactly the same state.
+func (s *RankingSync) apply(ctx context.Context, ranked []enrichment.RankedTeam, logMessage string) {
 	// Cached regardless of match outcome, ahead of the matching loop below
 	// — this is the raw material app.TeamMatchService searches against
 	// when a team with no ranking of its own shows up in a new poll, so it
@@ -126,7 +143,66 @@ func (s *RankingSync) sync(ctx context.Context) {
 	if err := s.State.RecordSuccess(ctx, s.Source); err != nil {
 		s.Log.Error("ranking sync state record-success failed", "source", s.Source, "error", err)
 	}
-	s.Log.Info("rankings synchronized", "source", s.Source, "fetched", len(ranked), "matched", matched, "unmatched", unmatched)
+	s.Log.Info(logMessage, "source", s.Source, "fetched", len(ranked), "matched", matched, "unmatched", unmatched)
+}
+
+// RefreshFromCache adopts a result the provider already holds, if it is
+// newer than what this source last recorded. Meant for startup: a remote
+// run can finish while the bot is down — during the very deploy that
+// restarts it, even — and the weekly gate would otherwise leave that
+// already-paid-for ranking unread for days.
+//
+// Deliberately never starts remote work and never records a failure: this
+// is opportunistic catch-up, and a provider that cannot answer right now
+// still has its ordinary scheduled run ahead of it.
+func (s *RankingSync) RefreshFromCache(ctx context.Context) {
+	cached, ok := s.Provider.(enrichment.CachedRankingProvider)
+	if !ok {
+		return
+	}
+	_, err := s.Lock.Execute(ctx, s.lockKey()+":startup-refresh", func(ctx context.Context) error {
+		ranked, err := cached.FetchLatestCached(ctx)
+		if err != nil {
+			s.Log.Warn("startup ranking refresh failed, leaving the scheduled sync to it", "source", s.Source, "error", err)
+			return nil
+		}
+		if len(ranked) == 0 {
+			return nil
+		}
+		fresher, err := s.newerThanRecorded(ctx, ranked)
+		if err != nil || !fresher {
+			return err
+		}
+		s.apply(ctx, ranked, "rankings refreshed from the provider's last finished run")
+		return nil
+	})
+	if err != nil {
+		s.Log.Error("startup ranking refresh failed", "source", s.Source, "error", err)
+	}
+}
+
+// newerThanRecorded reports whether the cached feed post-dates this
+// source's last successful sync. Compared on the ranking's own published
+// date, not on when it was read: re-applying a snapshot we already hold
+// would be write traffic for nothing.
+func (s *RankingSync) newerThanRecorded(ctx context.Context, ranked []enrichment.RankedTeam) (bool, error) {
+	var published time.Time
+	for _, rt := range ranked {
+		if rt.PublishedAt.After(published) {
+			published = rt.PublishedAt
+		}
+	}
+	if published.IsZero() {
+		return false, nil
+	}
+	state, err := s.State.State(ctx, s.Source)
+	if err != nil {
+		return false, err
+	}
+	if state == nil || state.LastSuccessAt == nil {
+		return true, nil
+	}
+	return published.After(*state.LastSuccessAt), nil
 }
 
 func (s *RankingSync) recordFailure(ctx context.Context, err error) {
