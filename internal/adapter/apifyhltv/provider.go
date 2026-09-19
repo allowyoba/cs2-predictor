@@ -8,25 +8,53 @@
 // handling for both, since the actor's output shape is identical either
 // way.
 //
-// The endpoint (POST /v2/acts/{actorId}/run-sync-get-dataset-items) and the
-// actor's input fields (rankingType/maxTeams) match the actor's published
+// The actor's input fields (rankingType/maxTeams) match its published
 // documentation. The response *shape* was corrected against a real sample
-// run: run-sync-get-dataset-items returns a dataset containing one item per
-// run (not one item per team) — {scrapedAt, rankingType, ..., rankings:
-// [...]} — and each entry of that inner "rankings" array carries a
-// top-level "players" roster (not nested under "team" as first assumed),
-// which this adapter now feeds into Identity.Roster for the same
-// roster-overlap matching fallback internal/adapter/valvevrs already
-// supports (see enrichment.MatchTeam).
+// run: the dataset holds one item per run (not one item per team) —
+// {scrapedAt, rankingType, ..., rankings: [...]} — and each entry of that
+// inner "rankings" array carries a top-level "players" roster (not nested
+// under "team" as first assumed), which this adapter feeds into
+// Identity.Roster for the same roster-overlap matching fallback
+// internal/adapter/valvevrs already supports (see enrichment.MatchTeam).
+//
+// # Why the run is asynchronous
+//
+// This used to POST run-sync-get-dataset-items, which holds the connection
+// open until the actor finishes. A real scrape takes minutes (an observed
+// run started at 23:00:00 UTC and finished at 23:02:19), while the app's
+// shared HTTP client gives up after 20 seconds — so every single fetch
+// failed with a client timeout while the run itself went on to succeed and
+// write its result into Apify's storage, which nothing then read. The
+// ranking was never updated and the run was billed anyway.
+//
+// So a fetch here is now a small state machine spread over several ticks of
+// the scheduled job, with the in-flight run recorded in
+// enrichment.ProviderRun so it survives both a timeout and a restart:
+//
+//  1. a run we started earlier is still going    -> enrichment.ErrFetchPending
+//  2. it finished                                -> read its dataset, done
+//  3. no run of ours, but Apify already holds a successful one from this
+//     period (the timed-out case, or a redeploy that lost our state)
+//     -> adopt its result, for free
+//  4. otherwise                                  -> start one, record it,
+//     and return ErrFetchPending for a later tick to collect
+//
+// Nothing here ever starts a run while one is in flight, while this
+// period's result already exists, or more than Config.MaxRunsPerPeriod
+// times in a period — the actor bills per run, so "how often can this
+// possibly spend money" has to be answerable by reading this file.
 package apifyhltv
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sync"
 	"time"
 
 	"cs2predictor/internal/domain/enrichment"
@@ -44,6 +72,23 @@ const (
 	// this is fetched (see app.ApifyRankingGate), 100 teams costs a small,
 	// predictable fraction of a cent either way.
 	defaultMaxTeams = 100
+	// defaultMaxRunsPerPeriod caps how many runs a single weekly period can
+	// ever pay for. Above one only so a run that genuinely fails on Apify's
+	// side (FAILED/ABORTED) still gets a couple of chances that week
+	// instead of writing the week off.
+	defaultMaxRunsPerPeriod = 3
+	// adoptScanLimit bounds how many of the period's successful runs are
+	// examined when looking for one to adopt — two rankings a week means a
+	// handful at most, even counting retries.
+	adoptScanLimit = 10
+)
+
+// Apify run statuses this adapter reasons about. READY/RUNNING mean "come
+// back later"; anything else is terminal.
+const (
+	statusReady     = "READY"
+	statusRunning   = "RUNNING"
+	statusSucceeded = "SUCCEEDED"
 )
 
 // Config points at the Apify REST API and the actor to run, and which of
@@ -54,6 +99,9 @@ type Config struct {
 	Token       string
 	MaxTeams    int
 	RankingType string
+	// MaxRunsPerPeriod caps paid runs per weekly period; zero means
+	// defaultMaxRunsPerPeriod.
+	MaxRunsPerPeriod int
 	// Source is the enrichment.Source every RankedTeam this Provider
 	// returns is tagged with — SourceHLTV for RankingType "hltv",
 	// SourceValveVRS for RankingType "valve" (the two constructors below
@@ -66,7 +114,7 @@ type Config struct {
 // ranking actor, and its "hltv" (HLTV's own world ranking) mode.
 func DefaultConfig(token string) Config {
 	return Config{BaseURL: defaultBaseURL, ActorID: defaultActorID, Token: token, MaxTeams: defaultMaxTeams,
-		RankingType: "hltv", Source: enrichment.SourceHLTV}
+		RankingType: "hltv", Source: enrichment.SourceHLTV, MaxRunsPerPeriod: defaultMaxRunsPerPeriod}
 }
 
 // DefaultValveConfig is DefaultConfig's counterpart for the same actor's
@@ -78,25 +126,33 @@ func DefaultConfig(token string) Config {
 // cmd/bot/main.go), each independently free to update the shared cache.
 func DefaultValveConfig(token string) Config {
 	return Config{BaseURL: defaultBaseURL, ActorID: defaultActorID, Token: token, MaxTeams: defaultMaxTeams,
-		RankingType: "valve", Source: enrichment.SourceValveVRS}
+		RankingType: "valve", Source: enrichment.SourceValveVRS, MaxRunsPerPeriod: defaultMaxRunsPerPeriod}
 }
 
-// Provider implements enrichment.RankingProvider by running the actor
-// synchronously and reading its dataset items back in the same call —
-// run-sync-get-dataset-items, rather than the async run+poll+fetch dance,
-// since a scheduled sync job has no reason to return before the run
-// actually finishes (capped at 300s server-side; well within this job's
-// own budget for an occasional, low-volume fetch).
+// Provider implements enrichment.RankingProvider as the multi-tick run
+// lifecycle described in the package comment.
 type Provider struct {
 	config Config
 	client *http.Client
+	runs   enrichment.ProviderRunRepository
+	clock  common.Clock
 }
 
-func NewProvider(config Config, client *http.Client) *Provider {
+// NewProvider wires the provider. runs persists the in-flight run across
+// ticks and restarts — passing nil keeps everything working but only within
+// one process lifetime, which is enough for a test and not enough for
+// production. clock nil means the system UTC clock.
+func NewProvider(config Config, client *http.Client, runs enrichment.ProviderRunRepository, clock common.Clock) *Provider {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Provider{config: config, client: client}
+	if runs == nil {
+		runs = newMemoryRunStore()
+	}
+	if clock == nil {
+		clock = common.SystemUTCClock()
+	}
+	return &Provider{config: config, client: client, runs: runs, clock: clock}
 }
 
 var _ enrichment.RankingProvider = (*Provider)(nil)
@@ -112,15 +168,17 @@ type actorInput struct {
 	MaxTeams    int    `json:"maxTeams"`
 }
 
-// actorRun is one dataset item as actually returned by
-// run-sync-get-dataset-items: the whole scrape result for a single run, not
-// a single team — see the package doc comment. ScrapedAt is the run's own
-// timestamp, used as every one of its teams' RankedTeam.PublishedAt (that
-// field's contract is "the ranking snapshot's own date, not fetch time" —
-// see enrichment.RankedTeam's doc comment).
-type actorRun struct {
-	ScrapedAt time.Time     `json:"scrapedAt"`
-	Rankings  []rankingItem `json:"rankings"`
+// actorOutput is the run's OUTPUT record: the whole scrape result, with the
+// teams under "rankings". ScrapedAt is the run's own timestamp, used as
+// every one of its teams' RankedTeam.PublishedAt (that field's contract is
+// "the ranking snapshot's own date, not fetch time" — see
+// enrichment.RankedTeam's doc comment). RankingType is what makes a result
+// attributable: one actor serves both of our rankings, so the output has to
+// say which one it holds before we believe it.
+type actorOutput struct {
+	ScrapedAt   time.Time     `json:"scrapedAt"`
+	RankingType string        `json:"rankingType"`
+	Rankings    []rankingItem `json:"rankings"`
 }
 
 // rankingItem is one row of actorRun.Rankings.
@@ -135,23 +193,251 @@ type rankingItem struct {
 	Players []string `json:"players"`
 }
 
+// runInfo is the subset of Apify's run object this adapter needs.
+type runInfo struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	// DefaultKeyValueStoreID holds the run's OUTPUT record, which is where
+	// the full result envelope lives. The dataset (DefaultDatasetID) holds
+	// only the bare "rankings" array — no scrapedAt, no rankingType — so it
+	// can neither date a snapshot nor say which ranking it is.
+	DefaultKeyValueStoreID string     `json:"defaultKeyValueStoreId"`
+	DefaultDatasetID       string     `json:"defaultDatasetId"`
+	FinishedAt             *time.Time `json:"finishedAt"`
+}
+
+func (r runInfo) inFlight() bool { return r.Status == statusReady || r.Status == statusRunning }
+
 // FetchRankings implements enrichment.RankingProvider. Neither of the
 // actor's two ranking modes carries a regional breakdown, so
 // RegionalRank/Region stay zero — same as any RankedTeam field a source
 // simply doesn't report — but Identity.Name, Identity.Roster, GlobalRank
 // and Points are all populated.
+//
+// Returns enrichment.ErrFetchPending when the result isn't in yet; that is
+// the normal outcome of the tick that starts a run.
 func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, error) {
-	body, err := json.Marshal(actorInput{RankingType: p.config.RankingType, MaxTeams: p.config.MaxTeams})
+	now := p.clock.Now().UTC()
+	period := common.StartOfWeekUTC(now)
+
+	state, err := p.runs.Run(ctx, p.config.Source, p.config.RankingType)
 	if err != nil {
-		return nil, fmt.Errorf("encode apify hltv actor input: %w", err)
+		return nil, fmt.Errorf("read apify %s run state: %w", p.config.RankingType, err)
 	}
 
-	url := fmt.Sprintf("%s/v2/acts/%s/run-sync-get-dataset-items", p.config.BaseURL, p.config.ActorID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if state != nil && state.RunID != "" {
+		teams, done, err := p.collectStartedRun(ctx, state.RunID, state, period)
+		if err != nil || done {
+			return teams, err
+		}
+		// Terminal but unsuccessful — drop it and consider starting
+		// another below, still inside this period's run budget.
+	}
+
+	if teams, ok, err := p.adoptFinishedRun(ctx, period); err != nil {
+		return nil, err
+	} else if ok {
+		return teams, nil
+	}
+
+	return nil, p.startRun(ctx, state, period, now)
+}
+
+// collectStartedRun reports on a run this provider started earlier. done is
+// false only when the run reached a terminal non-success state and the
+// caller should consider starting another.
+func (p *Provider) collectStartedRun(ctx context.Context, runID string, state *enrichment.ProviderRun, period time.Time) (teams []enrichment.RankedTeam, done bool, err error) {
+	run, err := p.runInfo(ctx, runID)
 	if err != nil {
+		// The run itself may well be fine — don't lose track of it over a
+		// transient API error, or the next tick would start a second one.
+		return nil, true, err
+	}
+	switch {
+	case run.inFlight():
+		return nil, true, enrichment.ErrFetchPending
+	case run.Status == statusSucceeded:
+		teams, err := p.readRunOutput(ctx, run)
+		if err != nil {
+			return nil, true, err
+		}
+		return teams, true, p.markCollected(ctx, run, period, state.Attempts)
+	default:
+		return nil, false, nil
+	}
+}
+
+// adoptFinishedRun looks for a successful run of this actor that already
+// holds this period's data — the timed-out-but-succeeded case, and the
+// redeploy-lost-our-state case. Reading it costs nothing; starting another
+// run would cost money for data Apify already has.
+//
+// It scans the period's successful runs rather than just the latest one
+// because a single actor serves both of our rankings: our own earlier run
+// is regularly not the most recent, and mistaking "the last run isn't mine"
+// for "there is nothing to adopt" would pay for a second copy of data we
+// already have.
+func (p *Provider) adoptFinishedRun(ctx context.Context, period time.Time) ([]enrichment.RankedTeam, bool, error) {
+	runs, err := p.succeededRunsSince(ctx, period)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, run := range runs {
+		if run.FinishedAt == nil || run.FinishedAt.UTC().Before(period) {
+			continue // last period's numbers; this one still needs its own run
+		}
+		teams, err := p.readRunOutput(ctx, run)
+		if err != nil {
+			// A dataset that isn't ours to use (the actor's other ranking
+			// mode) is not an error — just keep looking.
+			if isRankingTypeMismatch(err) {
+				continue
+			}
+			return nil, false, err
+		}
+		return teams, true, p.markCollected(ctx, run, period, 0)
+	}
+	return nil, false, nil
+}
+
+// startRun starts a paid run, unless this period has already had its
+// budget. The ErrFetchPending it returns on success says "come back next
+// tick", not "something went wrong".
+func (p *Provider) startRun(ctx context.Context, state *enrichment.ProviderRun, period, now time.Time) error {
+	attempts := 0
+	if state != nil && !state.PeriodStart.Before(period) {
+		attempts = state.Attempts
+	}
+	if attempts >= p.maxRunsPerPeriod() {
+		return fmt.Errorf("apify %s ranking: %d runs already started this period without a usable result, not starting another",
+			p.config.RankingType, attempts)
+	}
+
+	body, err := json.Marshal(actorInput{RankingType: p.config.RankingType, MaxTeams: p.config.MaxTeams})
+	if err != nil {
+		return fmt.Errorf("encode apify hltv actor input: %w", err)
+	}
+	var started runInfo
+	if err := p.call(ctx, http.MethodPost, fmt.Sprintf("/v2/acts/%s/runs", p.config.ActorID), body, &started); err != nil {
+		return err
+	}
+	if started.ID == "" {
+		return fmt.Errorf("apify %s ranking: run started without an id", p.config.RankingType)
+	}
+	if err := p.runs.SaveRun(ctx, enrichment.ProviderRun{
+		Provider: p.config.Source, Key: p.config.RankingType, RunID: started.ID,
+		Status: statusRunning, Attempts: attempts + 1, PeriodStart: period, StartedAt: now,
+	}); err != nil {
+		// Recording it is what stops the next tick paying for the same work
+		// again, so a failure here must be loud rather than swallowed.
+		return fmt.Errorf("record started apify run %s: %w", started.ID, err)
+	}
+	return enrichment.ErrFetchPending
+}
+
+func (p *Provider) maxRunsPerPeriod() int {
+	if p.config.MaxRunsPerPeriod > 0 {
+		return p.config.MaxRunsPerPeriod
+	}
+	return defaultMaxRunsPerPeriod
+}
+
+// markCollected keeps the run on record as this period's finished one.
+// Kept rather than cleared because it is what tells the weekly gate the
+// period is done — see enrichment.RunStatusCollected.
+func (p *Provider) markCollected(ctx context.Context, run runInfo, period time.Time, attempts int) error {
+	return p.runs.SaveRun(ctx, enrichment.ProviderRun{
+		Provider: p.config.Source, Key: p.config.RankingType, RunID: run.ID,
+		Status: enrichment.RunStatusCollected, Attempts: attempts,
+		PeriodStart: period, StartedAt: p.clock.Now().UTC(),
+	})
+}
+
+func (p *Provider) runInfo(ctx context.Context, runID string) (runInfo, error) {
+	var run runInfo
+	err := p.call(ctx, http.MethodGet, "/v2/actor-runs/"+url.PathEscape(runID), nil, &run)
+	return run, err
+}
+
+// succeededRunsSince returns this account's successful runs of the actor
+// started at or after since, most recent first.
+func (p *Provider) succeededRunsSince(ctx context.Context, since time.Time) ([]runInfo, error) {
+	var page struct {
+		Items []runInfo `json:"items"`
+	}
+	path := fmt.Sprintf("/v2/acts/%s/runs?status=%s&desc=1&limit=%d&startedAfter=%s",
+		p.config.ActorID, statusSucceeded, adoptScanLimit, url.QueryEscape(since.UTC().Format(time.RFC3339)))
+	if err := p.call(ctx, http.MethodGet, path, nil, &page); err != nil {
+		if isNotFound(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	return page.Items, nil
+}
+
+// readRunOutput reads a finished run's OUTPUT record and maps it. It
+// refuses an output produced by the actor's other ranking mode: one actor
+// serves both our HLTV and our Valve ranking, and silently filing one as
+// the other would corrupt the cache in a way nothing downstream could
+// detect.
+func (p *Provider) readRunOutput(ctx context.Context, run runInfo) ([]enrichment.RankedTeam, error) {
+	if run.DefaultKeyValueStoreID == "" {
+		return nil, fmt.Errorf("apify %s ranking: finished run has no key-value store", p.config.RankingType)
+	}
+	var output actorOutput
+	path := fmt.Sprintf("/v2/key-value-stores/%s/records/OUTPUT", url.PathEscape(run.DefaultKeyValueStoreID))
+	if err := p.call(ctx, http.MethodGet, path, nil, &output); err != nil {
+		return nil, err
+	}
+	if output.RankingType != p.config.RankingType {
+		return nil, &rankingTypeMismatchError{want: p.config.RankingType, got: output.RankingType}
+	}
+
+	// ScrapedAt is the run's own timestamp, not this call's — falls back to
+	// the run's finish time, and only then to now, so a missing field
+	// degrades gracefully instead of stamping every team with the Unix
+	// epoch.
+	publishedAt := output.ScrapedAt.UTC()
+	if publishedAt.IsZero() && run.FinishedAt != nil {
+		publishedAt = run.FinishedAt.UTC()
+	}
+	if publishedAt.IsZero() {
+		publishedAt = p.clock.Now().UTC()
+	}
+
+	var out []enrichment.RankedTeam
+	for _, item := range output.Rankings {
+		if item.Team.Name == "" {
+			continue
+		}
+		rank, points := item.Place, item.Points
+		out = append(out, enrichment.RankedTeam{
+			Identity:    enrichment.TeamIdentity{Name: item.Team.Name, Roster: item.Players},
+			GlobalRank:  &rank,
+			Points:      &points,
+			PublishedAt: publishedAt,
+			Source:      p.config.Source,
+		})
+	}
+	return out, nil
+}
+
+// call performs one Apify API request and decodes it. Apify wraps every
+// object response in {"data": ...} but returns dataset items as a bare
+// array, so both shapes are accepted.
+func (p *Provider) call(ctx context.Context, method, path string, body []byte, out any) error {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, p.config.BaseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	// Bearer header, not a ?token= query parameter — Apify's own docs
 	// recommend this precisely because a URL (unlike a header) tends to
 	// end up in logs and history; this codebase never puts credentials in
@@ -161,46 +447,101 @@ func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, 
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("apify hltv ranking request failed: %w", err)
+		return fmt.Errorf("apify hltv ranking request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("apify hltv ranking actor returned HTTP %d: %s", resp.StatusCode, common.TruncateForLog(respBody))
+		return &apiError{status: resp.StatusCode, body: common.TruncateForLog(respBody)}
 	}
+	if out == nil {
+		return nil
+	}
+	if err := decodeAPIResponse(respBody, out); err != nil {
+		return fmt.Errorf("decode apify hltv ranking response: %w", err)
+	}
+	return nil
+}
 
-	var runs []actorRun
-	if err := json.Unmarshal(respBody, &runs); err != nil {
-		return nil, fmt.Errorf("decode apify hltv ranking response: %w", err)
+// decodeAPIResponse unwraps Apify's {"data": ...} envelope when there is
+// one, and otherwise decodes the payload as-is.
+func decodeAPIResponse(body []byte, out any) error {
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
 	}
+	if err := json.Unmarshal(body, &envelope); err == nil && len(envelope.Data) > 0 {
+		return json.Unmarshal(envelope.Data, out)
+	}
+	return json.Unmarshal(body, out)
+}
 
-	var out []enrichment.RankedTeam
-	for _, run := range runs {
-		// ScrapedAt is the run's own timestamp, not this call's — falls
-		// back to fetch time only if the actor ever omits it, so a bad or
-		// missing field degrades to the old behavior instead of stamping
-		// every team with the Unix epoch.
-		publishedAt := run.ScrapedAt.UTC()
-		if publishedAt.IsZero() {
-			publishedAt = time.Now().UTC()
-		}
-		for _, item := range run.Rankings {
-			if item.Team.Name == "" {
-				continue
-			}
-			rank, points := item.Place, item.Points
-			out = append(out, enrichment.RankedTeam{
-				Identity:    enrichment.TeamIdentity{Name: item.Team.Name, Roster: item.Players},
-				GlobalRank:  &rank,
-				Points:      &points,
-				PublishedAt: publishedAt,
-				Source:      p.config.Source,
-			})
-		}
+// apiError carries the status code so a 404 from "last run" can be told
+// apart from a real failure. The token never appears in it — only the
+// status and the (truncated) response body.
+type apiError struct {
+	status int
+	body   string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("apify hltv ranking actor returned HTTP %d: %s", e.status, e.body)
+}
+
+func isNotFound(err error) bool {
+	var apiErr *apiError
+	return errors.As(err, &apiErr) && apiErr.status == http.StatusNotFound
+}
+
+type rankingTypeMismatchError struct{ want, got string }
+
+func (e *rankingTypeMismatchError) Error() string {
+	return fmt.Sprintf("apify dataset holds the %q ranking, not %q", e.got, e.want)
+}
+
+func isRankingTypeMismatch(err error) bool {
+	var mismatch *rankingTypeMismatchError
+	return errors.As(err, &mismatch)
+}
+
+// memoryRunStore is the nil-repository fallback: enough to keep a single
+// process's ticks coherent, deliberately not enough to survive a restart.
+type memoryRunStore struct {
+	mu   sync.Mutex
+	runs map[string]enrichment.ProviderRun
+}
+
+func newMemoryRunStore() *memoryRunStore {
+	return &memoryRunStore{runs: map[string]enrichment.ProviderRun{}}
+}
+
+func (m *memoryRunStore) key(provider enrichment.Source, key string) string {
+	return string(provider) + "\x00" + key
+}
+
+func (m *memoryRunStore) SaveRun(_ context.Context, run enrichment.ProviderRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.runs[m.key(run.Provider, run.Key)] = run
+	return nil
+}
+
+func (m *memoryRunStore) Run(_ context.Context, provider enrichment.Source, key string) (*enrichment.ProviderRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.runs[m.key(provider, key)]
+	if !ok {
+		return nil, nil
 	}
-	return out, nil
+	return &run, nil
+}
+
+func (m *memoryRunStore) ClearRun(_ context.Context, provider enrichment.Source, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.runs, m.key(provider, key))
+	return nil
 }

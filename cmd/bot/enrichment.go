@@ -71,13 +71,16 @@ func buildEnrichment(
 	// shared lock name would let the two silently and repeatedly starve
 	// each other.
 	if cfg.HLTVEnabled {
-		gate := &app.ApifyRankingGate{State: repo, Clock: clock}
 		newSync := func(source enrichment.Source, providerConfig apifyhltv.Config, lockKey string) *app.RankingSync {
 			providerConfig.MaxTeams = cfg.ApifyMaxTeams
+			// One gate per ranking mode, keyed the same way the provider
+			// records its run — a gate shared across both modes cannot tell
+			// whose week is already done.
 			return &app.RankingSync{
-				Source: source, Provider: apifyhltv.NewProvider(providerConfig, httpClient),
+				Source: source, Provider: apifyhltv.NewProvider(providerConfig, httpClient, repo, clock),
 				Teams: repo, Rankings: repo, Identity: repo, State: repo, Snapshots: repo,
-				Gate: gate, LockKey: lockKey, Lock: lock, Log: log,
+				Gate:    &app.ApifyRankingGate{Runs: repo, Key: providerConfig.RankingType, Clock: clock},
+				LockKey: lockKey, Lock: lock, Log: log,
 			}
 		}
 		hltvSync := newSync(enrichment.SourceHLTV, apifyhltv.DefaultConfig(cfg.HLTVAPIToken), "")

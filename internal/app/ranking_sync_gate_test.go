@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/platform/common"
 )
 
 // mondayEndOfDay/mondayMorning/wednesdayMidday are fixed reference instants
@@ -16,9 +17,12 @@ var (
 	wednesdayMidday = time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 )
 
+func newGate(now time.Time, runs enrichment.ProviderRunRepository) *ApifyRankingGate {
+	return &ApifyRankingGate{Runs: runs, Key: "hltv", Clock: &mutableClock{t: now}}
+}
+
 func TestApifyRankingGate_FiresOnMondayEndOfDayWhenNotYetRunThisWeek(t *testing.T) {
-	gate := &ApifyRankingGate{State: newFakeEnrichmentStore(), Clock: &mutableClock{t: mondayEndOfDay}}
-	ok, err := gate.ShouldRun(context.Background(), enrichment.SourceHLTV)
+	ok, err := newGate(mondayEndOfDay, newFakeRunStore()).ShouldRun(context.Background(), enrichment.SourceHLTV)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,8 +32,7 @@ func TestApifyRankingGate_FiresOnMondayEndOfDayWhenNotYetRunThisWeek(t *testing.
 }
 
 func TestApifyRankingGate_SkipsOnMondayMorning(t *testing.T) {
-	gate := &ApifyRankingGate{State: newFakeEnrichmentStore(), Clock: &mutableClock{t: mondayMorning}}
-	ok, err := gate.ShouldRun(context.Background(), enrichment.SourceHLTV)
+	ok, err := newGate(mondayMorning, newFakeRunStore()).ShouldRun(context.Background(), enrichment.SourceHLTV)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,55 +41,96 @@ func TestApifyRankingGate_SkipsOnMondayMorning(t *testing.T) {
 	}
 }
 
-func TestApifyRankingGate_SkipsMidWeekRegardlessOfAnythingElse(t *testing.T) {
-	gate := &ApifyRankingGate{State: newFakeEnrichmentStore(), Clock: &mutableClock{t: wednesdayMidday}}
-	ok, err := gate.ShouldRun(context.Background(), enrichment.SourceHLTV)
+// Mid-week the gate stays open as long as the week has produced no
+// ranking: Monday's attempt failing used to cost the whole week, since the
+// only tick that ever saw an open gate was the one at the cutoff.
+func TestApifyRankingGate_StaysOpenMidWeekUntilTheWeekSucceeds(t *testing.T) {
+	ok, err := newGate(wednesdayMidday, newFakeRunStore()).ShouldRun(context.Background(), enrichment.SourceHLTV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected the gate to keep retrying mid-week while this week has no ranking yet")
+	}
+}
+
+func TestApifyRankingGate_SkipsWhenThisWeeksRunIsAlreadyCollected(t *testing.T) {
+	runs := newFakeRunStore()
+	if err := runs.SaveRun(context.Background(), enrichment.ProviderRun{
+		Provider: enrichment.SourceHLTV, Key: "hltv", RunID: "r1",
+		Status: enrichment.RunStatusCollected, PeriodStart: common.StartOfWeekUTC(mondayEndOfDay),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := newGate(wednesdayMidday, runs).ShouldRun(context.Background(), enrichment.SourceHLTV)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ok {
-		t.Fatal("expected the gate to stay quiet mid-week — the schedule is Monday-only now, tournament activity no longer matters")
+		t.Fatal("expected the gate to skip a ranking already collected this week")
 	}
 }
 
-func TestApifyRankingGate_SkipsWhenAlreadyRunThisWeek(t *testing.T) {
-	store := newFakeEnrichmentStore()
-	if err := store.RecordSuccess(context.Background(), enrichment.SourceHLTV); err != nil {
+// The paid Valve feed shares its Source with the free, frequent valvevrs
+// sync. Keying "already ran this week" on that shared Source's SyncState
+// kept this gate shut every week the paid feed existed — it must key on its
+// own run instead.
+func TestApifyRankingGate_IsNotShutByAnotherJobSharingTheSource(t *testing.T) {
+	runs := newFakeRunStore()
+	// The free sync's own bookkeeping is irrelevant here; what matters is
+	// that this ranking mode has no collected run of its own.
+	if err := runs.SaveRun(context.Background(), enrichment.ProviderRun{
+		Provider: enrichment.SourceValveVRS, Key: "hltv", RunID: "r1",
+		Status: enrichment.RunStatusCollected, PeriodStart: common.StartOfWeekUTC(mondayEndOfDay),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	// RecordSuccess timestamps with time.Now(), which is (real) "now" —
-	// always within the current real-world week, so any Clock.Now() this
-	// test picks from the same real week must see it as already-run.
-	gate := &ApifyRankingGate{State: store, Clock: realClock{}}
-	ok, err := gate.ShouldRun(context.Background(), enrichment.SourceHLTV)
+	gate := &ApifyRankingGate{Runs: runs, Key: "valve", Clock: &mutableClock{t: wednesdayMidday}}
+	ok, err := gate.ShouldRun(context.Background(), enrichment.SourceValveVRS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok {
-		t.Fatal("expected the gate to skip a source already synced this week")
+	if !ok {
+		t.Fatal("the valve ranking has never run; its gate must be open")
 	}
 }
 
-func TestApifyRankingGate_PropagatesStateLookupError(t *testing.T) {
-	gate := &ApifyRankingGate{State: &erroringSyncState{err: context.DeadlineExceeded}, Clock: &mutableClock{t: mondayEndOfDay}}
+func TestApifyRankingGate_PropagatesRunLookupError(t *testing.T) {
+	gate := &ApifyRankingGate{Runs: &erroringRunStore{err: context.DeadlineExceeded}, Key: "hltv", Clock: &mutableClock{t: mondayEndOfDay}}
 	if _, err := gate.ShouldRun(context.Background(), enrichment.SourceHLTV); err == nil {
-		t.Fatal("expected the state lookup error to propagate")
+		t.Fatal("expected the run lookup error to propagate")
 	}
 }
 
-type erroringSyncState struct{ err error }
+// fakeRunStore is an in-memory enrichment.ProviderRunRepository.
+type fakeRunStore struct {
+	runs map[string]enrichment.ProviderRun
+}
 
-func (e *erroringSyncState) RecordSuccess(context.Context, enrichment.Source) error { return nil }
-func (e *erroringSyncState) RecordFailure(context.Context, enrichment.Source, string) error {
+func newFakeRunStore() *fakeRunStore { return &fakeRunStore{runs: map[string]enrichment.ProviderRun{}} }
+
+func (f *fakeRunStore) SaveRun(_ context.Context, run enrichment.ProviderRun) error {
+	f.runs[string(run.Provider)+"/"+run.Key] = run
 	return nil
 }
-func (e *erroringSyncState) State(context.Context, enrichment.Source) (*enrichment.SyncState, error) {
-	return nil, e.err
+
+func (f *fakeRunStore) Run(_ context.Context, provider enrichment.Source, key string) (*enrichment.ProviderRun, error) {
+	run, ok := f.runs[string(provider)+"/"+key]
+	if !ok {
+		return nil, nil
+	}
+	return &run, nil
 }
 
-// realClock is a common.Clock backed by the real wall clock — used only by
-// TestApifyRankingGate_SkipsWhenAlreadyRunThisWeek, which needs "now" to
-// genuinely be in the same week RecordSuccess just stamped.
-type realClock struct{}
+func (f *fakeRunStore) ClearRun(_ context.Context, provider enrichment.Source, key string) error {
+	delete(f.runs, string(provider)+"/"+key)
+	return nil
+}
 
-func (realClock) Now() time.Time { return time.Now() }
+type erroringRunStore struct{ err error }
+
+func (e *erroringRunStore) SaveRun(context.Context, enrichment.ProviderRun) error { return nil }
+func (e *erroringRunStore) Run(context.Context, enrichment.Source, string) (*enrichment.ProviderRun, error) {
+	return nil, e.err
+}
+func (e *erroringRunStore) ClearRun(context.Context, enrichment.Source, string) error { return nil }
