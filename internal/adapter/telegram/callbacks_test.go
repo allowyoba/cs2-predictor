@@ -945,3 +945,81 @@ func TestModeratorRemove_RequiresConfirmationBeforeRemoving(t *testing.T) {
 		t.Fatal("expected the moderator to be removed after confirming")
 	}
 }
+
+// A chat that follows two games must not get them interleaved: the browse
+// list gets one header row per game, and each game's tournaments sit under
+// their own header. A chat following one game keeps the flat list it had.
+func TestEventsBrowse_SeparatesGamesWithHeaderRows(t *testing.T) {
+	events := []competition.Event{
+		{ID: common.NewEventID(), Name: "CS Major", Tier: competition.TierS, Game: competition.GameCS2},
+		{ID: common.NewEventID(), Name: "The International", Tier: competition.TierS, Game: competition.GameDota2},
+		{ID: common.NewEventID(), Name: "CS Cup", Tier: competition.TierA, Game: competition.GameCS2},
+	}
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Catalog = &searchCatalog{results: events}
+	handler.Subscriptions = &dataSubs{}
+
+	data := "events:browse:all:0"
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	var labels []string
+	for _, b := range lastEditedButtons(t, *calls) {
+		if s, ok := b["text"].(string); ok {
+			labels = append(labels, s)
+		}
+	}
+	cs2Header := "— " + ru(t, "game.cs2") + " —"
+	dotaHeader := "— " + ru(t, "game.dota2") + " —"
+	csIdx := slices.Index(labels, cs2Header)
+	dotaIdx := slices.Index(labels, dotaHeader)
+	if csIdx < 0 || dotaIdx < 0 {
+		t.Fatalf("expected a header per game, got %v", labels)
+	}
+	// Both CS2 tournaments must sit between the CS2 header and the Dota one.
+	for _, name := range []string{"CS Major", "CS Cup"} {
+		idx := slices.IndexFunc(labels, func(l string) bool { return strings.Contains(l, name) })
+		if idx < csIdx || idx > dotaIdx {
+			t.Fatalf("%q at %d is outside its own game's section (cs2 %d, dota %d): %v", name, idx, csIdx, dotaIdx, labels)
+		}
+	}
+	dotaEvent := slices.IndexFunc(labels, func(l string) bool { return strings.Contains(l, "The International") })
+	if dotaEvent < dotaIdx {
+		t.Fatalf("the Dota tournament must follow its own header, got %v", labels)
+	}
+}
+
+// One game followed means nothing to separate, so no headers appear — the
+// grouping is there to help, not to add a row to every list.
+func TestEventsBrowse_SingleGameKeepsAFlatList(t *testing.T) {
+	events := []competition.Event{
+		{ID: common.NewEventID(), Name: "CS Major", Tier: competition.TierS, Game: competition.GameCS2},
+		{ID: common.NewEventID(), Name: "CS Cup", Tier: competition.TierA, Game: competition.GameCS2},
+	}
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Catalog = &searchCatalog{results: events}
+	handler.Subscriptions = &dataSubs{}
+
+	data := "events:browse:all:0"
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range lastEditedButtons(t, *calls) {
+		if s, ok := b["text"].(string); ok && strings.HasPrefix(s, "— ") {
+			t.Fatalf("expected no game headers for a single-game list, got %q", s)
+		}
+	}
+}

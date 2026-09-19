@@ -735,10 +735,9 @@ func (h *UpdateHandler) searchEvents(ctx context.Context, msg *Message, settings
 	if len(found) > 20 {
 		found = found[:20]
 	}
-	var rows [][]InlineButton
-	for _, e := range found {
-		rows = append(rows, []InlineButton{button(eventLabel(e), cbSubscribe(e.ID))})
-	}
+	rows := h.gameSectionRows(found, settings.Locale, func(e competition.Event) []InlineButton {
+		return []InlineButton{button(eventLabel(e), cbSubscribe(e.ID))}
+	})
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "events:add")})
 
 	header := bold(escapeHTML(query))

@@ -145,14 +145,15 @@ func (h *UpdateHandler) eventStatsMenu(ctx context.Context, target replyTarget, 
 		byID[event.ID] = event
 	}
 
-	var rows [][]InlineButton
+	ordered := make([]competition.Event, 0, len(ids))
 	for _, id := range ids {
-		event, ok := byID[id]
-		if !ok {
-			continue
+		if event, ok := byID[id]; ok {
+			ordered = append(ordered, event)
 		}
-		rows = append(rows, []InlineButton{button(event.Tier.Badge()+truncate(event.Name, 48), "stats:event:"+id.Value.String())})
 	}
+	rows := h.gameSectionRows(ordered, settings.Locale, func(event competition.Event) []InlineButton {
+		return []InlineButton{button(event.Tier.Badge()+truncate(event.Name, 48), "stats:event:"+event.ID.Value.String())}
+	})
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:stats")})
 	body := h.Texts.Get("stats.empty", settings.Locale)
 	if len(rows) > 1 {

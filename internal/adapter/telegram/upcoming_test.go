@@ -257,3 +257,52 @@ func TestStreamPlatformLabel(t *testing.T) {
 		}
 	}
 }
+
+// Team names do not say which game they play, so a chat following two of
+// them gets the game named on each tournament heading. A chat following one
+// does not: there is nothing to disambiguate.
+func TestUpcoming_NamesTheGameOnlyWhenMoreThanOneIsFollowed(t *testing.T) {
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: "UTC"}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	cs2, dota := common.NewEventID(), common.NewEventID()
+	at := now.Add(time.Hour)
+
+	render := func(t *testing.T, events map[common.EventID]competition.Event) string {
+		t.Helper()
+		server, calls := newRecordingServer(t)
+		defer server.Close()
+		h, _ := newTestHandler(t, server)
+		h.Clock = common.FixedClock(now)
+		var subs []subscription.EventSubscription
+		unstarted := map[common.EventID][]competition.Match{}
+		for id := range events {
+			subs = append(subs, subscription.EventSubscription{EventID: id})
+			unstarted[id] = []competition.Match{{
+				ID: common.NewMatchID(), EventID: id, ScheduledAt: &at, Format: format,
+				FirstTeam: &competition.Team{Name: "A"}, SecondTeam: &competition.Team{Name: "B"},
+			}}
+		}
+		h.Subscriptions = &dataSubs{subs: subs}
+		h.Catalog = &dataCatalog{events: events, unstartedMatches: unstarted}
+		if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
+			t.Fatal(err)
+		}
+		return lastText(*calls)
+	}
+
+	both := render(t, map[common.EventID]competition.Event{
+		cs2:  {ID: cs2, Name: "CS Major", Game: competition.GameCS2},
+		dota: {ID: dota, Name: "The International", Game: competition.GameDota2},
+	})
+	if !strings.Contains(both, ru(t, "game.cs2")) || !strings.Contains(both, ru(t, "game.dota2")) {
+		t.Fatalf("expected both games named when both are followed:\n%s", both)
+	}
+
+	single := render(t, map[common.EventID]competition.Event{
+		cs2: {ID: cs2, Name: "CS Major", Game: competition.GameCS2},
+	})
+	if strings.Contains(single, ru(t, "game.cs2")) {
+		t.Fatalf("a single-game chat needs no game label:\n%s", single)
+	}
+}
