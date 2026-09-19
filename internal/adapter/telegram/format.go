@@ -143,3 +143,18 @@ func shortWeekdayName(d time.Weekday, locale common.LocaleCode) string {
 func chatZone(settings chat.Settings) *time.Location {
 	return chat.ZoneOrDefault(settings.Timezone)
 }
+
+// streamLine renders one broadcast as a single HTML line: the platform's
+// brand as the link text, plus the stream's own language when it is not the
+// one the chat asked for — so a chat that prefers Russian and is being shown
+// the English feed can see that at a glance rather than discovering it on
+// arrival. Shared by the upcoming-matches screen and the poll surfaces so
+// they read as the same product.
+func streamLine(texts *Texts, locale common.LocaleCode, preferred common.LocaleCode, stream competition.Stream) string {
+	label := streamPlatformLabel(stream.URL, texts.Get("upcoming.stream", locale))
+	line := "📺 " + link(stream.URL, escapeHTML(label))
+	if !strings.EqualFold(stream.Language, preferred.Language()) {
+		line += " · " + strings.ToUpper(escapeHTML(stream.Language))
+	}
+	return line
+}

@@ -25,11 +25,21 @@ func NewPredictionRepository(pool *pgxpool.Pool) *PredictionRepository {
 	return &PredictionRepository{pool: pool}
 }
 
+// nullIfEmpty keeps an absent broadcast as SQL NULL rather than an empty
+// string, so "no stream was shown" and "a stream was shown" stay distinct
+// in the column itself.
+func nullIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func (r *PredictionRepository) scanPoll(ctx context.Context, row pgx.Row) (*prediction.Poll, error) {
 	var p prediction.Poll
 	var chatVal int64
 	var firstTeamVal, secondTeamVal *uuid.UUID
-	if err := row.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt, &firstTeamVal, &secondTeamVal); err != nil {
+	if err := row.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt, &firstTeamVal, &secondTeamVal, &p.StreamURL); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -54,7 +64,7 @@ func (r *PredictionRepository) scanPoll(ctx context.Context, row pgx.Row) (*pred
 	return &p, optRows.Err()
 }
 
-const pollSelect = `SELECT id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at, first_team_id, second_team_id FROM match_poll`
+const pollSelect = `SELECT id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at, first_team_id, second_team_id, coalesce(stream_url, '') FROM match_poll`
 
 // applyPollTeamAnchor sets Poll's team anchor from two nullable scanned
 // columns — nil (an older poll, saved before this anchor existed) leaves
@@ -97,7 +107,7 @@ func (r *PredictionRepository) queryPolls(ctx context.Context, query string, arg
 		var p prediction.Poll
 		var chatVal int64
 		var firstTeamVal, secondTeamVal *uuid.UUID
-		if err := rows.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt, &firstTeamVal, &secondTeamVal); err != nil {
+		if err := rows.Scan(&p.ID.Value, &chatVal, &p.MatchID.Value, &p.TopicID, &p.TelegramPollID, &p.TelegramMessageID, &p.Status, &p.ClosesAt, &firstTeamVal, &secondTeamVal, &p.StreamURL); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -196,6 +206,14 @@ func (r *PredictionRepository) ChatParticipants(ctx context.Context, chatID comm
 	return out, rows.Err()
 }
 
+// MarkPollStreamAnnounced records the broadcast link a chat has been given
+// for this poll, so a retry of the same closure cannot post it twice.
+func (r *PredictionRepository) MarkPollStreamAnnounced(ctx context.Context, pollID common.PollID, streamURL string) error {
+	ex := executor(ctx, r.pool)
+	_, err := ex.Exec(ctx, `UPDATE match_poll SET stream_url=$2, updated_at=now() WHERE id=$1`, pollID.Value, streamURL)
+	return err
+}
+
 func (r *PredictionRepository) SavePoll(ctx context.Context, p prediction.Poll) (prediction.Poll, error) {
 	ex := executor(ctx, r.pool)
 	// first_team_id/second_team_id are deliberately absent from the ON
@@ -210,12 +228,13 @@ func (r *PredictionRepository) SavePoll(ctx context.Context, p prediction.Poll) 
 		secondTeamVal = &p.SecondTeamID.Value
 	}
 	_, err := ex.Exec(ctx,
-		`INSERT INTO match_poll(id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at, first_team_id, second_team_id, created_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now())
+		`INSERT INTO match_poll(id, chat_id, match_id, topic_id, telegram_poll_id, telegram_message_id, status, closes_at, first_team_id, second_team_id, stream_url, created_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), now())
 		 ON CONFLICT (id) DO UPDATE SET topic_id=excluded.topic_id, telegram_poll_id=excluded.telegram_poll_id,
-		   telegram_message_id=excluded.telegram_message_id, status=excluded.status, closes_at=excluded.closes_at, updated_at=now()`,
+		   telegram_message_id=excluded.telegram_message_id, status=excluded.status, closes_at=excluded.closes_at,
+		   stream_url=excluded.stream_url, updated_at=now()`,
 		p.ID.Value, p.ChatID.Value, p.MatchID.Value, p.TopicID, p.TelegramPollID, p.TelegramMessageID, p.Status, p.ClosesAt,
-		firstTeamVal, secondTeamVal)
+		firstTeamVal, secondTeamVal, nullIfEmpty(p.StreamURL))
 	if err != nil {
 		return prediction.Poll{}, err
 	}

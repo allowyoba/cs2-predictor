@@ -169,6 +169,7 @@ func run() error {
 		pollEnrichment.H2H = enrichmentRepo
 	}
 	pollGateway := telegram.NewPollGateway(telegramClient, catalog, chats, texts, log, pollEnrichment)
+	pollGateway.StreamRecorder = predictionsRepo
 
 	// --- domain services ---
 	predictionService := prediction.NewService(predictionsRepo, pollGateway, clock)

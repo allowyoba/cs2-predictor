@@ -1676,6 +1676,71 @@ func TestPredictionRepository_PollTeamAnchorRoundTripsAndIsWriteOnce(t *testing.
 	}
 }
 
+// The announced broadcast has to survive a round trip through the real
+// schema: it is the only thing standing between a retried poll closure and
+// the same stream link being posted to a chat twice.
+func TestPredictionRepository_AnnouncedStreamRoundTrips(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+
+	chatID := common.ChatID{Value: -997}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Stream Cup", ExternalID: "stream-event", Status: competition.EventUpcoming, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	match := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "stream-match",
+		Status: competition.MatchNotStarted, Format: format,
+	}
+	if _, err := catalog.SaveMatch(ctx, match); err != nil {
+		t.Fatal(err)
+	}
+	poll := prediction.Poll{
+		ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID, Status: prediction.PollOpen,
+		ClosesAt: time.Now().UTC(),
+		Options:  []prediction.Option{{Index: 0, Score: competition.MatchScore{First: 2, Second: 0}}},
+	}
+	if _, err := predictions.SavePoll(ctx, poll); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh, err := predictions.FindPoll(ctx, poll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.StreamURL != "" {
+		t.Fatalf("a poll starts with no announced broadcast, got %q", fresh.StreamURL)
+	}
+	const url = "https://twitch.tv/major_ru"
+	if err := predictions.MarkPollStreamAnnounced(ctx, poll.ID, url); err != nil {
+		t.Fatal(err)
+	}
+	marked, err := predictions.FindPoll(ctx, poll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marked.StreamURL != url {
+		t.Fatalf("StreamURL = %q, want the announced link", marked.StreamURL)
+	}
+	// The save that follows a closure must not erase it.
+	if _, err := predictions.SavePoll(ctx, *marked); err != nil {
+		t.Fatal(err)
+	}
+	after, err := predictions.FindPoll(ctx, poll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.StreamURL != url {
+		t.Fatalf("a later SavePoll dropped the announced link: %q", after.StreamURL)
+	}
+}
+
 func TestRetentionRepository_PrunesOnlyEligibleRows(t *testing.T) {
 	pool, ctx := newTestPool(t)
 	retention := pg.NewRetentionRepository(pool)
