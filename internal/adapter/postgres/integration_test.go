@@ -868,6 +868,37 @@ func TestChatRepository_DefaultTopTierOnlyRoundTrips(t *testing.T) {
 	}
 }
 
+// The broadcast announcement is opt-in, so what has to round-trip is both
+// the default (off, for every chat that already exists) and the choice.
+func TestChatRepository_StreamAnnouncementsDefaultOffAndRoundTrip(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	chatID := common.ChatID{Value: -995}
+
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StreamAnnouncements {
+		t.Fatal("broadcast announcements must be off until a chat asks for them")
+	}
+
+	got.StreamAnnouncements = true
+	if _, err := chats.Save(ctx, *got); err != nil {
+		t.Fatal(err)
+	}
+	after, err := chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.StreamAnnouncements {
+		t.Fatal("expected the chat's choice to survive the round trip")
+	}
+}
+
 // A chat with no explicit broadcast language follows its UI language; an
 // explicit one survives the round trip and overrides it.
 func TestChatRepository_StreamLanguageRoundTrips(t *testing.T) {

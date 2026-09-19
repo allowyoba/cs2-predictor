@@ -38,6 +38,11 @@ type Settings struct {
 	// still pick its other games' tournaments by hand. Read-only here;
 	// change it via Repository.SetAutoSubscribeGame, not Save.
 	AutoSubscribeGames []competition.GameCode
+	// StreamAnnouncements lets a closing poll post the match's broadcast
+	// link ("the match is starting, watch here"). Off by default: it is an
+	// extra message in the room, and a chat that follows several
+	// tournaments at once notices the difference.
+	StreamAnnouncements bool
 	// StreamLanguage is the language this chat wants match broadcasts in.
 	// Empty — the default — means "follow the bot's language"; resolve it
 	// through StreamLocale rather than reading it directly.
