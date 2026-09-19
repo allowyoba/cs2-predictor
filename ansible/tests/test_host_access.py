@@ -183,7 +183,8 @@ esac
                               "HLTV_ENABLED=\n"
                               "APIFY_TOKEN=\n"
                               "APIFY_RANKING_CHECK_INTERVAL=\n"
-                              "APIFY_MAX_TEAMS=\n")
+                              "APIFY_MAX_TEAMS=\n"
+                              "EVENT_EVE_LEAD=\n")
             self.assertFalse(Path(tmp, "deploy_key").exists())
             self.assertFalse(Path(tmp, "known_hosts").exists())
 
