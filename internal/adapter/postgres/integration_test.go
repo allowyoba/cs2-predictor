@@ -18,6 +18,7 @@ import (
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/domain/feedback"
 	"cs2predictor/internal/domain/prediction"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/domain/subscription"
@@ -3263,5 +3264,72 @@ func TestOutbox_DeadLettersAreVisibleAndReplayable(t *testing.T) {
 	}
 	if !back {
 		t.Fatal("a replayed message must be selectable for delivery again")
+	}
+}
+
+// The Ideas channel's rate limits are computed from what this table
+// stores, so the two reads behind them have to work against the real
+// schema: what has this person tried lately, and have they sent this exact
+// idea before.
+func TestFeedbackRepository_RecordsAttemptsAndFindsDuplicates(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	repo := pg.NewFeedbackRepository(pool)
+	userID := common.UserID{Value: 4242}
+	now := time.Now().UTC()
+
+	suggestion := &feedback.Suggestion{
+		ID: common.NewRequestID(), UserID: userID,
+		Text: "Добавьте статистику по картам", Fingerprint: feedback.Fingerprint("Добавьте статистику по картам"),
+		CreatedAt: now,
+	}
+	if err := repo.RecordAttempt(ctx, feedback.Attempt{UserID: userID, Outcome: feedback.OutcomeAccepted, CreatedAt: now}, suggestion); err != nil {
+		t.Fatal(err)
+	}
+	// A refusal is recorded too — it is what the flood threshold counts.
+	if err := repo.RecordAttempt(ctx, feedback.Attempt{UserID: userID, Outcome: feedback.OutcomeTooLong, CreatedAt: now}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	attempts, err := repo.RecentAttempts(ctx, userID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected both attempts, got %+v", attempts)
+	}
+	var accepted, refused int
+	for _, a := range attempts {
+		switch a.Outcome {
+		case feedback.OutcomeAccepted:
+			accepted++
+		case feedback.OutcomeTooLong:
+			refused++
+		}
+	}
+	if accepted != 1 || refused != 1 {
+		t.Fatalf("outcomes did not round-trip: %+v", attempts)
+	}
+
+	dupe, err := repo.HasFingerprint(ctx, userID, suggestion.Fingerprint, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dupe {
+		t.Fatal("expected the stored idea to be recognized as already sent")
+	}
+	other, err := repo.HasFingerprint(ctx, userID, feedback.Fingerprint("что-то совсем другое"), now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other {
+		t.Fatal("a different idea must not look like a duplicate")
+	}
+	// Yesterday's copy does not block today's send.
+	stale, err := repo.HasFingerprint(ctx, userID, suggestion.Fingerprint, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale {
+		t.Fatal("the duplicate check has to respect its window")
 	}
 }
