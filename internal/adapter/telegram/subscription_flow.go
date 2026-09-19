@@ -134,19 +134,19 @@ func (h *UpdateHandler) unsubscribe(ctx context.Context, cb *CallbackQuery, targ
 
 	now := h.Clock.Now()
 	requestID := common.NewRequestID()
-	pending := chat.PendingUnsubscribe{
-		ID: requestID, ChatID: settings.ChatID, EventID: eventID, RequestedBy: actor,
-		CreatedAt: now, ExpiresAt: now.Add(chat.PendingUnsubscribeTTL),
+	pending := chat.PendingApproval{
+		ID: requestID, Kind: chat.ApprovalUnsubscribe, ChatID: settings.ChatID, EventID: &eventID, RequestedBy: actor,
+		CreatedAt: now, ExpiresAt: now.Add(chat.PendingApprovalTTL),
 		SelfConfirmable: len(reachable) == 0,
 	}
 	// The request and the messages asking about it commit together: a
 	// confirmation button must never exist for a request that was never
 	// stored, nor a stored request nobody was ever asked about.
 	if err := h.inTx(ctx, func(ctx context.Context) error {
-		if err := h.PendingUnsubscribes.Create(ctx, pending); err != nil {
+		if err := h.PendingApprovals.Create(ctx, pending); err != nil {
 			return err
 		}
-		return h.enqueueConfirmationRequests(ctx, reachable, settings, name, requestID, cb.From.DisplayName())
+		return h.enqueueConfirmationRequests(ctx, chat.ApprovalUnsubscribe, reachable, settings, name, requestID, cb.From.DisplayName())
 	}); err != nil {
 		return false, err
 	}
@@ -181,14 +181,14 @@ func (h *UpdateHandler) unsubscribe(ctx context.Context, cb *CallbackQuery, targ
 // the outbox. Delivery (and the "this person turned out to be unreachable
 // after all" bookkeeping) belongs to UnsubscribeConfirmationPublisher; all
 // this does is record who should be asked, inside the caller's transaction.
-func (h *UpdateHandler) enqueueConfirmationRequests(ctx context.Context, recipients []common.UserID, settings chat.Settings, eventName string, requestID common.RequestID, requester string) error {
+func (h *UpdateHandler) enqueueConfirmationRequests(ctx context.Context, kind chat.ApprovalKind, recipients []common.UserID, settings chat.Settings, eventName string, requestID common.RequestID, requester string) error {
 	if h.Outbox == nil {
 		return nil
 	}
 	for _, userID := range recipients {
 		payload, err := json.Marshal(common.UnsubscribeConfirmationNotification{
 			UserID: userID.Value, RequestID: requestID.String(),
-			ChatTitle: settings.Title, EventName: eventName,
+			ChatTitle: settings.Title, EventName: eventName, Kind: string(kind),
 			Requester: requester, Locale: string(settings.Locale),
 		})
 		if err != nil {
@@ -226,7 +226,7 @@ func (h *UpdateHandler) confirmUnsubscribe(ctx context.Context, cb *CallbackQuer
 	if err != nil {
 		return false, newValidationError("invalid unsubscribe request id")
 	}
-	pending, err := h.PendingUnsubscribes.Find(ctx, requestID)
+	pending, err := h.PendingApprovals.Find(ctx, requestID)
 	if err != nil {
 		return false, err
 	}
@@ -248,15 +248,24 @@ func (h *UpdateHandler) confirmUnsubscribe(ctx context.Context, cb *CallbackQuer
 		return true, h.toast(ctx, cb.ID, h.Texts.Get("events.unsubscribe_need_second", settings.Locale))
 	}
 
-	if err := h.Subscriptions.Unsubscribe(ctx, pending.ChatID, pending.EventID); err != nil {
+	// Every guarded action shares this request/approve machinery (see
+	// chat.PendingApproval); only what happens once approved differs.
+	if pending.Kind == chat.ApprovalDisableGame {
+		return h.applyApprovedGameDisable(ctx, cb, *pending, *settings)
+	}
+	if pending.EventID == nil {
+		return true, h.toast(ctx, cb.ID, h.Texts.Get("events.unsubscribe_expired", settings.Locale))
+	}
+	eventID := *pending.EventID
+	if err := h.Subscriptions.Unsubscribe(ctx, pending.ChatID, eventID); err != nil {
 		return false, err
 	}
 	h.recordAdminAction("unsubscribe", "confirmed")
-	h.logAdminAction(ctx, pending.ChatID, &cb.From, "unsubscribe", h.eventNameOrID(ctx, pending.EventID))
-	if err := h.PendingUnsubscribes.Resolve(ctx, requestID); err != nil {
+	h.logAdminAction(ctx, pending.ChatID, &cb.From, "unsubscribe", h.eventNameOrID(ctx, eventID))
+	if err := h.PendingApprovals.Resolve(ctx, requestID); err != nil {
 		loggerFrom(ctx, h.Log).Warn("pending unsubscribe resolve failed", "requestId", requestID.Value, "error", err)
 	}
-	name := h.eventNameOrID(ctx, pending.EventID)
+	name := h.eventNameOrID(ctx, eventID)
 
 	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get("events.unsubscribe", settings.Locale)); err != nil {
 		return false, err
@@ -286,7 +295,7 @@ func (h *UpdateHandler) rejectUnsubscribe(ctx context.Context, cb *CallbackQuery
 	if err != nil {
 		return false, newValidationError("invalid unsubscribe request id")
 	}
-	pending, err := h.PendingUnsubscribes.Find(ctx, requestID)
+	pending, err := h.PendingApprovals.Find(ctx, requestID)
 	if err != nil {
 		return false, err
 	}
@@ -304,7 +313,7 @@ func (h *UpdateHandler) rejectUnsubscribe(ctx context.Context, cb *CallbackQuery
 		return false, err
 	}
 
-	if err := h.PendingUnsubscribes.Resolve(ctx, requestID); err != nil {
+	if err := h.PendingApprovals.Resolve(ctx, requestID); err != nil {
 		loggerFrom(ctx, h.Log).Warn("pending unsubscribe resolve failed", "requestId", requestID.Value, "error", err)
 	}
 	// The requester resolving their own request is a withdrawal, not a
@@ -315,7 +324,10 @@ func (h *UpdateHandler) rejectUnsubscribe(ctx context.Context, cb *CallbackQuery
 		action, toastKey, screenKey = "withdrawn", "events.unsubscribe_withdrawn_toast", "events.unsubscribe_withdrawn_by_you"
 	}
 	h.recordAdminAction("unsubscribe", action)
-	name := h.eventNameOrID(ctx, pending.EventID)
+	name := ""
+	if pending.EventID != nil {
+		name = h.eventNameOrID(ctx, *pending.EventID)
+	}
 
 	if err := h.toast(ctx, cb.ID, "🚫 "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
 		return false, err
@@ -340,7 +352,7 @@ func (h *UpdateHandler) rejectUnsubscribe(ctx context.Context, cb *CallbackQuery
 // their DMs stop reading as live. Best effort throughout: the request is
 // already resolved, and a manager who misses this notice only ever sees the
 // "expired" toast if they tap anyway.
-func (h *UpdateHandler) notifyWithdrawn(ctx context.Context, pending *chat.PendingUnsubscribe, settings *chat.Settings, eventName string) {
+func (h *UpdateHandler) notifyWithdrawn(ctx context.Context, pending *chat.PendingApproval, settings *chat.Settings, eventName string) {
 	others, err := h.Authorization.OtherManagers(ctx, pending.ChatID, pending.RequestedBy)
 	if err != nil {
 		loggerFrom(ctx, h.Log).Warn("withdrawal notice recipients failed", "chatId", pending.ChatID.Value, "error", err)

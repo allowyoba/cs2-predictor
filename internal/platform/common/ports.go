@@ -398,7 +398,13 @@ type UnsubscribeConfirmationNotification struct {
 	UserID    int64  `json:"userId"`
 	RequestID string `json:"requestId"`
 	ChatTitle string `json:"chatTitle"`
+	// EventName is what the approval is about, already human-readable: a
+	// tournament name, or a game's name for a game being switched off.
 	EventName string `json:"eventName"`
+	// Kind mirrors chat.ApprovalKind so the DM can say what is actually
+	// being asked. Empty means the original unsubscribe, which is what
+	// every message enqueued before this field existed carries.
+	Kind      string `json:"kind,omitempty"`
 	Requester string `json:"requester"`
 	Locale    string `json:"locale"`
 }

@@ -88,7 +88,7 @@ func run() error {
 	outbox := pg.NewOutbox(pool)
 	clusterLock := pg.NewClusterLock(pool)
 	dedup := pg.NewUpdateDeduplicator(pool)
-	pendingUnsubscribes := pg.NewPendingUnsubscribeRepository(pool)
+	pendingApprovals := pg.NewPendingApprovalRepository(pool)
 	retentionStore := pg.NewRetentionRepository(pool)
 	adminActions := pg.NewAdminActionRepository(pool)
 	invitations := pg.NewInvitationRepository(pool)
@@ -207,7 +207,7 @@ func run() error {
 		Dedup: dedup, Predictions: predictionService, Chats: chats, Authorization: authorization,
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
-		PendingUnsubscribes: pendingUnsubscribes, Outbox: outbox, RunTx: runTx, Metrics: metrics,
+		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations,
 		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 		TeamMatches:              enrichmentRepo,

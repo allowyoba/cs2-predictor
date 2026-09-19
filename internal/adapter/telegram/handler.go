@@ -76,9 +76,9 @@ type UpdateHandler struct {
 	Client        *Client
 	Clock         common.Clock
 	Log           *slog.Logger
-	// PendingUnsubscribes backs the DM fan-out confirmation flow for
-	// unsubscribe — see chat.PendingUnsubscribeRepository.
-	PendingUnsubscribes chat.PendingUnsubscribeRepository
+	// PendingApprovals backs the DM fan-out confirmation flow for
+	// unsubscribe — see chat.PendingApprovalRepository.
+	PendingApprovals chat.PendingApprovalRepository
 	// Outbox carries the confirmation fan-out: one event per manager to
 	// ask, so the webhook returns without waiting on N sequential sends and
 	// delivery inherits the dispatcher's retries and pacing.

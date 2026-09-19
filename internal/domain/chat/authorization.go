@@ -106,7 +106,7 @@ func (s *AuthorizationService) HasOtherManager(ctx context.Context, chatID commo
 // the deduplicated union of live Telegram admins/owners and flagged
 // moderators who currently pass CanManage. Used to fan a DM confirmation
 // request out to everyone who could approve it (see
-// PendingUnsubscribeRepository). Order is not significant.
+// PendingApprovalRepository). Order is not significant.
 func (s *AuthorizationService) OtherManagers(ctx context.Context, chatID common.ChatID, actor common.UserID) ([]common.UserID, error) {
 	seen := map[common.UserID]bool{actor: true}
 	var out []common.UserID

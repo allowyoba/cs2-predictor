@@ -453,7 +453,11 @@ func (p *UnsubscribeConfirmationPublisher) Publish(ctx context.Context, message 
 	}
 	locale := common.LocaleFrom(n.Locale)
 
-	text := p.texts.Get("events.unsubscribe_fanout", locale,
+	fanoutKey := "events.unsubscribe_fanout"
+	if n.Kind == string(chat.ApprovalDisableGame) {
+		fanoutKey = "games.disable_fanout"
+	}
+	text := p.texts.Get(fanoutKey, locale,
 		bold(escapeHTML(n.ChatTitle)), bold(escapeHTML(n.EventName)))
 	if n.Requester != "" {
 		text += "\n" + italic(escapeHTML(n.Requester))

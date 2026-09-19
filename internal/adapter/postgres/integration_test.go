@@ -756,11 +756,11 @@ func TestChatRepository_DMSessionLifecycle(t *testing.T) {
 	}
 }
 
-func TestPendingUnsubscribeRepository_CreateFindResolveRoundTrips(t *testing.T) {
+func TestPendingApprovalRepository_CreateFindResolveRoundTrips(t *testing.T) {
 	pool, ctx := newTestPool(t)
 	chats := pg.NewChatRepository(pool)
 	catalog := pg.NewCompetitionRepository(pool)
-	pending := pg.NewPendingUnsubscribeRepository(pool)
+	pending := pg.NewPendingApprovalRepository(pool)
 
 	chatID := common.ChatID{Value: -905}
 	userID := common.UserID{Value: 503}
@@ -786,8 +786,8 @@ func TestPendingUnsubscribeRepository_CreateFindResolveRoundTrips(t *testing.T) 
 
 	requestID := common.NewRequestID()
 	now := timeMustParse(t, "2026-08-03")
-	p := chat.PendingUnsubscribe{
-		ID: requestID, ChatID: chatID, EventID: event.ID, RequestedBy: userID,
+	p := chat.PendingApproval{
+		ID: requestID, ChatID: chatID, Kind: chat.ApprovalUnsubscribe, EventID: &event.ID, RequestedBy: userID,
 		CreatedAt: now, ExpiresAt: now.Add(24 * time.Hour), SelfConfirmable: true,
 	}
 	if err := pending.Create(ctx, p); err != nil {
@@ -798,8 +798,11 @@ func TestPendingUnsubscribeRepository_CreateFindResolveRoundTrips(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || got.ChatID != chatID || got.EventID != event.ID || got.RequestedBy != userID || !got.SelfConfirmable {
+	if got == nil || got.ChatID != chatID || got.RequestedBy != userID || !got.SelfConfirmable {
 		t.Fatalf("Find = %+v, want a round trip of %+v", got, p)
+	}
+	if got.Kind != chat.ApprovalUnsubscribe || got.EventID == nil || *got.EventID != event.ID {
+		t.Fatalf("Find = %+v, want the unsubscribe's own event back", got)
 	}
 	if !got.CreatedAt.Equal(now) {
 		t.Fatalf("CreatedAt = %v, want %v", got.CreatedAt, now)
