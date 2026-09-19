@@ -25,10 +25,10 @@ func NewChatRepository(pool *pgxpool.Pool) *ChatRepository {
 
 func (r *ChatRepository) Find(ctx context.Context, chatID common.ChatID) (*chat.Settings, error) {
 	row := executor(ctx, r.pool).QueryRow(ctx,
-		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier FROM telegram_chat WHERE id = $1`, chatID.Value)
+		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier, stream_language FROM telegram_chat WHERE id = $1`, chatID.Value)
 	var s chat.Settings
 	var id int64
-	if err := row.Scan(&id, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier); err != nil {
+	if err := row.Scan(&id, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier, &s.StreamLanguage); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -45,7 +45,7 @@ func (r *ChatRepository) Find(ctx context.Context, chatID common.ChatID) (*chat.
 
 func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx,
-		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier
+		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier, stream_language
 		   FROM telegram_chat
 		  WHERE active = true
 		  ORDER BY id`)
@@ -58,7 +58,7 @@ func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error
 	var ids []int64
 	for rows.Next() {
 		var s chat.Settings
-		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier); err != nil {
+		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier, &s.StreamLanguage); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -128,14 +128,16 @@ func (r *ChatRepository) SetEnabledGames(ctx context.Context, chatID common.Chat
 // used by every upsert in the original JPA adapters.
 func (r *ChatRepository) Save(ctx context.Context, s chat.Settings) (chat.Settings, error) {
 	_, err := executor(ctx, r.pool).Exec(ctx,
-		`INSERT INTO telegram_chat(id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
+		`INSERT INTO telegram_chat(id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier, stream_language, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   title = excluded.title, locale = excluded.locale, timezone = excluded.timezone,
 		   default_topic_id = excluded.default_topic_id, active = excluded.active,
 		   default_top_tier_only = excluded.default_top_tier_only,
-		   auto_subscribe_top_tier = excluded.auto_subscribe_top_tier, updated_at = now()`,
-		s.ChatID.Value, s.Title, s.Locale, s.Timezone, s.DefaultTopicID, s.Active, s.DefaultTopTierOnly, s.AutoSubscribeTopTier)
+		   auto_subscribe_top_tier = excluded.auto_subscribe_top_tier,
+		   stream_language = excluded.stream_language, updated_at = now()`,
+		s.ChatID.Value, s.Title, s.Locale, s.Timezone, s.DefaultTopicID, s.Active, s.DefaultTopTierOnly, s.AutoSubscribeTopTier,
+		s.StreamLanguage)
 	return s, err
 }
 
@@ -530,7 +532,7 @@ func (r *ChatRepository) RecordManaged(ctx context.Context, chatID common.ChatID
 
 func (r *ChatRepository) ManagedChats(ctx context.Context, userID common.UserID) ([]chat.Settings, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx, `
-		SELECT c.id, c.title, c.locale, c.timezone, c.default_topic_id, c.active, c.default_top_tier_only, c.auto_subscribe_top_tier
+		SELECT c.id, c.title, c.locale, c.timezone, c.default_topic_id, c.active, c.default_top_tier_only, c.auto_subscribe_top_tier, c.stream_language
 		  FROM chat_manager_seen s
 		  JOIN telegram_chat c ON c.id = s.chat_id
 		 WHERE s.user_id = $1 AND c.active = true
@@ -542,7 +544,7 @@ func (r *ChatRepository) ManagedChats(ctx context.Context, userID common.UserID)
 	var out []chat.Settings
 	for rows.Next() {
 		var s chat.Settings
-		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier); err != nil {
+		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier, &s.StreamLanguage); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

@@ -80,6 +80,15 @@ func (l LocaleCode) Tag() string {
 	return "ru-RU"
 }
 
+// Language returns the ISO 639-1 alpha-2 code for this locale — the form
+// data providers use for stream languages, as opposed to Tag's IETF form.
+func (l LocaleCode) Language() string {
+	if l == LocaleEN {
+		return "en"
+	}
+	return "ru"
+}
+
 // LocaleFrom matches value case-insensitively against either the enum name
 // ("RU"/"EN") or the IETF tag ("ru-RU"/"en-US"), defaulting to RU if value is
 // empty or unrecognized.

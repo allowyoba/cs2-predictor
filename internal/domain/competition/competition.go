@@ -5,6 +5,7 @@ package competition
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"cs2predictor/internal/platform/common"
@@ -251,6 +252,59 @@ type Match struct {
 	Format          SeriesFormat
 	Score           *MatchScore
 	StageExternalID *string
+	// Streams are the broadcasts the provider reported for this match —
+	// not every match has one, and a lower-tier match having none is
+	// normal, not a mapping bug.
+	Streams []Stream
+}
+
+// Stream is one broadcast of a match, as reported by the data provider
+// (PandaScore's streams_list). JSON tags are load-bearing: the whole slice
+// is persisted verbatim into esport_match.streams as jsonb.
+type Stream struct {
+	// Language is the provider's own ISO 639-1 code ("ru", "en"), compared
+	// case-insensitively since providers are inconsistent about casing.
+	Language string `json:"language"`
+	URL      string `json:"url"`
+	// Main is the provider's featured broadcast; always Official when true
+	// (per PandaScore's field docs).
+	Main     bool `json:"main"`
+	Official bool `json:"official"`
+}
+
+// StreamFor picks the broadcast to show a chat that prefers `preferred`:
+// the main (always-official) stream in that language, then any official one
+// in it, then the same two in English as a fallback. Unofficial community
+// channels are never linked, and a chat preferring English gets no second
+// fallback — English is already the fallback.
+func (m Match) StreamFor(preferred common.LocaleCode) (Stream, bool) {
+	for _, lang := range []string{preferred.Language(), common.LocaleEN.Language()} {
+		if s, ok := m.officialStream(lang); ok {
+			return s, true
+		}
+	}
+	return Stream{}, false
+}
+
+// officialStream returns lang's main broadcast, or failing that any other
+// official one in lang.
+func (m Match) officialStream(lang string) (Stream, bool) {
+	var official *Stream
+	for i, s := range m.Streams {
+		if !strings.EqualFold(s.Language, lang) {
+			continue
+		}
+		if s.Main {
+			return s, true
+		}
+		if s.Official && official == nil {
+			official = &m.Streams[i]
+		}
+	}
+	if official != nil {
+		return *official, true
+	}
+	return Stream{}, false
 }
 
 // ParticipantsKnown is true only once both teams are resolved (qualifier

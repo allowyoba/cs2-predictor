@@ -213,6 +213,7 @@ var callbackRoutes = []callbackRoute{
 	{match: exact("settings:locale"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsLocale},
 	{match: exact("settings:top_tier"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsTopTier},
 	{match: exact("settings:auto_subscribe"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribe},
+	{match: exact("settings:stream_language"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamLanguage},
 	{match: exact("settings:games"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).gamesView)},
 	{match: prefixed("settings:games:toggle:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsGamesToggle},
 	{match: prefixed("subscribe:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
@@ -679,6 +680,26 @@ func routeSettingsAutoSubscribe(h *UpdateHandler, ctx context.Context, cb *Callb
 	}
 	h.logAdminAction(ctx, settings.ChatID, &cb.From, "auto_subscribe", state)
 	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
+		return false, err
+	}
+	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
+}
+
+// routeSettingsStreamLanguage cycles the broadcast language between the
+// bot's own languages — with only two of them, a picker screen would be a
+// pointless extra tap, same reasoning as routeSettingsLocale.
+func routeSettingsStreamLanguage(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	next := common.LocaleEN
+	if settings.StreamLocale() == common.LocaleEN {
+		next = common.LocaleRU
+	}
+	settings.StreamLanguage = next
+	if _, err := h.Chats.Save(ctx, settings); err != nil {
+		return false, err
+	}
+	h.logAdminAction(ctx, settings.ChatID, &cb.From, "stream_language", next.Tag())
+	toast := h.Texts.Get("settings.stream_language_label", settings.Locale, h.localeName(next, settings.Locale))
+	if err := h.toast(ctx, cb.ID, "✅ "+toast); err != nil {
 		return false, err
 	}
 	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")

@@ -41,6 +41,13 @@ type resultDTO struct {
 	Score  int   `json:"score"`
 }
 
+type streamDTO struct {
+	Language string `json:"language"`
+	RawURL   string `json:"raw_url"`
+	Main     bool   `json:"main"`
+	Official bool   `json:"official"`
+}
+
 type matchDTO struct {
 	ID            int64         `json:"id"`
 	Name          *string       `json:"name"`
@@ -54,4 +61,5 @@ type matchDTO struct {
 	Opponents     []opponentDTO `json:"opponents"`
 	Results       []resultDTO   `json:"results"`
 	Forfeit       bool          `json:"forfeit"`
+	StreamsList   []streamDTO   `json:"streams_list"`
 }

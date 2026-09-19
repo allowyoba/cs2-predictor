@@ -2,6 +2,7 @@ package pandascore
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -276,5 +277,28 @@ func mapMatch(dto matchDTO, game competition.GameCode) competition.Match {
 		Format:          format,
 		Score:           score,
 		StageExternalID: stageExternalID,
+		Streams:         mapStreams(dto.StreamsList),
 	}
+}
+
+// mapStreams keeps only entries with a usable http(s) link: PandaScore has
+// been observed listing a language slot with an empty raw_url, and anything
+// Telegram won't accept as an href would make the whole message fail to
+// send, not just lose one link.
+func mapStreams(dtos []streamDTO) []competition.Stream {
+	var out []competition.Stream
+	for _, s := range dtos {
+		raw := strings.TrimSpace(s.RawURL)
+		parsed, err := url.Parse(raw)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			continue
+		}
+		out = append(out, competition.Stream{
+			Language: strings.TrimSpace(s.Language),
+			URL:      raw,
+			Main:     s.Main,
+			Official: s.Official,
+		})
+	}
+	return out
 }
