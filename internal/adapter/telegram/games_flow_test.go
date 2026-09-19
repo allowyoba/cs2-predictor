@@ -10,10 +10,13 @@ import (
 	"cs2predictor/internal/platform/common"
 )
 
-func gamesToggleCallback(userID int64, code competition.GameCode) *CallbackQuery {
-	data := "settings:games:toggle:" + string(code)
+// dota2ToggleCallback is the tap on Dota 2's toggle, made by manager 1 —
+// every test here is about what the toggle does, not about who tapped it
+// or which game it was.
+func dota2ToggleCallback() *CallbackQuery {
+	data := "settings:games:toggle:" + string(competition.GameDota2)
 	return &CallbackQuery{
-		ID: "cb-games", From: User{ID: userID, FirstName: "Manager"},
+		ID: "cb-games", From: User{ID: 1, FirstName: "Manager"},
 		Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data,
 	}
 }
@@ -31,7 +34,7 @@ func TestGames_EnablingAnnouncesItInTheChat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := handler.handleCallback(context.Background(), gamesToggleCallback(1, competition.GameDota2)); err != nil {
+	if err := handler.handleCallback(context.Background(), dota2ToggleCallback()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +84,7 @@ func TestGames_DisablingWaitsForASecondManager(t *testing.T) {
 	approvals := newFakePendingApprovals()
 	handler.PendingApprovals = approvals
 
-	if err := handler.handleCallback(context.Background(), gamesToggleCallback(1, competition.GameDota2)); err != nil {
+	if err := handler.handleCallback(context.Background(), dota2ToggleCallback()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +164,7 @@ func TestGames_DisablingIsSelfConfirmableWithNoOtherManager(t *testing.T) {
 	approvals := newFakePendingApprovals()
 	handler.PendingApprovals = approvals
 
-	if err := handler.handleCallback(context.Background(), gamesToggleCallback(1, competition.GameDota2)); err != nil {
+	if err := handler.handleCallback(context.Background(), dota2ToggleCallback()); err != nil {
 		t.Fatal(err)
 	}
 	var pending chat.PendingApproval
@@ -183,5 +186,67 @@ func TestGames_DisablingIsSelfConfirmableWithNoOtherManager(t *testing.T) {
 	}
 	if after.GameEnabled(competition.GameDota2) {
 		t.Fatal("expected the game to be switched off after the self-confirmation")
+	}
+}
+
+// Rejecting a game request must read as a game request: the shared
+// approval path would otherwise reuse the tournament wording, with an
+// empty name where the tournament would have been.
+func TestGames_RejectingADisableRequestUsesGameWording(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetEnabledGames(context.Background(), chatID, []competition.GameCode{competition.GameDota2}); err != nil {
+		t.Fatal(err)
+	}
+	admins := []common.UserID{{Value: 1}, {Value: 2}}
+	handler.Authorization = chat.NewAuthorizationService(chats, &fakeAdminMembership{admins: admins})
+	for _, admin := range admins {
+		if err := chats.SetDMReachable(context.Background(), admin, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler.Outbox = &fakeOutbox{}
+	approvals := newFakePendingApprovals()
+	handler.PendingApprovals = approvals
+
+	if err := handler.handleCallback(context.Background(), dota2ToggleCallback()); err != nil {
+		t.Fatal(err)
+	}
+	var pending chat.PendingApproval
+	for _, p := range approvals.items {
+		pending = p
+	}
+
+	*calls = nil
+	reject := "unsubreject:" + pending.ID.String()
+	cb := &CallbackQuery{ID: "cb-reject", From: User{ID: 2, FirstName: "Second"}, Message: &Message{Chat: Chat{ID: 2, Type: "private"}}, Data: &reject}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	still, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !still.GameEnabled(competition.GameDota2) {
+		t.Fatal("a rejected request must leave the game switched on")
+	}
+	gameName := ru(t, "game.dota2")
+	var named bool
+	for _, c := range *calls {
+		if text, _ := c["text"].(string); strings.Contains(text, gameName) {
+			named = true
+		}
+		if text, _ := c["text"].(string); strings.Contains(text, "<b></b>") {
+			t.Fatalf("the rejection left an empty name where the subject belongs: %q", text)
+		}
+	}
+	if !named {
+		t.Fatal("expected the rejection to name the game")
 	}
 }

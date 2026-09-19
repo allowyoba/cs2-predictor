@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/subscription"
 	"cs2predictor/internal/platform/common"
 )
@@ -289,6 +290,41 @@ func (h *UpdateHandler) confirmUnsubscribe(ctx context.Context, cb *CallbackQuer
 	return true, nil
 }
 
+// rejectionWording answers what a rejected request is called, what it was
+// about, and which screen text fits — every guarded action shares one
+// rejection path, and "the removal of ⟨nothing⟩ was rejected" is what a
+// game request would otherwise read as. An empty screen key means the
+// default (unsubscribe) wording stands.
+func (h *UpdateHandler) rejectionWording(ctx context.Context, pending chat.PendingApproval,
+	settings chat.Settings, withdrawn bool) (metric, name, screenKey string) {
+	if pending.Kind == chat.ApprovalDisableGame {
+		name = h.Texts.Get(gameLabelKey(competition.GameCode(pending.Subject)), settings.Locale)
+		screenKey = "games.disable_rejected_by_you"
+		if withdrawn {
+			screenKey = "games.disable_withdrawn_by_you"
+		}
+		return "disable_game", name, screenKey
+	}
+	if pending.EventID != nil {
+		name = h.eventNameOrID(ctx, *pending.EventID)
+	}
+	return "unsubscribe", name, ""
+}
+
+// notifyRequesterRejected tells whoever asked that somebody else said no —
+// their screen is otherwise left waiting on an answer that already came.
+func (h *UpdateHandler) notifyRequesterRejected(ctx context.Context, pending chat.PendingApproval,
+	settings chat.Settings, name, rejectedBy string) {
+	key := "events.unsubscribe_request_rejected"
+	if pending.Kind == chat.ApprovalDisableGame {
+		key = "games.disable_request_rejected"
+	}
+	text := h.Texts.Get(key, settings.Locale, bold(escapeHTML(name)), escapeHTML(rejectedBy))
+	if err := h.sendText(ctx, common.ChatID{Value: pending.RequestedBy.Value}, text, nil); err != nil {
+		loggerFrom(ctx, h.Log).Warn("approval requester notice failed", "requester", pending.RequestedBy.Value, "error", err)
+	}
+}
+
 func (h *UpdateHandler) rejectUnsubscribe(ctx context.Context, cb *CallbackQuery, requestIDStr string) (bool, error) {
 	actor := common.UserID{Value: cb.From.ID}
 	requestID, err := common.ParseRequestID(requestIDStr)
@@ -323,11 +359,11 @@ func (h *UpdateHandler) rejectUnsubscribe(ctx context.Context, cb *CallbackQuery
 	if withdrawn {
 		action, toastKey, screenKey = "withdrawn", "events.unsubscribe_withdrawn_toast", "events.unsubscribe_withdrawn_by_you"
 	}
-	h.recordAdminAction("unsubscribe", action)
-	name := ""
-	if pending.EventID != nil {
-		name = h.eventNameOrID(ctx, *pending.EventID)
+	metric, name, kindScreenKey := h.rejectionWording(ctx, *pending, *settings, withdrawn)
+	if kindScreenKey != "" {
+		screenKey = kindScreenKey
 	}
+	h.recordAdminAction(metric, action)
 
 	if err := h.toast(ctx, cb.ID, "🚫 "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
 		return false, err
@@ -340,10 +376,7 @@ func (h *UpdateHandler) rejectUnsubscribe(ctx context.Context, cb *CallbackQuery
 		h.notifyWithdrawn(ctx, pending, settings, name)
 		return true, nil
 	}
-	text := h.Texts.Get("events.unsubscribe_request_rejected", settings.Locale, bold(escapeHTML(name)), escapeHTML(cb.From.DisplayName()))
-	if err := h.sendText(ctx, common.ChatID{Value: pending.RequestedBy.Value}, text, nil); err != nil {
-		loggerFrom(ctx, h.Log).Warn("unsubscribe requester notice failed", "requester", pending.RequestedBy.Value, "error", err)
-	}
+	h.notifyRequesterRejected(ctx, *pending, *settings, name, cb.From.DisplayName())
 	return true, nil
 }
 

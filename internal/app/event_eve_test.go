@@ -174,7 +174,7 @@ func newEveFixture(t *testing.T, now time.Time, startsIn time.Duration, matches 
 			Chats: chats, ChatSettings: chats,
 			Subscriptions: &eveSubs{byChat: map[common.ChatID][]common.EventID{chatID: {eventID}}},
 			Catalog: &eveCatalog{
-				events:  map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}},
+				events:  map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Status: competition.EventUpcoming}},
 				matches: map[common.EventID][]competition.Match{eventID: matches},
 			},
 			Scoring: &eveScoring{standings: map[common.EventID][]scoring.UserStanding{}},
@@ -280,5 +280,39 @@ func TestEventEve_NegativeLeadDisablesTheJob(t *testing.T) {
 
 	if len(f.outbox.sent) != 0 {
 		t.Fatalf("expected nothing sent with the job disabled, got %+v", f.outbox.sent)
+	}
+}
+
+// A tournament already under way always has an unplayed match coming up,
+// so "the next match is within a day" is true for it too. Announcing that
+// as "it starts tomorrow" is simply false — and on a fresh deploy it would
+// be false for every running tournament at once.
+func TestEventEve_SaysNothingAboutATournamentAlreadyUnderWay(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	f := newEveFixture(t, now, 10*time.Hour)
+	eventID := f.eventID
+	f.scheduler.Catalog = &eveCatalog{
+		events:  map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Status: competition.EventRunning}},
+		matches: map[common.EventID][]competition.Match{eventID: {match(eventID, now.Add(10*time.Hour), "A", "B")}},
+	}
+
+	f.scheduler.Dispatch(context.Background())
+
+	if len(f.outbox.sent) != 0 {
+		t.Fatalf("expected silence for a running tournament, got %+v", f.outbox.sent)
+	}
+}
+
+// Inside the last few hours "tomorrow" is untrue and the first poll is
+// already on its way, so the nudge stands down rather than contradicting
+// itself.
+func TestEventEve_SaysNothingWhenTheStartIsHoursAway(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	f := newEveFixture(t, now, EventEveMinLead-time.Minute)
+
+	f.scheduler.Dispatch(context.Background())
+
+	if len(f.outbox.sent) != 0 {
+		t.Fatalf("expected no 'tomorrow' message hours before the start, got %+v", f.outbox.sent)
 	}
 }

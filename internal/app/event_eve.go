@@ -20,6 +20,11 @@ const (
 	// the 30-minutes-before nudge is already covered by
 	// PollReminderScheduler, and repeating that here would be noise.
 	DefaultEventEveLead = 24 * time.Hour
+	// EventEveMinLead is the floor under the nudge. Closer than this and
+	// "tomorrow" is simply false — the tournament is starting now, the
+	// first poll is already on its way, and the message would add nothing
+	// but a contradiction.
+	EventEveMinLead = 6 * time.Hour
 	// eventEveMatchesShown bounds the opening matches listed by name. The
 	// message is a hook, not a schedule: the full list is one tap away
 	// behind the "upcoming matches" button the publisher attaches.
@@ -139,8 +144,9 @@ func (s *EventEveScheduler) notifyIfDue(ctx context.Context, settings chat.Setti
 		return nil
 	}
 	sort.Slice(upcoming, func(i, j int) bool { return upcoming[i].ScheduledAt.Before(*upcoming[j].ScheduledAt) })
-	if upcoming[0].ScheduledAt.Sub(now) > s.lead() {
-		return nil // still too far out
+	untilFirst := upcoming[0].ScheduledAt.Sub(now)
+	if untilFirst > s.lead() || untilFirst < EventEveMinLead {
+		return nil // too far out, or so close that "tomorrow" is untrue
 	}
 
 	periodKey := eventID.Value.String()
@@ -150,6 +156,13 @@ func (s *EventEveScheduler) notifyIfDue(ctx context.Context, settings chat.Setti
 	event, err := s.Catalog.FindEvent(ctx, eventID)
 	if err != nil || event == nil {
 		return err
+	}
+	// A tournament already under way still has unplayed matches ahead of
+	// it, one of which is always about to start — without this, every
+	// running tournament would be announced as starting tomorrow, and a
+	// chat subscribing mid-tournament would get the same wrong message.
+	if event.Status != competition.EventUpcoming {
+		return nil
 	}
 	claimed, err := s.Store.Claim(ctx, settings.ChatID, eventEveReportType, periodKey)
 	if err != nil || !claimed {
