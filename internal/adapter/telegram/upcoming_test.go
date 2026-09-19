@@ -102,51 +102,87 @@ func TestUpcoming_LimitsNearestEligibleMatchesBeforeGrouping(t *testing.T) {
 	}
 }
 
-// TestUpcoming_RendersMainEnglishStreamLinkOnly checks the "📺 Трансляция"
-// line: shown for a match with a main English broadcast, omitted for one
-// whose only stream is a non-main Russian community channel — no per-chat
-// language fallback, matching MainStreamURL's own narrow selection.
-func TestUpcoming_RendersMainEnglishStreamLinkOnly(t *testing.T) {
+// TestUpcoming_RendersBroadcastLinkPerChatLanguage covers the whole stream
+// line: the platform-named link, the "· EN" marker that appears only when
+// the chat's own language wasn't available, and the silence for a match
+// whose only broadcast is an unofficial community channel.
+func TestUpcoming_RendersBroadcastLinkPerChatLanguage(t *testing.T) {
 	server, calls := newRecordingServer(t)
 	defer server.Close()
 	h, _ := newTestHandler(t, server)
 	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	h.Clock = common.FixedClock(now)
 	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: "UTC"}
-	withStream, withoutStream := common.NewEventID(), common.NewEventID()
+	russian, english, community := common.NewEventID(), common.NewEventID(), common.NewEventID()
 	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
-	streamedAt := now.Add(time.Hour)
-	noStreamAt := now.Add(2 * time.Hour)
-	h.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{EventID: withStream}, {EventID: withoutStream}}}
+	first, second, third := now.Add(time.Hour), now.Add(2*time.Hour), now.Add(3*time.Hour)
+	h.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{EventID: russian}, {EventID: english}, {EventID: community}}}
+	match := func(event common.EventID, at time.Time, a, b string, streams []competition.Stream) competition.Match {
+		return competition.Match{ID: common.NewMatchID(), EventID: event, ScheduledAt: &at, Format: format,
+			FirstTeam: &competition.Team{Name: a}, SecondTeam: &competition.Team{Name: b}, Streams: streams}
+	}
+	enMain := competition.Stream{Language: "en", URL: "https://kick.com/cct_cs2", Main: true, Official: true}
+	ruCommunity := competition.Stream{Language: "ru", URL: "https://www.twitch.tv/betboom_cs_ru3"}
 	h.Catalog = &dataCatalog{
 		events: map[common.EventID]competition.Event{
-			withStream: {ID: withStream, Name: "Streamed Cup"}, withoutStream: {ID: withoutStream, Name: "Dark Cup"},
+			russian: {ID: russian, Name: "RU Cup"}, english: {ID: english, Name: "EN Cup"}, community: {ID: community, Name: "Dark Cup"},
 		},
 		unstartedMatches: map[common.EventID][]competition.Match{
-			withStream: {{ID: common.NewMatchID(), EventID: withStream, ScheduledAt: &streamedAt, Format: format,
-				FirstTeam: &competition.Team{Name: "A"}, SecondTeam: &competition.Team{Name: "B"},
-				Streams: []competition.Stream{
-					{Language: "ru", URL: "https://www.twitch.tv/betboom_cs_ru3"},
-					{Language: "en", URL: "https://kick.com/cct_cs2", Main: true, Official: true},
-				}}},
-			withoutStream: {{ID: common.NewMatchID(), EventID: withoutStream, ScheduledAt: &noStreamAt, Format: format,
-				FirstTeam: &competition.Team{Name: "C"}, SecondTeam: &competition.Team{Name: "D"},
-				Streams: []competition.Stream{{Language: "ru", URL: "https://www.twitch.tv/betboom_cs_ru3"}}}},
+			russian: {match(russian, first, "A", "B", []competition.Stream{
+				{Language: "ru", URL: "https://vkvideo.ru/official_ru", Official: true}, enMain})},
+			english:   {match(english, second, "C", "D", []competition.Stream{ruCommunity, enMain})},
+			community: {match(community, third, "E", "F", []competition.Stream{ruCommunity})},
 		},
 	}
 	if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
 		t.Fatal(err)
 	}
 	body := lastText(*calls)
-	wantLink := `📺 <a href="https://kick.com/cct_cs2">` + h.Texts.Get("upcoming.stream", settings.Locale) + `</a>`
-	if !strings.Contains(body, wantLink) {
-		t.Fatalf("expected the main English stream link %q in:\n%s", wantLink, body)
+
+	// The chat's own language: named by platform, no language marker.
+	if want := `📺 <a href="https://vkvideo.ru/official_ru">VK Video</a>`; !strings.Contains(body, want+"\n") {
+		t.Fatalf("expected the Russian broadcast link %q with no language marker in:\n%s", want, body)
+	}
+	// No Russian broadcast: the English one, marked as such.
+	if want := `📺 <a href="https://kick.com/cct_cs2">Kick</a> · EN`; !strings.Contains(body, want) {
+		t.Fatalf("expected the English fallback link %q in:\n%s", want, body)
 	}
 	if strings.Contains(body, "betboom_cs_ru3") {
-		t.Fatalf("non-main Russian community stream must not be linked:\n%s", body)
+		t.Fatalf("an unofficial community stream must never be linked:\n%s", body)
 	}
-	if got := strings.Count(body, h.Texts.Get("upcoming.stream", settings.Locale)); got != 1 {
-		t.Fatalf("expected the stream label exactly once (only for the match with a main English broadcast), got %d in:\n%s", got, body)
+	if got := strings.Count(body, "📺"); got != 2 {
+		t.Fatalf("expected exactly 2 broadcast lines (the community-only match has none), got %d in:\n%s", got, body)
+	}
+}
+
+// Every screen suppresses Telegram's link preview — an auto-expanded stream
+// thumbnail would dwarf the match list it belongs to.
+func TestUpcoming_DisablesLinkPreview(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	h, _ := newTestHandler(t, server)
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	h.Clock = common.FixedClock(now)
+	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: "UTC"}
+	event := common.NewEventID()
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	at := now.Add(time.Hour)
+	h.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{EventID: event}}}
+	h.Catalog = &dataCatalog{
+		events: map[common.EventID]competition.Event{event: {ID: event, Name: "Cup"}},
+		unstartedMatches: map[common.EventID][]competition.Match{event: {{
+			ID: common.NewMatchID(), EventID: event, ScheduledAt: &at, Format: format,
+			FirstTeam: &competition.Team{Name: "A"}, SecondTeam: &competition.Team{Name: "B"},
+			Streams: []competition.Stream{{Language: "en", URL: "https://kick.com/cct_cs2", Main: true, Official: true}},
+		}}},
+	}
+	if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
+		t.Fatal(err)
+	}
+	last := (*calls)[len(*calls)-1]
+	options, ok := last["link_preview_options"].(map[string]any)
+	if !ok || options["is_disabled"] != true {
+		t.Fatalf("expected link_preview_options.is_disabled = true, got %v", last["link_preview_options"])
 	}
 }
 
@@ -160,5 +196,64 @@ func TestUpcoming_EmptyWhenNoEligibleMatches(t *testing.T) {
 	}
 	if got, want := lastText(*calls), h.Texts.Get("upcoming.title", settings.Locale)+"\n\n"+h.Texts.Get("upcoming.empty", settings.Locale); got != want {
 		t.Fatalf("empty schedule = %q, want %q", got, want)
+	}
+}
+
+// The broadcast language is a chat setting, toggled from the settings menu
+// like any other: it starts out following the chat's UI language and, once
+// set, overrides it. Same manager-only guard as the other settings.
+func TestSettingsStreamLanguageCallback_TogglesAndRequiresManager(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+
+	data := "settings:stream_language"
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An RU chat was following RU implicitly, so one press moves it to EN.
+	if updated.StreamLanguage != common.LocaleEN || updated.StreamLocale() != common.LocaleEN {
+		t.Fatalf("StreamLanguage = %q, want EN after one toggle", updated.StreamLanguage)
+	}
+	if len(*calls) == 0 {
+		t.Fatal("expected the settings view to be re-rendered after toggling")
+	}
+
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleMember})
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.StreamLanguage != common.LocaleEN {
+		t.Fatal("a plain member's toggle attempt must be denied")
+	}
+}
+
+// Platform naming is what makes the link self-describing; an unknown host
+// still beats a generic word, and a URL with no host falls back to it.
+func TestStreamPlatformLabel(t *testing.T) {
+	cases := map[string]string{
+		"https://www.twitch.tv/betboom_cs_ru3": "Twitch",
+		"https://m.twitch.tv/esl_csgo":         "Twitch",
+		"https://kick.com/cct_cs2":             "Kick",
+		"https://youtu.be/abc":                 "YouTube",
+		"https://watch.cct.live/stream":        "watch.cct.live",
+		"not a url at all":                     "Трансляция",
+	}
+	for raw, want := range cases {
+		if got := streamPlatformLabel(raw, "Трансляция"); got != want {
+			t.Errorf("streamPlatformLabel(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"cs2predictor/internal/platform/common"
 )
 
 // Exact score sequences and point values the poll-option/scoring logic
@@ -170,42 +172,35 @@ func TestMatch_ParticipantsKnownAndShouldCancelPrediction(t *testing.T) {
 	}
 }
 
-// TestMatch_MainStreamURL covers the deliberately narrow selection: only
-// the provider's main (always-official) broadcast, and only when it's in
-// English — never a non-main community stream, and never another language
-// just because no English one was reported.
-func TestMatch_MainStreamURL(t *testing.T) {
+// TestMatch_StreamFor covers the selection order: the preferred language's
+// main broadcast, then any official one in it, then the same two in English
+// — never an unofficial community channel.
+func TestMatch_StreamFor(t *testing.T) {
+	ruCommunity := Stream{Language: "ru", URL: "https://twitch.tv/betboom_cs_ru3"}
+	ruOfficial := Stream{Language: "ru", URL: "https://twitch.tv/official_ru", Official: true}
+	enMain := Stream{Language: "EN", URL: "https://kick.com/cct_cs2", Main: true, Official: true}
+	ptMain := Stream{Language: "pt", URL: "https://kick.com/gaules", Main: true, Official: true}
+
 	cases := []struct {
-		name    string
-		streams []Stream
-		wantURL string
-		wantOK  bool
+		name      string
+		streams   []Stream
+		preferred common.LocaleCode
+		wantURL   string
+		wantOK    bool
 	}{
-		{"no streams at all", nil, "", false},
-		{
-			"main English wins over a non-main Russian community stream",
-			[]Stream{
-				{Language: "ru", URL: "https://twitch.tv/betboom_cs_ru3", Main: false, Official: false},
-				{Language: "en", URL: "https://kick.com/cct_cs2", Main: true, Official: true},
-			},
-			"https://kick.com/cct_cs2", true,
-		},
-		{
-			"main stream in a non-English language is not returned",
-			[]Stream{{Language: "pt", URL: "https://kick.com/gaules", Main: true, Official: true}},
-			"", false,
-		},
-		{
-			"English stream that isn't the main one is not returned",
-			[]Stream{{Language: "en", URL: "https://twitch.tv/somecaster", Main: false, Official: false}},
-			"", false,
-		},
+		{"no streams at all", nil, common.LocaleRU, "", false},
+		{"preferred language's official stream wins over English", []Stream{enMain, ruOfficial}, common.LocaleRU, ruOfficial.URL, true},
+		{"main wins over another official one in the same language", []Stream{ruOfficial, {Language: "ru", URL: "https://vk.com/main_ru", Main: true, Official: true}}, common.LocaleRU, "https://vk.com/main_ru", true},
+		{"falls back to the English broadcast", []Stream{ruCommunity, enMain}, common.LocaleRU, enMain.URL, true},
+		{"unofficial stream in the preferred language is never linked", []Stream{ruCommunity}, common.LocaleRU, "", false},
+		{"no fallback to a third language", []Stream{ptMain}, common.LocaleRU, "", false},
+		{"English preference ignores the Russian official stream", []Stream{ruOfficial, enMain}, common.LocaleEN, enMain.URL, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			url, ok := (Match{Streams: c.streams}).MainStreamURL()
-			if url != c.wantURL || ok != c.wantOK {
-				t.Errorf("MainStreamURL() = %q, %v, want %q, %v", url, ok, c.wantURL, c.wantOK)
+			stream, ok := (Match{Streams: c.streams}).StreamFor(c.preferred)
+			if stream.URL != c.wantURL || ok != c.wantOK {
+				t.Errorf("StreamFor(%s) = %q, %v, want %q, %v", c.preferred, stream.URL, ok, c.wantURL, c.wantOK)
 			}
 		})
 	}

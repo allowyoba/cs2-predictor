@@ -435,7 +435,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 
 	body := h.Texts.Get("upcoming.empty", settings.Locale)
 	if len(upcoming) > 0 {
-		body = h.renderUpcomingGroups(upcoming, settings.Locale, h.Clock.Now().In(loc))
+		body = h.renderUpcomingGroups(upcoming, settings, h.Clock.Now().In(loc))
 	}
 	text := h.Texts.Get("upcoming.title", settings.Locale) + "\n\n" + body
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}}
@@ -457,7 +457,8 @@ type upcomingMatch struct {
 
 // renderUpcomingGroups groups the next ten chronological matches by event
 // identity, preserving the order of each event's earliest match.
-func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, locale common.LocaleCode, now time.Time) string {
+func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, settings chat.Settings, now time.Time) string {
+	locale := settings.Locale
 	var eventOrder []common.EventID
 	byEvent := make(map[common.EventID][]upcomingMatch)
 	for _, item := range upcoming {
@@ -478,7 +479,7 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, locale co
 				lastDay = day
 				lines = append(lines, "", italic(escapeHTML(h.dayHeading(item.when, locale, now))))
 			}
-			lines = append(lines, h.upcomingMatchLines(item, locale))
+			lines = append(lines, h.upcomingMatchLines(item, settings))
 		}
 		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
@@ -486,9 +487,11 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, locale co
 }
 
 // upcomingMatchLines renders one match under its day heading. Time and teams
-// are the primary line; format and stage are secondary metadata; a stream
-// link, when the provider reported one for this match, comes last.
-func (h *UpdateHandler) upcomingMatchLines(item upcomingMatch, locale common.LocaleCode) string {
+// are the primary line; format and stage are secondary metadata; the
+// broadcast link, labelled by platform, comes last — with its language
+// spelled out only when it isn't the one the chat asked for.
+func (h *UpdateHandler) upcomingMatchLines(item upcomingMatch, settings chat.Settings) string {
+	locale := settings.Locale
 	first, second := formatTeamCompact(item.match.FirstTeam), formatTeamCompact(item.match.SecondTeam)
 	match := matchStatusIcon(item.match.Status) + " " + code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
 	meta := item.match.Format.Label()
@@ -498,8 +501,14 @@ func (h *UpdateHandler) upcomingMatchLines(item upcomingMatch, locale common.Loc
 		}
 	}
 	lines := match + "\n  " + escapeHTML(meta)
-	if url, ok := item.match.MainStreamURL(); ok {
-		lines += "\n  📺 <a href=\"" + escapeHTML(url) + "\">" + h.Texts.Get("upcoming.stream", locale) + "</a>"
+	preferred := settings.StreamLocale()
+	if stream, ok := item.match.StreamFor(preferred); ok {
+		label := streamPlatformLabel(stream.URL, h.Texts.Get("upcoming.stream", locale))
+		line := "📺 " + link(stream.URL, escapeHTML(label))
+		if !strings.EqualFold(stream.Language, preferred.Language()) {
+			line += " · " + strings.ToUpper(escapeHTML(stream.Language))
+		}
+		lines += "\n  " + line
 	}
 	return lines
 }

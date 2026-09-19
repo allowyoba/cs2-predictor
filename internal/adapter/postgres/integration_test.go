@@ -897,6 +897,37 @@ func TestChatRepository_AutoSubscribeTopTierRoundTrips(t *testing.T) {
 	}
 }
 
+// A chat with no explicit broadcast language follows its UI language; an
+// explicit one survives the round trip and overrides it.
+func TestChatRepository_StreamLanguageRoundTrips(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	chatID := common.ChatID{Value: -890}
+
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StreamLanguage != "" || got.StreamLocale() != common.LocaleRU {
+		t.Fatalf("expected an unset StreamLanguage following the chat's RU locale, got %q", got.StreamLanguage)
+	}
+
+	got.StreamLanguage = common.LocaleEN
+	if _, err := chats.Save(ctx, *got); err != nil {
+		t.Fatal(err)
+	}
+	got, err = chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StreamLocale() != common.LocaleEN {
+		t.Fatalf("StreamLocale() = %q, want EN after saving it", got.StreamLocale())
+	}
+}
+
 // TestOutbox_PendingPublishedAndBackoff verifies the enqueue -> pending ->
 // published lifecycle, and that Failed schedules a future retry (so a
 // second Pending call right after a failure doesn't return the same
@@ -1098,8 +1129,8 @@ func TestCompetitionRepository_FindMatchesBatchFetchesStageAndBothTeams(t *testi
 	if got.Stage == nil || *got.Stage != "Final" {
 		t.Fatalf("expected stage hydrated, got %v", got.Stage)
 	}
-	if url, ok := got.MainStreamURL(); !ok || url != "https://kick.com/cct_cs2" {
-		t.Fatalf("expected streams round-tripped through the jsonb column, MainStreamURL() = %q, %v", url, ok)
+	if stream, ok := got.StreamFor(common.LocaleEN); !ok || stream.URL != "https://kick.com/cct_cs2" {
+		t.Fatalf("expected streams round-tripped through the jsonb column, StreamFor(EN) = %q, %v", stream.URL, ok)
 	}
 }
 

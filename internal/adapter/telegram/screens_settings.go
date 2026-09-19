@@ -16,10 +16,15 @@ func topTierToastText(texts *Texts, settings chat.Settings) string {
 	return texts.Get("settings.top_tier_toast", settings.Locale, tournamentMode(settings.DefaultTopTierOnly, settings.Locale))
 }
 
+// localeName spells out `of` (the language being named) in `in` (the
+// language the reader is using) — e.g. RU named in EN is "Russian".
+func (h *UpdateHandler) localeName(of, in common.LocaleCode) string {
+	return h.Texts.Get(ternary(of == common.LocaleEN, "locale.english", "locale.russian"), in)
+}
+
 func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, settings chat.Settings, dmContext bool) error {
 	text := bold(escapeHTML(h.Texts.Get("menu.settings", settings.Locale)))
-	languageKey := ternary(settings.Locale == common.LocaleRU, "locale.russian", "locale.english")
-	languageLabel := h.Texts.Get("settings.language_label", settings.Locale, h.Texts.Get(languageKey, settings.Locale))
+	languageLabel := h.Texts.Get("settings.language_label", settings.Locale, h.localeName(settings.Locale, settings.Locale))
 	timezoneLabel := h.Texts.Get("settings.timezone_label", settings.Locale, settings.Timezone)
 	tournamentMode := h.Texts.Get("settings.tournaments_all", settings.Locale)
 	if settings.DefaultTopTierOnly {
@@ -31,9 +36,11 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		autoSubscribeState = h.Texts.Get("settings.auto_subscribe_on", settings.Locale)
 	}
 	autoSubscribeLabel := h.Texts.Get("settings.auto_subscribe_label", settings.Locale, autoSubscribeState)
+	streamLanguageLabel := h.Texts.Get("settings.stream_language_label", settings.Locale, h.localeName(settings.StreamLocale(), settings.Locale))
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
 		{button(languageLabel, "settings:locale")},
 		{button(timezoneLabel, "settings:timezone")},
+		{button(streamLanguageLabel, "settings:stream_language")},
 		{button(topTierLabel, "settings:top_tier")},
 		{button(autoSubscribeLabel, "settings:auto_subscribe")},
 		{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
@@ -106,7 +113,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // adding its kind here fails that test.
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
-	"top_tier", "auto_subscribe", "games", "event_topic", "moderator_added", "moderator_removed",
+	"top_tier", "auto_subscribe", "stream_language", "games", "event_topic", "moderator_added", "moderator_removed",
 	"moderator_permissions_changed", "invitation_created", "invitation_revoked", "invitation_accepted",
 }
 
