@@ -148,7 +148,7 @@ environment; `webhook.yml` uses only the connection-related ones (`APP_USER` is 
 | `TELEGRAM_BOT_TOKEN`    | Secret   | **Required.** Written into the server `.env`                                                                      |
 | `TELEGRAM_WEBHOOK_SECRET`| Secret  | **Required.** Written into the server `.env`                                                                      |
 | `PANDASCORE_TOKEN`      | Secret   | **Required.** Written into the server `.env`                                                                      |
-| `CADDY_DOMAIN`          | Variable | **Required.** Written into the server `.env`; not sensitive on its own, so it's a variable, not a secret          |
+| `CADDY_DOMAIN`          | Variable | **Required.** Written into the server `.env`; not sensitive on its own, so it's a variable, not a secret. Must have an **A record**: Telegram delivers webhooks over IPv4 only, so `register_webhook` refuses a name that resolves to IPv6 alone (an IPv6 `nip.io` name, for example). A dual-stack name is fine. |
 | `VALVE_VRS_ENABLED`, `VALVE_VRS_SYNC_INTERVAL` | Variable | Optional. Written into the server `.env`; unset leaves the enrichment provider on its own default (see `.env.example`) |
 | `GRID_ENABLED`, `GRID_SYNC_INTERVAL`   | Variable | Optional. Written into the server `.env`; unset leaves the provider disabled |
 | `GRID_API_KEY`          | Secret   | Optional. Written into the server `.env`; required only once `GRID_ENABLED=true` |

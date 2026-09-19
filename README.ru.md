@@ -196,6 +196,10 @@ curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
   -d 'allowed_updates=["message","callback_query","poll_answer","my_chat_member"]'
 ```
 
+Адрес обязательно должен быть доступен по IPv4: Telegram
+[не доставляет вебхуки по IPv6](https://core.telegram.org/bots/webhooks), поэтому имя только с AAAA-записью —
+например, IPv6-имя `nip.io` — зарегистрируется успешно и не получит ни одного обновления. Dual-stack подходит.
+
 и проверяете, что прижилось: `curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"`. На реальном
 продакшен-сервере это делается один раз при первой установке — каждый следующий деплой меняет только код и
 контейнеры, сам URL webhook’а больше не трогается.

@@ -35,6 +35,39 @@
     fail_msg: "{{ app_dir }}/.env must set TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET and CADDY_DOMAIN."
   no_log: true
 
+- name: Resolve the webhook domain from the server itself
+  # getent, not a DNS library: this asks the same resolver the host uses,
+  # so a domain that only resolves on the controller is caught too.
+  # rc 2 is "no such host" for this family, which is an answer, not an error.
+  ansible.builtin.command:
+    argv: [getent, ahostsv4, "{{ register_webhook_env.CADDY_DOMAIN }}"]
+  register: register_webhook_ipv4
+  changed_when: false
+  failed_when: register_webhook_ipv4.rc not in [0, 2]
+  when: register_webhook_require_ipv4
+
+- name: Look for an IPv6 address when there is no IPv4 one
+  # Only to tell the two failures apart: "this name does not resolve at
+  # all" and "this name is IPv6-only" need different things done about them.
+  ansible.builtin.command:
+    argv: [getent, ahostsv6, "{{ register_webhook_env.CADDY_DOMAIN }}"]
+  register: register_webhook_ipv6
+  changed_when: false
+  failed_when: register_webhook_ipv6.rc not in [0, 2]
+  when:
+    - register_webhook_require_ipv4
+    - register_webhook_ipv4.rc | default(0) == 2
+
+- name: Require the webhook domain to have an IPv4 address
+  ansible.builtin.assert:
+    that: register_webhook_ipv4.rc == 0
+    fail_msg: >-
+      {{ register_webhook_env.CADDY_DOMAIN }}
+      {{ 'resolves to IPv6 only. Telegram delivers webhooks over IPv4 only, so it would never reach this host: publish an A record (or put an IPv4-reachable proxy in front) and re-run.'
+         if register_webhook_ipv6.rc | default(2) == 0
+         else 'does not resolve. Point it at this host before registering the webhook.' }}
+  when: register_webhook_require_ipv4
+
 - name: Re-register the webhook using the server's own secrets
   # drop_pending_updates is omitted (defaults false): re-registering the
   # same URL must not discard updates Telegram is already holding.
