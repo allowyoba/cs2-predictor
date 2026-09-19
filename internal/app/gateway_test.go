@@ -13,6 +13,7 @@ import (
 type fixedProvider struct {
 	name       string
 	events     []competition.Event
+	matches    []competition.Match
 	calls      int
 	matchCalls int
 	fail       bool
@@ -31,7 +32,7 @@ func (p *fixedProvider) Matches(context.Context, []competition.Event) ([]competi
 	if p.fail {
 		return nil, errors.New("boom")
 	}
-	return nil, nil
+	return p.matches, nil
 }
 
 // mutableClock is a common.Clock whose Now() can be advanced mid-test — used
