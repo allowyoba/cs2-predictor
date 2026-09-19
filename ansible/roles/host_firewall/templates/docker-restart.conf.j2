@@ -1,0 +1,10 @@
+# Managed by ansible/roles/host_firewall — do not edit by hand.
+# See host_firewall_docker_start_limit_* for why these are widened.
+[Unit]
+Wants=network-online.target
+StartLimitIntervalSec={{ host_firewall_docker_start_limit_interval }}
+StartLimitBurst={{ host_firewall_docker_start_limit_burst }}
+
+[Service]
+Restart=on-failure
+RestartSec=5s

@@ -1,0 +1,14 @@
+[Unit]
+Description=cs2predictor host ingress firewall
+# Managed by ansible/roles/host_firewall — do not edit by hand.
+Wants=network-online.target
+After=network-online.target
+Before=docker.service fail2ban.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cs2predictor-firewall host
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

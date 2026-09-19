@@ -1,0 +1,27 @@
+---
+# The SSH port the firewall keeps open, read from /etc/cs2predictor/ssh-port
+# at every run rather than baked into the rules. Deliberately empty by
+# default: writing a wrong port here would lock everyone out of the host at
+# the next run, so the file is only (re)written when an operator passes a
+# port explicitly, and is otherwise left exactly as it is.
+host_firewall_ssh_port: ""
+
+# systemd gives up on a unit that fails this many times inside this window.
+# Docker's packaged unit ships 3 failures in 60s, which a boot-time race
+# (see the script's wait for the default route) can burn through in four
+# seconds — leaving the host with no container runtime until a human
+# notices. A real outage, hence the wider window.
+host_firewall_docker_start_limit_burst: 10
+host_firewall_docker_start_limit_interval: 300
+
+# Superseded artifacts from earlier iterations of this setup, removed on
+# every run. Leaving them in place is not harmless: the old drop-in took
+# Docker down at boot, and the old INPUT chain was inserted ahead of the
+# current one and silently swallowed everything it did not know about.
+host_firewall_legacy_units:
+  - /etc/systemd/system/docker.service.d/20-cs2predictor-firewall.conf
+  - /etc/systemd/system/cs2predictor-host-firewall.service
+host_firewall_legacy_scripts:
+  - /usr/local/sbin/cs2predictor-host-firewall
+  - /usr/local/sbin/cs2predictor-docker-firewall
+host_firewall_legacy_chain: CS2PREDICTOR-HOST-IN
