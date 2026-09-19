@@ -1,0 +1,6 @@
+# Managed by ansible/roles/host_firewall — do not edit by hand.
+# fail2ban inserts its own rules into INPUT and expects the base chain to
+# exist first; without this it can start before any of it is in place.
+[Unit]
+After=cs2predictor-firewall.service
+Requires=cs2predictor-firewall.service
