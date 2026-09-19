@@ -23,17 +23,21 @@ type EventCompletionService struct {
 	subscriptions subscription.Repository
 	chats         chat.Repository
 	scoringRepo   scoring.Repository
-	outbox        common.Outbox
-	clock         common.Clock
-	runTx         TxRunner
-	log           *slog.Logger
+	// specials backs the nominations attached to the recap. Optional: a
+	// deployment without it still gets standings, just no awards.
+	specials scoring.EventSpecialsRepository
+	outbox   common.Outbox
+	clock    common.Clock
+	runTx    TxRunner
+	log      *slog.Logger
 }
 
 func NewEventCompletionService(catalog competition.Catalog, subscriptions subscription.Repository, chats chat.Repository,
-	scoringRepo scoring.Repository, outbox common.Outbox, clock common.Clock, runTx TxRunner, log *slog.Logger) *EventCompletionService {
+	scoringRepo scoring.Repository, specials scoring.EventSpecialsRepository, outbox common.Outbox,
+	clock common.Clock, runTx TxRunner, log *slog.Logger) *EventCompletionService {
 	return &EventCompletionService{
 		catalog: catalog, subscriptions: subscriptions, chats: chats,
-		scoringRepo: scoringRepo, outbox: outbox, clock: clock, runTx: runTx, log: log,
+		scoringRepo: scoringRepo, specials: specials, outbox: outbox, clock: clock, runTx: runTx, log: log,
 	}
 }
 
@@ -137,7 +141,10 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 				ExactPredictions: st.ExactPredictions, CorrectPredictions: st.CorrectPredictions, Predictions: st.Predictions,
 			}
 		}
-		notification := common.EventFinishedNotification{ChatID: chatID.Value, TopicID: topicID, EventName: event.Name, Standings: notificationStandings}
+		notification := common.EventFinishedNotification{
+			ChatID: chatID.Value, TopicID: topicID, EventName: event.Name,
+			Standings: notificationStandings, Awards: s.awards(txCtx, chatID, event.ID, standings),
+		}
 		payload, err := json.Marshal(notification)
 		if err != nil {
 			return err
@@ -148,6 +155,29 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 
 		return s.scoringRepo.MarkEventCompleted(txCtx, chatID, event.ID, hash, s.clock.Now())
 	})
+}
+
+// awards picks this tournament's nominations. Best effort: a recap without
+// its nominations is still a recap, whereas failing the whole completion —
+// and with it the medals — over a decorative section would not be.
+func (s *EventCompletionService) awards(ctx context.Context, chatID common.ChatID, eventID common.EventID,
+	standings []scoring.UserStanding) []common.EventAwardNotification {
+	if s.specials == nil {
+		return nil
+	}
+	specials, err := s.specials.EventSpecials(ctx, chatID, eventID)
+	if err != nil {
+		s.log.Error("event awards lookup failed", "chatId", chatID.Value, "eventId", eventID.Value, "error", err)
+		return nil
+	}
+	picked := scoring.PickEventAwards(standings, specials, scoring.DefaultAwardsShown)
+	out := make([]common.EventAwardNotification, 0, len(picked))
+	for _, a := range picked {
+		out = append(out, common.EventAwardNotification{
+			Kind: a.Kind, DisplayName: a.DisplayName, Value: a.Value, Detail: a.Detail,
+		})
+	}
+	return out
 }
 
 // completionHash is a cheap content hash of the final standings

@@ -928,6 +928,116 @@ func TestChatRepository_StreamLanguageRoundTrips(t *testing.T) {
 	}
 }
 
+// The tournament nominations depend on numbers no aggregate can produce:
+// who went against the chat's majority, who was the only one right, how
+// long a correct run lasted, and who voted in every single match. All four
+// come out of one query, so all four are checked against one real dataset.
+func TestScoringRepository_EventSpecialsCountsCrowdRelativeAchievements(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	chatID := common.ChatID{Value: -4242}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Major", ExternalID: "ev-specials", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	options := make([]prediction.Option, 0)
+	for i, sc := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: sc})
+	}
+	// Index 0 is 2:0 (first team wins), the last option is 0:2 (second
+	// team wins) — the two sides of the poll.
+	firstWins, secondWins := 0, len(options)-1
+
+	crowd := common.UserID{Value: 501}
+	rebel := common.UserID{Value: 502}
+	quiet := common.UserID{Value: 503}
+
+	started := time.Now().UTC().Add(-72 * time.Hour)
+	// Three matches: the crowd is right on the first, the rebel alone on
+	// the second and third, having gone against the majority both times.
+	type plan struct {
+		crowdPick, rebelPick, quietPick int
+		correct                         []common.UserID
+	}
+	plans := []plan{
+		{crowdPick: firstWins, rebelPick: secondWins, quietPick: firstWins, correct: []common.UserID{crowd, quiet}},
+		{crowdPick: firstWins, rebelPick: secondWins, quietPick: firstWins, correct: []common.UserID{rebel}},
+		{crowdPick: firstWins, rebelPick: secondWins, quietPick: firstWins, correct: []common.UserID{rebel}},
+	}
+	for i, p := range plans {
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: fmt.Sprintf("m-spec-%d", i),
+			Status: competition.MatchFinished, Format: format,
+		}
+		playedAt := started.Add(time.Duration(i) * time.Hour)
+		match.ActualStartedAt = &playedAt
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		poll := prediction.Poll{ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID, Options: options, Status: prediction.PollClosed, ClosesAt: started}
+		saved, err := predictions.SavePoll(ctx, poll)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for user, pick := range map[common.UserID]int{crowd: p.crowdPick, rebel: p.rebelPick, quiet: p.quietPick} {
+			name := fmt.Sprintf("user-%d", user.Value)
+			if err := predictions.SaveVote(ctx, prediction.Vote{
+				PollID: saved.ID, UserID: user, OptionIndex: pick, DisplayName: name, VotedAt: started,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var awards []scoring.Award
+		for _, user := range p.correct {
+			awards = append(awards, scoring.Award{
+				ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: user,
+				Points: 1, Kind: scoring.AwardOutcome, MatchStartedAt: playedAt, AwardedAt: started,
+			})
+		}
+		if err := scoringRepo.ReplaceAwards(ctx, saved.ID, awards); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	specials, err := scoringRepo.EventSpecials(ctx, chatID, event.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if specials.TotalPolls != 3 {
+		t.Fatalf("TotalPolls = %d, want 3", specials.TotalPolls)
+	}
+	byUser := map[int64]scoring.EventUserSpecials{}
+	for _, u := range specials.Users {
+		byUser[u.UserID.Value] = u
+	}
+	got := byUser[rebel.Value]
+	if got.ContrarianWins != 2 {
+		t.Fatalf("rebel ContrarianWins = %d, want 2 (right twice against the majority)", got.ContrarianWins)
+	}
+	if got.LoneCorrect != 2 {
+		t.Fatalf("rebel LoneCorrect = %d, want 2 (the only one right both times)", got.LoneCorrect)
+	}
+	if got.LongestStreak != 2 {
+		t.Fatalf("rebel LongestStreak = %d, want 2 (matches two and three)", got.LongestStreak)
+	}
+	if got.VotedPolls != 3 {
+		t.Fatalf("rebel VotedPolls = %d, want 3", got.VotedPolls)
+	}
+	// The crowd was right only when it was the majority, which earns
+	// nothing crowd-relative.
+	if c := byUser[crowd.Value]; c.ContrarianWins != 0 || c.LoneCorrect != 0 || c.LongestStreak != 1 {
+		t.Fatalf("crowd specials = %+v, want no contrarian credit and a streak of one", c)
+	}
+}
+
 // TestOutbox_PendingPublishedAndBackoff verifies the enqueue -> pending ->
 // published lifecycle, and that Failed schedules a future retry (so a
 // second Pending call right after a failure doesn't return the same

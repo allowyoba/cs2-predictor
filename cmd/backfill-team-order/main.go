@@ -146,7 +146,7 @@ func run(ctx context.Context, pool *pgxpool.Pool, apply bool, log *slog.Logger) 
 	})
 	scoringService := scoring.NewService(predictionsRepo, scoringRepo, clock)
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx)
-	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, outbox, clock, runTx, log)
+	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log)
 
 	touchedEvents := map[common.EventID]competition.Event{}
 

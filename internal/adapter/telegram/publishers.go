@@ -12,6 +12,7 @@ import (
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/prediction"
+	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -241,8 +242,11 @@ func (p *EventFinishedPublisher) Publish(ctx context.Context, message common.Out
 		podium = strings.Join(lines, "\n")
 	}
 
-	text := fmt.Sprintf("%s\n\n%s\n\n%s",
-		p.texts.Get("event.finished", locale, escapeHTML(n.EventName)), podium, p.texts.Get("event.congratulations", locale))
+	text := fmt.Sprintf("%s\n\n%s", p.texts.Get("event.finished", locale, escapeHTML(n.EventName)), podium)
+	if awards := renderEventAwards(p.texts, locale, n.Awards); awards != "" {
+		text += "\n\n" + awards
+	}
+	text += "\n\n" + p.texts.Get("event.congratulations", locale)
 
 	msgPayload := map[string]any{"chat_id": n.ChatID, "text": text, "parse_mode": "HTML"}
 	if n.TopicID != nil {
@@ -705,6 +709,41 @@ func (p *TeamMatchAskPublisher) Publish(ctx context.Context, message common.Outb
 	}
 	p.record("error")
 	return err
+}
+
+// awardIcons pairs each nomination with a glyph, so a recap reads as a
+// short awards list rather than three more lines of statistics.
+var awardIcons = map[string]string{
+	scoring.AwardUnderdog:  "🐴",
+	scoring.AwardLoneVoice: "🗣",
+	scoring.AwardStreak:    "🔥",
+	scoring.AwardExact:     "🎯",
+	scoring.AwardFlawless:  "💎",
+	scoring.AwardSniper:    "🔭",
+	scoring.AwardIronman:   "🧱",
+	scoring.AwardVolume:    "⚙️",
+}
+
+// renderEventAwards renders the nominations block, or "" when a tournament
+// produced none worth showing (a very small chat, a two-match group stage).
+// Each title's wording lives in the bundles under award.<kind>, and the
+// value it carries is whatever that nomination is measured in.
+func renderEventAwards(texts *Texts, locale common.LocaleCode, awards []common.EventAwardNotification) string {
+	if len(awards) == 0 {
+		return ""
+	}
+	lines := []string{bold(texts.Get("event.awards_title", locale))}
+	for _, a := range awards {
+		icon := awardIcons[a.Kind]
+		if icon == "" {
+			icon = "🏅"
+		}
+		title := texts.Get("award."+a.Kind, locale)
+		value := texts.Get("award.value."+a.Kind, locale, a.Value, a.Detail)
+		lines = append(lines, fmt.Sprintf("%s %s — %s (%s)",
+			icon, bold(title), code(escapeHTML(truncate(a.DisplayName, 28))), value))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // EventEvePublisher publishes the "telegram.event-eve" outbox event type:

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -110,6 +111,33 @@ func TestI18n_EveryReferencedKeyResolves(t *testing.T) {
 		}
 		if !en[key] {
 			t.Errorf("key %q used in %v is missing from the EN bundle", key, files)
+		}
+	}
+}
+
+// Every nomination the domain can hand out must have a title and a value
+// format in both bundles. Like the change-history labels below, these keys
+// are composed at runtime ("award."+kind), so the scanner above cannot see
+// them — enumerating the pool here is what keeps a new nomination from
+// shipping as a raw key.
+func TestI18n_EveryEventAwardHasALabel(t *testing.T) {
+	ru := bundleKeys(t, filepath.Join("i18n", "messages_ru.properties"))
+	en := bundleKeys(t, filepath.Join("i18n", "messages_en.properties"))
+	kinds := []string{
+		scoring.AwardUnderdog, scoring.AwardLoneVoice, scoring.AwardStreak, scoring.AwardExact,
+		scoring.AwardFlawless, scoring.AwardSniper, scoring.AwardIronman, scoring.AwardVolume,
+	}
+	for _, kind := range kinds {
+		for _, key := range []string{"award." + kind, "award.value." + kind} {
+			if !ru[key] {
+				t.Errorf("award %q has no RU label (%s)", kind, key)
+			}
+			if !en[key] {
+				t.Errorf("award %q has no EN label (%s)", kind, key)
+			}
+		}
+		if awardIcons[kind] == "" {
+			t.Errorf("award %q has no icon", kind)
 		}
 	}
 }
