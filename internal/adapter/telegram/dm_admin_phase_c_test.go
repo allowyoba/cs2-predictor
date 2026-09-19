@@ -41,25 +41,25 @@ func (m *fakeAdminMembership) Administrators(context.Context, common.ChatID) ([]
 
 var _ chat.AdministratorLister = (*fakeAdminMembership)(nil)
 
-type fakePendingUnsubscribes struct {
-	items map[string]chat.PendingUnsubscribe
+type fakePendingApprovals struct {
+	items map[string]chat.PendingApproval
 }
 
-func newFakePendingUnsubscribes() *fakePendingUnsubscribes {
-	return &fakePendingUnsubscribes{items: map[string]chat.PendingUnsubscribe{}}
+func newFakePendingApprovals() *fakePendingApprovals {
+	return &fakePendingApprovals{items: map[string]chat.PendingApproval{}}
 }
-func (f *fakePendingUnsubscribes) Create(_ context.Context, p chat.PendingUnsubscribe) error {
+func (f *fakePendingApprovals) Create(_ context.Context, p chat.PendingApproval) error {
 	f.items[p.ID.String()] = p
 	return nil
 }
-func (f *fakePendingUnsubscribes) Find(_ context.Context, id common.RequestID) (*chat.PendingUnsubscribe, error) {
+func (f *fakePendingApprovals) Find(_ context.Context, id common.RequestID) (*chat.PendingApproval, error) {
 	p, ok := f.items[id.String()]
 	if !ok {
 		return nil, nil
 	}
 	return &p, nil
 }
-func (f *fakePendingUnsubscribes) Resolve(_ context.Context, id common.RequestID) error {
+func (f *fakePendingApprovals) Resolve(_ context.Context, id common.RequestID) error {
 	delete(f.items, id.String())
 	return nil
 }
@@ -106,15 +106,15 @@ func (f *fakeOutbox) Pending(context.Context, int) ([]common.OutboxMessage, erro
 func (f *fakeOutbox) Published(context.Context, uuid.UUID, time.Time) error        { return nil }
 func (f *fakeOutbox) Failed(context.Context, uuid.UUID, time.Time, string) error   { return nil }
 
-func setupUnsubscribeTest(t *testing.T, admins []common.UserID, unreachable map[int64]bool, eventID common.EventID, chatID common.ChatID) (*UpdateHandler, *fakeChats, *fakePendingUnsubscribes, *[]map[string]any) {
+func setupUnsubscribeTest(t *testing.T, admins []common.UserID, unreachable map[int64]bool, eventID common.EventID, chatID common.ChatID) (*UpdateHandler, *fakeChats, *fakePendingApprovals, *[]map[string]any) {
 	t.Helper()
 	server, calls := newSelectiveServer(t, unreachable)
 	handler, chats := newTestHandler(t, server)
 	handler.Authorization = chat.NewAuthorizationService(chats, &fakeAdminMembership{admins: admins})
 	handler.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}}
 	handler.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{ChatID: chatID, EventID: eventID}}}
-	pending := newFakePendingUnsubscribes()
-	handler.PendingUnsubscribes = pending
+	pending := newFakePendingApprovals()
+	handler.PendingApprovals = pending
 	handler.Outbox = &fakeOutbox{}
 	// Everyone except the requester counts as DM-reachable unless the test
 	// says otherwise: that is what decides whether a second signature can be
@@ -144,7 +144,7 @@ func TestUnsubscribe_NoOtherManagers_CreatesSelfConfirmablePending(t *testing.T)
 	if len(pending.items) != 1 {
 		t.Fatalf("expected 1 pending request, got %d", len(pending.items))
 	}
-	var p chat.PendingUnsubscribe
+	var p chat.PendingApproval
 	for _, v := range pending.items {
 		p = v
 	}
@@ -171,7 +171,7 @@ func TestUnsubscribe_ReachableOtherManager_FansOutAndRequesterCannotSelfConfirm(
 		t.Fatal(err)
 	}
 
-	var p chat.PendingUnsubscribe
+	var p chat.PendingApproval
 	for _, v := range pending.items {
 		p = v
 	}
@@ -216,7 +216,7 @@ func TestUnsubscribe_UnreachableOtherManagers_FallsBackToSelfConfirm(t *testing.
 		t.Fatal(err)
 	}
 
-	var p chat.PendingUnsubscribe
+	var p chat.PendingApproval
 	for _, v := range pending.items {
 		p = v
 	}
@@ -238,8 +238,8 @@ func TestConfirmUnsubscribe_SelfConfirmable_RequesterConfirmsSuccessfully(t *tes
 
 	requestID := common.NewRequestID()
 	now := time.Now()
-	_ = pending.Create(context.Background(), chat.PendingUnsubscribe{
-		ID: requestID, ChatID: chatID, EventID: eventID, RequestedBy: requester,
+	_ = pending.Create(context.Background(), chat.PendingApproval{
+		ID: requestID, ChatID: chatID, Kind: chat.ApprovalUnsubscribe, EventID: &eventID, RequestedBy: requester,
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour), SelfConfirmable: true,
 	})
 
@@ -278,8 +278,8 @@ func TestConfirmUnsubscribe_NotSelfConfirmable_RequesterCannotConfirmOwnRequest(
 
 	requestID := common.NewRequestID()
 	now := time.Now()
-	_ = pending.Create(context.Background(), chat.PendingUnsubscribe{
-		ID: requestID, ChatID: chatID, EventID: eventID, RequestedBy: requester,
+	_ = pending.Create(context.Background(), chat.PendingApproval{
+		ID: requestID, ChatID: chatID, Kind: chat.ApprovalUnsubscribe, EventID: &eventID, RequestedBy: requester,
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour), SelfConfirmable: false,
 	})
 
@@ -307,8 +307,8 @@ func TestConfirmUnsubscribe_OtherManagerConfirms_UnsubscribesAndNotifiesRequeste
 
 	requestID := common.NewRequestID()
 	now := time.Now()
-	_ = pending.Create(context.Background(), chat.PendingUnsubscribe{
-		ID: requestID, ChatID: chatID, EventID: eventID, RequestedBy: requester,
+	_ = pending.Create(context.Background(), chat.PendingApproval{
+		ID: requestID, ChatID: chatID, Kind: chat.ApprovalUnsubscribe, EventID: &eventID, RequestedBy: requester,
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour), SelfConfirmable: false,
 	})
 
@@ -361,8 +361,8 @@ func TestRejectUnsubscribe_OtherManagerRejects_NotifiesRequesterWithoutUnsubscri
 
 	requestID := common.NewRequestID()
 	now := time.Now()
-	_ = pending.Create(context.Background(), chat.PendingUnsubscribe{
-		ID: requestID, ChatID: chatID, EventID: eventID, RequestedBy: requester,
+	_ = pending.Create(context.Background(), chat.PendingApproval{
+		ID: requestID, ChatID: chatID, Kind: chat.ApprovalUnsubscribe, EventID: &eventID, RequestedBy: requester,
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour), SelfConfirmable: false,
 	})
 
@@ -484,8 +484,8 @@ func TestRejectUnsubscribe_RequesterWithdraws_TellsTheManagersWhoWereAsked(t *te
 
 	requestID := common.NewRequestID()
 	now := time.Now()
-	_ = pending.Create(context.Background(), chat.PendingUnsubscribe{
-		ID: requestID, ChatID: chatID, EventID: eventID, RequestedBy: requester,
+	_ = pending.Create(context.Background(), chat.PendingApproval{
+		ID: requestID, ChatID: chatID, Kind: chat.ApprovalUnsubscribe, EventID: &eventID, RequestedBy: requester,
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour), SelfConfirmable: false,
 	})
 

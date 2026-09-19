@@ -192,6 +192,12 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	question := composePollQuestion(firstName, firstRecord, secondName, secondRecord)
 
 	eventName := event.Tier.Badge() + escapeHTML(event.Name)
+	// Named only where it is actually ambiguous: a chat that follows one
+	// game knows what it is looking at, and a poll is dense enough already.
+	// It rides on the tournament line rather than taking one of its own.
+	if settings != nil && len(settings.EnabledGames) > 1 {
+		eventName += " · " + g.texts.Get(gameShortLabelKey(event.Game), locale)
+	}
 	vrsLine := formatRankingCombined(g.texts, locale, rankings, match.FirstTeam, match.SecondTeam)
 	hltvLine := formatRankingCombined(g.texts, locale, hltvRankings, match.FirstTeam, match.SecondTeam)
 	var vrsUpdated, hltvUpdated string

@@ -71,6 +71,13 @@ func gameLabelKey(code competition.GameCode) string {
 	}
 }
 
+// gameShortLabelKey is gameLabelKey's compact counterpart, for the places
+// the game is named inline next to something else ("🏆 CS Major · CS2")
+// rather than standing alone as a heading.
+func gameShortLabelKey(code competition.GameCode) string {
+	return gameLabelKey(code) + "_short"
+}
+
 // gamesView lists every supported game as a toggle — a chat starts with
 // none enabled (see chat_enabled_game's migration), so this is also the
 // only place a chat ever turns one on for the first time.

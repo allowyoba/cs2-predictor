@@ -504,3 +504,47 @@ func TestFetchRankings_SendsMaxTeamsZeroExplicitly(t *testing.T) {
 		t.Fatalf("actor input = %s, want an explicit maxTeams:0", body)
 	}
 }
+
+// The startup path: a run that finished while the bot was down is read
+// back for free, and no new run is started to get it.
+func TestFetchLatestCached_ReadsTheLastFinishedRunWithoutStartingOne(t *testing.T) {
+	fake := newFakeApify(t)
+	fake.succeeded = []runInfo{
+		{ID: "run-other", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-valve", FinishedAt: finishedAt(-time.Hour)},
+		{ID: "run-mine", Status: statusSucceeded, DefaultKeyValueStoreID: "ds-1", FinishedAt: finishedAt(-2 * time.Hour)},
+	}
+	fake.outputs["ds-valve"] = strings.Replace(sampleOutput, `"rankingType": "hltv"`, `"rankingType": "valve"`, 1)
+	fake.outputs["ds-1"] = sampleOutput
+	server := fake.serve()
+	defer server.Close()
+
+	teams, err := newTestProvider(t, server, 30).FetchLatestCached(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(teams) != 2 || teams[0].Identity.Name != "Spirit" {
+		t.Fatalf("expected the hltv run's teams, got %+v", teams)
+	}
+	if fake.startedRuns() != 0 {
+		t.Fatal("reading a finished run must never start a new one")
+	}
+}
+
+// Nothing finished recently is not an error: the scheduled job will start a
+// run when its window opens.
+func TestFetchLatestCached_NoFinishedRunIsNotAnError(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
+	defer server.Close()
+
+	teams, err := newTestProvider(t, server, 30).FetchLatestCached(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(teams) != 0 {
+		t.Fatalf("expected nothing to adopt, got %+v", teams)
+	}
+	if fake.startedRuns() != 0 {
+		t.Fatal("expected no run to be started")
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/prediction"
+	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -241,8 +242,11 @@ func (p *EventFinishedPublisher) Publish(ctx context.Context, message common.Out
 		podium = strings.Join(lines, "\n")
 	}
 
-	text := fmt.Sprintf("%s\n\n%s\n\n%s",
-		p.texts.Get("event.finished", locale, escapeHTML(n.EventName)), podium, p.texts.Get("event.congratulations", locale))
+	text := fmt.Sprintf("%s\n\n%s", p.texts.Get("event.finished", locale, escapeHTML(n.EventName)), podium)
+	if awards := renderEventAwards(p.texts, locale, n.Awards); awards != "" {
+		text += "\n\n" + awards
+	}
+	text += "\n\n" + p.texts.Get("event.congratulations", locale)
 
 	msgPayload := map[string]any{"chat_id": n.ChatID, "text": text, "parse_mode": "HTML"}
 	if n.TopicID != nil {
@@ -449,7 +453,11 @@ func (p *UnsubscribeConfirmationPublisher) Publish(ctx context.Context, message 
 	}
 	locale := common.LocaleFrom(n.Locale)
 
-	text := p.texts.Get("events.unsubscribe_fanout", locale,
+	fanoutKey := "events.unsubscribe_fanout"
+	if n.Kind == string(chat.ApprovalDisableGame) {
+		fanoutKey = "games.disable_fanout"
+	}
+	text := p.texts.Get(fanoutKey, locale,
 		bold(escapeHTML(n.ChatTitle)), bold(escapeHTML(n.EventName)))
 	if n.Requester != "" {
 		text += "\n" + italic(escapeHTML(n.Requester))
@@ -604,6 +612,49 @@ func NewTeamMatchOperatorPingPublisher(client *Client, chats chat.Repository, te
 	}
 }
 
+// NewAdminAlertPublisher delivers one operational notice to one configured
+// administrator chat (see app.AdminAlerter). Like the operator ping above
+// it renders in RU, this project's primary locale: these chats are an ops
+// contact list, not chats with a language setting of their own.
+func NewAdminAlertPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) common.OutboxPublisher {
+	return &personalNotePublisher{
+		eventType: "telegram.admin-alert", client: client, chats: chats, texts: texts, metrics: metrics,
+		compose: func(payload string) (int64, string, error) {
+			var n common.AdminAlertNotification
+			if err := json.Unmarshal([]byte(payload), &n); err != nil {
+				return 0, "", err
+			}
+			locale := common.LocaleRU
+			var text string
+			switch n.Kind {
+			case common.AdminAlertRelease:
+				text = texts.Get("admin.alert_release", locale, escapeHTML(n.Version), escapeHTML(shortCommit(n.Commit)))
+			case common.AdminAlertProviderDown:
+				text = texts.Get("admin.alert_provider_down", locale, escapeHTML(n.Provider), n.Failures)
+				if detail := strings.TrimSpace(n.Detail); detail != "" {
+					text += "\n" + code(escapeHTML(truncate(detail, 200)))
+				}
+			case common.AdminAlertProviderRecovered:
+				text = texts.Get("admin.alert_provider_recovered", locale, escapeHTML(n.Provider))
+			default:
+				// An unknown kind is a bug in the enqueuing side, but
+				// dropping the message silently would hide it twice over.
+				return 0, "", fmt.Errorf("unknown admin alert kind %q", n.Kind)
+			}
+			return n.ChatID, text, nil
+		},
+	}
+}
+
+// shortCommit trims a full SHA to the usual seven characters, leaving
+// anything shorter (or already short) alone.
+func shortCommit(commit string) string {
+	if len(commit) > 7 {
+		return commit[:7]
+	}
+	return commit
+}
+
 // TeamMatchAskPublisher delivers one crowd-review question to one helper's
 // DM (the "telegram.team-match-ask" outbox event type) — see
 // app.TeamMatchService.AskChatHelpers for who gets asked and how often.
@@ -661,5 +712,103 @@ func (p *TeamMatchAskPublisher) Publish(ctx context.Context, message common.Outb
 		return nil
 	}
 	p.record("error")
+	return err
+}
+
+// awardIcons pairs each nomination with a glyph, so a recap reads as a
+// short awards list rather than three more lines of statistics.
+var awardIcons = map[string]string{
+	scoring.AwardUnderdog:  "🐴",
+	scoring.AwardLoneVoice: "🗣",
+	scoring.AwardStreak:    "🔥",
+	scoring.AwardExact:     "🎯",
+	scoring.AwardFlawless:  "💎",
+	scoring.AwardSniper:    "🔭",
+	scoring.AwardIronman:   "🧱",
+	scoring.AwardVolume:    "⚙️",
+}
+
+// renderEventAwards renders the nominations block, or "" when a tournament
+// produced none worth showing (a very small chat, a two-match group stage).
+// Each title's wording lives in the bundles under award.<kind>, and the
+// value it carries is whatever that nomination is measured in.
+func renderEventAwards(texts *Texts, locale common.LocaleCode, awards []common.EventAwardNotification) string {
+	if len(awards) == 0 {
+		return ""
+	}
+	lines := []string{bold(texts.Get("event.awards_title", locale))}
+	for _, a := range awards {
+		icon := awardIcons[a.Kind]
+		if icon == "" {
+			icon = "🏅"
+		}
+		title := texts.Get("award."+a.Kind, locale)
+		value := texts.Get("award.value."+a.Kind, locale, a.Value, a.Detail)
+		lines = append(lines, fmt.Sprintf("%s %s — %s (%s)",
+			icon, bold(title), code(escapeHTML(truncate(a.DisplayName, 28))), value))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// EventEvePublisher publishes the "telegram.event-eve" outbox event type:
+// the day-before nudge for a tournament a chat follows (see
+// app.EventEveScheduler). Sent into the same topic the tournament's other
+// messages use, with the same topic-unavailable fallback the finished
+// notification applies, and with one button — the point of the message is
+// that acting on it takes a single tap.
+type EventEvePublisher struct {
+	client *Client
+	chats  chat.Repository
+	texts  *Texts
+}
+
+func NewEventEvePublisher(client *Client, chats chat.Repository, texts *Texts) *EventEvePublisher {
+	return &EventEvePublisher{client: client, chats: chats, texts: texts}
+}
+
+func (p *EventEvePublisher) Supports(eventType string) bool {
+	return eventType == "telegram.event-eve"
+}
+
+func (p *EventEvePublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
+	var n common.EventEveNotification
+	if err := json.Unmarshal([]byte(message.Payload), &n); err != nil {
+		return err
+	}
+	locale := resolveLocale(ctx, p.chats, common.ChatID{Value: n.ChatID})
+
+	lines := []string{
+		p.texts.Get("event.eve_title", locale, bold(escapeHTML(n.EventName))),
+		"",
+		p.texts.Get("event.eve_start", locale, code(escapeHTML(n.StartsAt)), n.FirstDayMatches),
+	}
+	for _, m := range n.Matches {
+		lines = append(lines, "  "+code(escapeHTML(m.LocalTime))+" "+
+			bold(escapeHTML(m.FirstTeam))+" — "+bold(escapeHTML(m.SecondTeam)))
+	}
+	if strings.TrimSpace(n.Champion) != "" {
+		lines = append(lines, "", p.texts.Get("event.eve_champion", locale, bold(escapeHTML(truncate(n.Champion, 28)))))
+	}
+	lines = append(lines, "", p.texts.Get("event.eve_call", locale))
+
+	keyboard := InlineKeyboard{InlineKeyboard: [][]InlineButton{
+		{button(p.texts.Get("menu.upcoming", locale), "menu:upcoming")},
+	}}
+	msgPayload := map[string]any{
+		"chat_id": n.ChatID, "text": strings.Join(lines, "\n"), "parse_mode": "HTML",
+		"reply_markup": keyboard,
+	}
+	if n.TopicID != nil {
+		msgPayload["message_thread_id"] = *n.TopicID
+	}
+
+	_, err := p.client.Call(ctx, "sendMessage", msgPayload)
+	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && n.TopicID != nil && apiErr.IsTopicUnavailable() {
+			delete(msgPayload, "message_thread_id")
+			_, err = p.client.Call(ctx, "sendMessage", msgPayload)
+		}
+	}
 	return err
 }

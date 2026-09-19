@@ -76,9 +76,9 @@ type UpdateHandler struct {
 	Client        *Client
 	Clock         common.Clock
 	Log           *slog.Logger
-	// PendingUnsubscribes backs the DM fan-out confirmation flow for
-	// unsubscribe — see chat.PendingUnsubscribeRepository.
-	PendingUnsubscribes chat.PendingUnsubscribeRepository
+	// PendingApprovals backs the DM fan-out confirmation flow for
+	// unsubscribe — see chat.PendingApprovalRepository.
+	PendingApprovals chat.PendingApprovalRepository
 	// Outbox carries the confirmation fan-out: one event per manager to
 	// ask, so the webhook returns without waiting on N sequential sends and
 	// delivery inherits the dispatcher's retries and pacing.
@@ -735,10 +735,9 @@ func (h *UpdateHandler) searchEvents(ctx context.Context, msg *Message, settings
 	if len(found) > 20 {
 		found = found[:20]
 	}
-	var rows [][]InlineButton
-	for _, e := range found {
-		rows = append(rows, []InlineButton{button(eventLabel(e), cbSubscribe(e.ID))})
-	}
+	rows := h.gameSectionRows(found, settings.Locale, func(e competition.Event) []InlineButton {
+		return []InlineButton{button(eventLabel(e), cbSubscribe(e.ID))}
+	})
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "events:add")})
 
 	header := bold(escapeHTML(query))

@@ -161,6 +161,17 @@ type SyncStateRepository interface {
 // slow provider never looks like a broken one.
 var ErrFetchPending = errors.New("provider fetch still running")
 
+// CachedRankingProvider is an optional extension for a provider whose
+// results already exist somewhere outside this application — an Apify run
+// that finished while the bot was down, say. FetchLatestCached reads the
+// freshest such result without starting (or paying for) new work, which is
+// what makes it safe to call on every startup.
+type CachedRankingProvider interface {
+	// FetchLatestCached returns the newest result the provider already
+	// holds, or nil when it holds none. Never starts remote work.
+	FetchLatestCached(ctx context.Context) ([]RankedTeam, error)
+}
+
 // ProviderRun tracks one long-running fetch a provider started remotely and
 // will collect later, across ticks and restarts. It exists so a fetch that
 // outlives the request that started it is never started twice — decisive

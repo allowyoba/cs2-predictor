@@ -65,11 +65,24 @@ type CompetitionProviderGateway struct {
 	clock           common.Clock
 	startedAt       time.Time
 
+	// health, when set, is told about the two transitions worth alerting
+	// on: a provider's circuit opening, and its first success afterwards.
+	// Optional — nil simply means nobody is listening.
+	health common.ProviderHealthObserver
+
 	mu               sync.Mutex
 	lastSuccess      map[string]time.Time
 	lastFailure      string
 	failureStreak    map[string]int
 	circuitOpenUntil map[string]time.Time
+}
+
+// ObserveHealth attaches the observer after construction, since the
+// alerter it belongs to needs the outbox, which is wired later than the
+// gateway. Not concurrency-guarded on purpose: it is a composition-root
+// call, made before any job can reach the gateway.
+func (g *CompetitionProviderGateway) ObserveHealth(observer common.ProviderHealthObserver) {
+	g.health = observer
 }
 
 // ErrProvidersUnavailable is returned when every configured provider failed
@@ -230,11 +243,18 @@ func (g *CompetitionProviderGateway) circuitOpen(provider string) (time.Time, bo
 // recordSuccess resets the failure streak and closes the circuit.
 func (g *CompetitionProviderGateway) recordSuccess(provider string) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	_, wasOpen := g.circuitOpenUntil[provider]
 	g.lastSuccess[provider] = g.clock.Now()
 	g.lastFailure = ""
 	g.failureStreak[provider] = 0
 	delete(g.circuitOpenUntil, provider)
+	g.mu.Unlock()
+
+	// Reported outside the lock: an observer enqueues into the outbox, and
+	// nothing that touches the database belongs under this mutex.
+	if wasOpen && g.health != nil {
+		g.health.ProviderRecovered(context.Background(), provider)
+	}
 }
 
 // recordFailure bumps the provider's consecutive-failure streak and, once
@@ -246,10 +266,10 @@ func (g *CompetitionProviderGateway) recordFailure(provider string) {
 		return
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	g.failureStreak[provider]++
 	streak := g.failureStreak[provider]
 	if streak < g.config.CircuitBreakerThreshold {
+		g.mu.Unlock()
 		return
 	}
 
@@ -261,7 +281,17 @@ func (g *CompetitionProviderGateway) recordFailure(provider string) {
 	if delay <= 0 || delay > g.config.CircuitBreakerMaxDelay {
 		delay = g.config.CircuitBreakerMaxDelay
 	}
+	_, alreadyOpen := g.circuitOpenUntil[provider]
 	g.circuitOpenUntil[provider] = g.clock.Now().Add(delay)
+	lastFailure := g.lastFailure
+	g.mu.Unlock()
+
+	// Only the transition, and only outside the lock: an already-open
+	// circuit re-opening on the next retry is the same outage, not a new
+	// one, and an observer writes to the database.
+	if !alreadyOpen && g.health != nil {
+		g.health.ProviderDown(context.Background(), provider, streak, lastFailure)
+	}
 }
 
 // HealthStatus is the three-state health of the gateway: UNKNOWN (no call

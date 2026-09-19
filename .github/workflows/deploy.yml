@@ -120,6 +120,7 @@ jobs:
           DB_BACKUP_S3_PREFIX: ${{ vars.DB_BACKUP_S3_PREFIX }}
           DB_BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.DB_BACKUP_S3_ACCESS_KEY_ID }}
           DB_BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.DB_BACKUP_S3_SECRET_ACCESS_KEY }}
+          EVENT_EVE_LEAD: ${{ vars.EVENT_EVE_LEAD }}
           ANSIBLE_HOST_KEY_CHECKING: 'True'
         run: make deploy
 

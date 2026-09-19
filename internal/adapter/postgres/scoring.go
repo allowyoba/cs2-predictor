@@ -855,3 +855,107 @@ SELECT g.user_id, g.display_name, t.name, g.correct, g.predictions
 	}
 	return &item, nil
 }
+
+// EventSpecials computes the per-user numbers a tournament recap needs that
+// a leaderboard aggregate cannot answer, in one pass: they all depend on
+// either the chat's other votes on the same poll (who went against the
+// crowd, who was the only one right) or on the chronology of one person's
+// calls (the longest unbroken run).
+//
+// One query rather than three: every part starts from the same set of this
+// chat's settled votes on this tournament, and re-reading it three times
+// would be the expensive half of the work done twice over.
+func (r *ScoringRepository) EventSpecials(ctx context.Context, chatID common.ChatID, eventID common.EventID) (scoring.EventSpecials, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx, `
+WITH event_votes AS (
+    SELECT v.user_id,
+           COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
+           p.id AS poll_id,
+           COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
+           (a.id IS NOT NULL) AS correct,
+           -- Which side this vote backed, derived from the option's own
+           -- scoreline: the higher number is the predicted winner.
+           CASE WHEN o.first_score > o.second_score THEN 1 ELSE 2 END AS picked_side
+      FROM prediction_vote v
+      JOIN match_poll p ON p.id = v.poll_id
+      JOIN esport_match m ON m.id = p.match_id
+      JOIN poll_option o ON o.poll_id = v.poll_id AND o.option_index = v.option_index
+      JOIN telegram_user u ON u.id = v.user_id
+      LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
+     WHERE p.chat_id = $1
+       AND m.event_id = $2
+       AND m.status = 'FINISHED'
+), poll_shape AS (
+    -- Per poll: how many backed each side, and how many got it right at
+    -- all. Both are what turn one vote into "went against the crowd" and
+    -- "was the only one who saw it".
+    SELECT poll_id,
+           COUNT(*) FILTER (WHERE picked_side = 1) AS side_one,
+           COUNT(*) FILTER (WHERE picked_side = 2) AS side_two,
+           COUNT(*) FILTER (WHERE correct) AS correct_voters,
+           COUNT(*) AS voters
+      FROM event_votes
+     GROUP BY poll_id
+), marked AS (
+    SELECT e.*,
+           SUM(CASE WHEN e.correct THEN 0 ELSE 1 END)
+             OVER (PARTITION BY e.user_id ORDER BY e.played_at, e.poll_id ROWS UNBOUNDED PRECEDING) AS grp
+      FROM event_votes e
+), runs AS (
+    SELECT user_id, grp, COUNT(*)::int AS streak
+      FROM marked
+     WHERE correct
+     GROUP BY user_id, grp
+), streaks AS (
+    SELECT user_id, MAX(streak) AS longest_streak
+      FROM runs
+     GROUP BY user_id
+)
+SELECT e.user_id,
+       MIN(e.display_name) AS display_name,
+       COUNT(*) FILTER (
+           WHERE e.correct
+             AND ((e.picked_side = 1 AND s.side_one < s.side_two)
+               OR (e.picked_side = 2 AND s.side_two < s.side_one))
+       )::int AS contrarian_wins,
+       -- "The only one who saw it" needs a crowd to be alone against:
+       -- in a poll two people voted on, being the only one right is a coin
+       -- flip, and in a chat with a single voter it is every correct pick.
+       COUNT(*) FILTER (WHERE e.correct AND s.correct_voters = 1 AND s.voters >= 3)::int AS lone_correct,
+       COUNT(DISTINCT e.poll_id)::int AS voted_polls,
+       COALESCE(MAX(st.longest_streak), 0)::int AS longest_streak
+  FROM event_votes e
+  JOIN poll_shape s ON s.poll_id = e.poll_id
+  LEFT JOIN streaks st ON st.user_id = e.user_id
+ GROUP BY e.user_id
+ ORDER BY e.user_id`, chatID.Value, eventID.Value)
+	if err != nil {
+		return scoring.EventSpecials{}, err
+	}
+	defer rows.Close()
+
+	var out scoring.EventSpecials
+	for rows.Next() {
+		var u scoring.EventUserSpecials
+		if err := rows.Scan(&u.UserID.Value, &u.DisplayName, &u.ContrarianWins, &u.LoneCorrect, &u.VotedPolls, &u.LongestStreak); err != nil {
+			return scoring.EventSpecials{}, err
+		}
+		out.Users = append(out.Users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return scoring.EventSpecials{}, err
+	}
+
+	// The poll count is the tournament's, not any one person's: "voted in
+	// every match" has to be measured against all of them, including the
+	// ones nobody voted in.
+	if err := executor(ctx, r.pool).QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		  FROM match_poll p
+		  JOIN esport_match m ON m.id = p.match_id
+		 WHERE p.chat_id = $1 AND m.event_id = $2 AND m.status = 'FINISHED'`,
+		chatID.Value, eventID.Value).Scan(&out.TotalPolls); err != nil {
+		return scoring.EventSpecials{}, err
+	}
+	return out, nil
+}

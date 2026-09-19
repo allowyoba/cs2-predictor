@@ -391,3 +391,110 @@ func TestValveVRSSync_ReusesConfirmedExternalIDMappingOnSubsequentRuns(t *testin
 		t.Fatalf("expected the second run to still resolve via the confirmed external-id mapping, got %+v", got)
 	}
 }
+
+// cachedProvider is a RankingProvider that also holds a finished result,
+// the way the Apify provider holds a run that completed while the bot was
+// down.
+type cachedProvider struct {
+	fakeRankingProvider
+	cached      []enrichment.RankedTeam
+	cachedErr   error
+	cachedCalls int
+}
+
+func (c *cachedProvider) FetchLatestCached(context.Context) ([]enrichment.RankedTeam, error) {
+	c.cachedCalls++
+	return c.cached, c.cachedErr
+}
+
+func newCachedSync(store *fakeEnrichmentStore, provider enrichment.RankingProvider, teamID common.TeamID) *RankingSync {
+	return &RankingSync{
+		Source: enrichment.SourceHLTV, Provider: provider,
+		Teams:    &fakeTeamLister{teams: []competition.Team{{ID: teamID, Name: "Spirit"}}},
+		Rankings: store, Identity: store, State: store,
+		Lock: fakeClusterLock{}, Log: slog.Default(),
+	}
+}
+
+// A run that finished while the process was down is adopted at startup
+// rather than waiting for the weekly window — the data already exists and
+// re-reading it costs nothing.
+func TestRankingSync_RefreshFromCacheAdoptsANewerFinishedRun(t *testing.T) {
+	teamID := common.NewTeamID()
+	store := newFakeEnrichmentStore()
+	provider := &cachedProvider{cached: []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Spirit"}, GlobalRank: intPtr(1),
+			PublishedAt: time.Now().Add(-time.Hour), Source: enrichment.SourceHLTV},
+	}}
+	sync := newCachedSync(store, provider, teamID)
+
+	sync.RefreshFromCache(context.Background())
+
+	if got, err := store.FindRanking(context.Background(), teamID, enrichment.SourceHLTV); err != nil || got == nil {
+		t.Fatalf("expected the cached ranking to be applied, got %+v, err %v", got, err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("the startup refresh must never start new remote work, got %d fetches", provider.calls)
+	}
+	st, err := store.State(context.Background(), enrichment.SourceHLTV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastSuccessAt == nil {
+		t.Fatal("adopting a result is a successful sync and must be recorded as one")
+	}
+}
+
+// Data we already hold is not re-applied: the comparison is on the
+// ranking's own published date, so a restart does not rewrite the same
+// snapshot on every boot.
+func TestRankingSync_RefreshFromCacheSkipsDataAlreadyHeld(t *testing.T) {
+	teamID := common.NewTeamID()
+	store := newFakeEnrichmentStore()
+	if err := store.RecordSuccess(context.Background(), enrichment.SourceHLTV); err != nil {
+		t.Fatal(err)
+	}
+	provider := &cachedProvider{cached: []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Spirit"}, GlobalRank: intPtr(1),
+			PublishedAt: time.Now().Add(-48 * time.Hour), Source: enrichment.SourceHLTV},
+	}}
+	sync := newCachedSync(store, provider, teamID)
+
+	sync.RefreshFromCache(context.Background())
+
+	if got, _ := store.FindRanking(context.Background(), teamID, enrichment.SourceHLTV); got != nil {
+		t.Fatalf("expected older cached data to be ignored, got %+v", got)
+	}
+}
+
+// A provider that cannot answer right now must not turn a startup into a
+// failure, nor mark the source as broken: its scheduled run is still ahead
+// of it.
+func TestRankingSync_RefreshFromCacheSwallowsProviderErrors(t *testing.T) {
+	store := newFakeEnrichmentStore()
+	provider := &cachedProvider{cachedErr: errors.New("apify unreachable")}
+	sync := newCachedSync(store, provider, common.NewTeamID())
+
+	sync.RefreshFromCache(context.Background())
+
+	st, err := store.State(context.Background(), enrichment.SourceHLTV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastErrorAt != nil || st.ConsecutiveFailures != 0 {
+		t.Fatalf("an opportunistic refresh must not mark the provider broken, got %+v", st)
+	}
+}
+
+// Providers without anything cached (the free feeds) are simply skipped.
+func TestRankingSync_RefreshFromCacheIgnoresPlainProviders(t *testing.T) {
+	store := newFakeEnrichmentStore()
+	provider := &fakeRankingProvider{}
+	sync := newCachedSync(store, provider, common.NewTeamID())
+
+	sync.RefreshFromCache(context.Background())
+
+	if provider.calls != 0 {
+		t.Fatalf("expected no fetch at all, got %d", provider.calls)
+	}
+}

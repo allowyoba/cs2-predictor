@@ -77,6 +77,10 @@ const (
 	// side (FAILED/ABORTED) still gets a couple of chances that week
 	// instead of writing the week off.
 	defaultMaxRunsPerPeriod = 3
+	// cachedRunLookback bounds how far back FetchLatestCached will look. A
+	// ranking older than this is not worth adopting: the weekly job will
+	// have a fresher one shortly, and a month-old table is worse than none.
+	cachedRunLookback = 10 * 24 * time.Hour
 	// adoptScanLimit bounds how many of the period's successful runs are
 	// examined when looking for one to adopt — two rankings a week means a
 	// handful at most, even counting retries.
@@ -241,6 +245,38 @@ func (p *Provider) FetchRankings(ctx context.Context) ([]enrichment.RankedTeam, 
 	}
 
 	return nil, p.startRun(ctx, state, period, now)
+}
+
+var _ enrichment.CachedRankingProvider = (*Provider)(nil)
+
+// FetchLatestCached returns the most recent finished run's result for this
+// ranking mode, whatever period it belongs to, and never starts one.
+//
+// It exists for startup: a run can finish while the bot is down (or during
+// the very deploy that restarts it), and without this the result would sit
+// unread in Apify until the weekly gate next opens — up to a week of the
+// ranking being stale even though the data was already bought and paid
+// for. Reading it costs nothing.
+func (p *Provider) FetchLatestCached(ctx context.Context) ([]enrichment.RankedTeam, error) {
+	runs, err := p.succeededRunsSince(ctx, p.clock.Now().UTC().Add(-cachedRunLookback))
+	if err != nil {
+		return nil, err
+	}
+	for _, run := range runs {
+		teams, err := p.readRunOutput(ctx, run)
+		if err != nil {
+			// The actor's other ranking mode, or a run whose output is
+			// gone: keep looking rather than failing the startup path.
+			if isRankingTypeMismatch(err) || isNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		if len(teams) > 0 {
+			return teams, nil
+		}
+	}
+	return nil, nil
 }
 
 // collectStartedRun reports on a run this provider started earlier. done is

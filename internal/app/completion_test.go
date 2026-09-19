@@ -165,7 +165,7 @@ func TestEventCompletionService_DefersWhileAnyMatchIsNotTerminal(t *testing.T) {
 	scoringRepo := &fakeScoringForCompletion{}
 	outbox := newTestOutboxForCompletion()
 
-	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
 	if err := svc.Complete(context.Background(), competition.Event{ID: eventID}); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestEventCompletionService_AwardsMedalsAndNotifiesOnceAllMatchesTerminal(t 
 	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1}}}
 	outbox := newTestOutboxForCompletion()
 
-	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
 	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Major Final"}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestEventCompletionService_IsIdempotentPerChat(t *testing.T) {
 	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1}}}
 	outbox := newTestOutboxForCompletion()
 
-	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
 	event := competition.Event{ID: eventID, Name: "Major Final"}
 
 	if err := svc.Complete(context.Background(), event); err != nil {

@@ -86,6 +86,7 @@ esac
             "APIFY_TOKEN": "",
             "APIFY_RANKING_CHECK_INTERVAL": "",
             "APIFY_MAX_TEAMS": "",
+            "EVENT_EVE_LEAD": "",
         }
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],

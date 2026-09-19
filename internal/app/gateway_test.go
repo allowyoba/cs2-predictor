@@ -227,3 +227,67 @@ func TestGateway_MatchesPrefersEventsOwnProvider(t *testing.T) {
 		t.Fatalf("matchCalls: primary=%d secondary=%d, want 0 1", primary.matchCalls, secondary.matchCalls)
 	}
 }
+
+// recordingHealthObserver captures the transitions the gateway reports.
+type recordingHealthObserver struct {
+	down      []string
+	recovered []string
+}
+
+func (r *recordingHealthObserver) ProviderDown(_ context.Context, provider string, _ int, _ string) {
+	r.down = append(r.down, provider)
+}
+
+func (r *recordingHealthObserver) ProviderRecovered(_ context.Context, provider string) {
+	r.recovered = append(r.recovered, provider)
+}
+
+// The observer hears about the outage once, not once per failed call: the
+// circuit re-opening on every retry is the same outage continuing. And it
+// hears about the recovery exactly once too, which is what tells an
+// administrator the alert they got can be closed.
+func TestGateway_ReportsEachHealthTransitionOnce(t *testing.T) {
+	clock := &mutableClock{t: time.Now()}
+	primary := &fixedProvider{name: "PRIMARY", fail: true}
+	gw, err := NewCompetitionProviderGateway([]competition.DataProvider{primary},
+		ProviderRoutingConfig{
+			Order: []string{"PRIMARY"}, CircuitBreakerThreshold: 2,
+			CircuitBreakerBaseDelay: time.Minute, CircuitBreakerMaxDelay: time.Hour,
+		}, nil, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &recordingHealthObserver{}
+	gw.ObserveHealth(observer)
+
+	// Enough failures to open the circuit, then keep failing past the
+	// backoff so it re-opens repeatedly.
+	for i := 0; i < 2; i++ {
+		_, _ = gw.UpcomingEvents(context.Background())
+	}
+	clock.t = clock.t.Add(2 * time.Minute)
+	_, _ = gw.UpcomingEvents(context.Background())
+	if len(observer.down) != 1 || observer.down[0] != "PRIMARY" {
+		t.Fatalf("down transitions = %v, want exactly one for PRIMARY", observer.down)
+	}
+	if len(observer.recovered) != 0 {
+		t.Fatalf("nothing recovered yet, got %v", observer.recovered)
+	}
+
+	clock.t = clock.t.Add(2 * time.Minute)
+	primary.fail = false
+	if _, err := gw.UpcomingEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(observer.recovered) != 1 || observer.recovered[0] != "PRIMARY" {
+		t.Fatalf("recovered transitions = %v, want exactly one", observer.recovered)
+	}
+
+	// A healthy provider staying healthy says nothing further.
+	if _, err := gw.UpcomingEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(observer.recovered) != 1 || len(observer.down) != 1 {
+		t.Fatalf("expected no further transitions, got down=%v recovered=%v", observer.down, observer.recovered)
+	}
+}

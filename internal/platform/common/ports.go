@@ -100,6 +100,10 @@ type EventFinishedNotification struct {
 	TopicID   *int64                 `json:"topicId"`
 	EventName string                 `json:"eventName"`
 	Standings []StandingNotification `json:"standings"`
+	// Awards are the nominations picked for this tournament — at most a
+	// few, chosen from a larger pool so two tournaments in a row rarely
+	// read the same (see scoring.PickEventAwards).
+	Awards []EventAwardNotification `json:"awards,omitempty"`
 }
 
 // DigestStanding is a compact leaderboard row for scheduled monthly/yearly
@@ -198,6 +202,60 @@ type TeamMatchOperatorPingNotification struct {
 	ExternalName string `json:"externalName"`
 }
 
+// AdminAlertKind names what an administrator is being told about. The
+// values are persisted in outbox payloads, so they must stay stable.
+type AdminAlertKind string
+
+const (
+	// AdminAlertRelease reports that a new build is now serving traffic.
+	AdminAlertRelease AdminAlertKind = "release"
+	// AdminAlertProviderDown reports a data provider that has failed often
+	// enough in a row to be considered broken rather than flaky.
+	AdminAlertProviderDown AdminAlertKind = "provider_down"
+	// AdminAlertProviderRecovered closes the loop on an AdminAlertProviderDown:
+	// without it, an administrator has no way to tell a still-broken
+	// provider from one that quietly healed.
+	AdminAlertProviderRecovered AdminAlertKind = "provider_recovered"
+)
+
+// AdminAlertNotification is the payload for the "telegram.admin-alert"
+// outbox event type: an operational heads-up to each configured
+// administrator chat (DEPLOY_NOTIFY_CHAT_IDS). Deliberately one payload
+// type for every kind — these are rare, low-volume messages, and one
+// publisher that switches on Kind beats three near-identical ones.
+type AdminAlertNotification struct {
+	ChatID int64          `json:"chatId"`
+	Kind   AdminAlertKind `json:"kind"`
+	// Version/Commit are set for AdminAlertRelease.
+	Version string `json:"version,omitempty"`
+	Commit  string `json:"commit,omitempty"`
+	// Provider/Failures/Detail are set for the provider kinds. Detail is
+	// the provider's own last error, truncated for a chat message.
+	Provider string `json:"provider,omitempty"`
+	Failures int    `json:"failures,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+// ReleaseAnnouncementStore records which releases have already been
+// announced, so a restart, a second instance or a rollback-and-forward
+// cannot repeat the same announcement. Claim returns true only for the
+// caller that recorded it first.
+type ReleaseAnnouncementStore interface {
+	Claim(ctx context.Context, version, commit string) (bool, error)
+}
+
+// ProviderHealthObserver is notified when a data provider crosses between
+// working and broken. Implemented by the admin alerter; the gateway and
+// the enrichment sync-state both call it, which is why it lives here
+// rather than in either of their packages.
+type ProviderHealthObserver interface {
+	// ProviderDown fires once per transition into a broken state, never
+	// per failed call — an outage otherwise produces one message per retry.
+	ProviderDown(ctx context.Context, provider string, failures int, lastError string)
+	// ProviderRecovered fires on the first success after ProviderDown.
+	ProviderRecovered(ctx context.Context, provider string)
+}
+
 // RetentionRepository prunes the tables that grow with traffic rather than
 // with the domain: the webhook dedup ledger, published outbox rows,
 // resolved confirmation requests, and the admin change history. Each method
@@ -285,6 +343,49 @@ type PollReminderNotification struct {
 	Locale      string `json:"locale"`
 }
 
+// EventEveMatchNotification is one of the first matches a tournament opens
+// with, as shown in the eve nudge.
+type EventEveMatchNotification struct {
+	// LocalTime is already rendered in the chat's own timezone at enqueue
+	// time: the publisher has no business re-deriving a chat's clock.
+	LocalTime  string `json:"localTime"`
+	FirstTeam  string `json:"firstTeam"`
+	SecondTeam string `json:"secondTeam"`
+}
+
+// EventEveNotification is the payload for the "telegram.event-eve" outbox
+// event type: one message to a subscribed chat the day before a tournament
+// it follows starts. It leads with what is actually happening (when, how
+// many matches, who opens) rather than a bare "get ready", and carries the
+// defending champion when the chat has one — the social hook that makes a
+// prediction game worth showing up for.
+type EventEveNotification struct {
+	ChatID    int64  `json:"chatId"`
+	TopicID   *int64 `json:"topicId"`
+	EventName string `json:"eventName"`
+	// StartsAt is the first match's local start time, pre-rendered.
+	StartsAt string `json:"startsAt"`
+	// FirstDayMatches counts every match scheduled on the opening day.
+	FirstDayMatches int                         `json:"firstDayMatches"`
+	Matches         []EventEveMatchNotification `json:"matches"`
+	// Champion is whoever won this chat's previous finished tournament, if
+	// there was one.
+	Champion string `json:"champion,omitempty"`
+}
+
+// EventAwardNotification is one nomination in the post-tournament recap:
+// a title, who won it, and the number that earned it.
+type EventAwardNotification struct {
+	// Kind is the nomination's stable key; the publisher maps it to a
+	// localized title and a value format.
+	Kind        string `json:"kind"`
+	DisplayName string `json:"displayName"`
+	Value       int    `json:"value"`
+	// Detail carries a second number a nomination needs (a sample size, a
+	// share) — zero when it needs none.
+	Detail int `json:"detail,omitempty"`
+}
+
 // UnsubscribeConfirmationNotification is the payload for the
 // "telegram.unsubscribe-confirmation" outbox event type: one per manager
 // who is being asked to approve someone else's unsubscribe request. It goes
@@ -297,7 +398,13 @@ type UnsubscribeConfirmationNotification struct {
 	UserID    int64  `json:"userId"`
 	RequestID string `json:"requestId"`
 	ChatTitle string `json:"chatTitle"`
+	// EventName is what the approval is about, already human-readable: a
+	// tournament name, or a game's name for a game being switched off.
 	EventName string `json:"eventName"`
+	// Kind mirrors chat.ApprovalKind so the DM can say what is actually
+	// being asked. Empty means the original unsubscribe, which is what
+	// every message enqueued before this field existed carries.
+	Kind      string `json:"kind,omitempty"`
 	Requester string `json:"requester"`
 	Locale    string `json:"locale"`
 }

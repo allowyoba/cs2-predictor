@@ -392,17 +392,18 @@ func TestSettingsGamesToggleCallback_TogglesAndRequiresManager(t *testing.T) {
 		t.Fatal("a plain member's toggle attempt must be denied, Dota2 should remain enabled")
 	}
 
-	// Toggling again as a manager must turn it back off, and must not
-	// disturb any other already-enabled game.
+	// Switching a game OFF is not the mirror image of switching it on: it
+	// silences every tournament of that game at once, so it waits for a
+	// second manager (see games_flow.go) instead of applying on the tap.
 	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
 	if err := handler.handleCallback(context.Background(), cb); err != nil {
 		t.Fatal(err)
 	}
-	toggledOff, err := chats.Find(context.Background(), chatID)
+	stillEnabled, err := chats.Find(context.Background(), chatID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if toggledOff.GameEnabled(competition.GameDota2) {
-		t.Fatal("expected Dota2 disabled after a second toggle")
+	if !stillEnabled.GameEnabled(competition.GameDota2) {
+		t.Fatal("expected Dota2 to stay enabled until the disable request is approved")
 	}
 }

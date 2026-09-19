@@ -66,14 +66,19 @@ func (h *UpdateHandler) cleanupMenu(ctx context.Context, target replyTarget, set
 		return h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("events.cleanup_none", settings.Locale)), &InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})
 	}
 
-	names := make([]string, 0, len(finished))
+	// Grouped by game for the same reason the lists are: a confirmation is
+	// only useful if you can see at a glance what you are about to remove.
+	events := make([]competition.Event, 0, len(finished))
 	for _, s := range finished {
-		name := s.EventID.Value.String()
-		if event, ok := byID[s.EventID]; ok {
-			name = event.Name
+		event, ok := byID[s.EventID]
+		if !ok {
+			event = competition.Event{ID: s.EventID, Name: s.EventID.Value.String()}
 		}
-		names = append(names, "• "+escapeHTML(truncate(name, 40)))
+		events = append(events, event)
 	}
+	names := h.gameSectionLines(events, settings.Locale, func(e competition.Event) string {
+		return "• " + escapeHTML(truncate(e.Name, 40))
+	})
 	text := h.Texts.Get("events.cleanup_confirm", settings.Locale, len(finished)) + "\n\n" + strings.Join(names, "\n")
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
 		{button(h.Texts.Get("events.cleanup_apply", settings.Locale), "events:cleanup:go")},

@@ -88,7 +88,7 @@ func run() error {
 	outbox := pg.NewOutbox(pool)
 	clusterLock := pg.NewClusterLock(pool)
 	dedup := pg.NewUpdateDeduplicator(pool)
-	pendingUnsubscribes := pg.NewPendingUnsubscribeRepository(pool)
+	pendingApprovals := pg.NewPendingApprovalRepository(pool)
 	retentionStore := pg.NewRetentionRepository(pool)
 	adminActions := pg.NewAdminActionRepository(pool)
 	invitations := pg.NewInvitationRepository(pool)
@@ -116,7 +116,18 @@ func run() error {
 	// for events/matches/schedule/results — this only ever adds cached,
 	// best-effort context like a Valve VRS rank line to an outgoing poll) ---
 	enrichmentRepo := pg.NewEnrichmentRepository(pool)
-	enrichmentBuilt := buildEnrichment(cfg.Enrichment, enrichmentRepo, catalog, subscriptions, httpClient, clock, clusterLock, log)
+
+	// Operational notices to the administrator chats. Wired here, between
+	// the gateway and the sync jobs, because both report their health
+	// through it: the gateway via ObserveHealth, every enrichment sync via
+	// the ObservedSyncState decorator below.
+	adminAlerter := &app.AdminAlerter{
+		Outbox: outbox, Releases: enrichmentRepo, ChatIDs: cfg.TeamMatchOperatorChatIDs, Log: log,
+	}
+	gateway.ObserveHealth(adminAlerter)
+	enrichmentState := &app.ObservedSyncState{SyncStateRepository: enrichmentRepo, Observer: adminAlerter}
+
+	enrichmentBuilt := buildEnrichment(cfg.Enrichment, enrichmentRepo, enrichmentState, catalog, subscriptions, httpClient, clock, clusterLock, log)
 	enrichmentSources := enrichmentBuilt.Sources
 	teamMatchSources := enrichmentBuilt.TeamMatchSources
 
@@ -176,7 +187,7 @@ func run() error {
 	}
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
 		WithRecaps(chats, chatTitle, log)
-	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, outbox, clock, runTx, log)
+	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log)
 
 	// teamMatch resolves a team with no cached ranking against whichever
 	// ranking feeds (teamMatchSources) are actually enabled — pointless
@@ -196,7 +207,7 @@ func run() error {
 		Dedup: dedup, Predictions: predictionService, Chats: chats, Authorization: authorization,
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
-		PendingUnsubscribes: pendingUnsubscribes, Outbox: outbox, RunTx: runTx, Metrics: metrics,
+		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations,
 		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 		TeamMatches:              enrichmentRepo,
@@ -221,6 +232,14 @@ func run() error {
 	digests := &app.DigestScheduler{
 		Chats: chats, Scoring: scoringRepo, Insights: scoringRepo, Store: reportStore,
 		Outbox: outbox, Lock: clusterLock, Clock: clock, RunTx: runTx, Log: log,
+	}
+
+	// Runs on the digest job's own cadence: both are "is anything due for
+	// this chat right now?" sweeps, and neither needs a schedule of its own.
+	eve := &app.EventEveScheduler{
+		Chats: chats, ChatSettings: chats, Subscriptions: subscriptions, Catalog: catalog,
+		Scoring: scoringRepo, Store: reportStore, Outbox: outbox, Lock: clusterLock,
+		Clock: clock, Log: log, Lead: cfg.EventEveLead,
 	}
 
 	reminders := &app.PollReminderScheduler{
@@ -252,6 +271,8 @@ func run() error {
 			telegram.NewPollReminderPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewTeamMatchAskPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
+			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
+			telegram.NewEventEvePublisher(telegramClient, chats, texts),
 		},
 	}
 
@@ -282,6 +303,9 @@ func run() error {
 		runBackground(cfg.SyncMatchesDelay, synchronizer.SynchronizeMatches)
 		runBackground(cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
 		runBackground(cfg.DigestCheckDelay, digests.Dispatch)
+		if cfg.EventEveLead >= 0 {
+			runBackground(cfg.DigestCheckDelay, eve.Dispatch)
+		}
 		runBackground(cfg.OutboxDelay, dispatcher.Dispatch)
 		for _, job := range enrichmentBuilt.Jobs {
 			runBackground(job.interval, job.dispatch)
@@ -315,6 +339,19 @@ func run() error {
 			log.Error("graceful shutdown failed", "error", err)
 		}
 	}()
+
+	// Opportunistic catch-up before serving: adopt anything a provider
+	// already finished while this process was down — a weekly feed would
+	// otherwise sit unread until its next window, even though the result
+	// exists (and was paid for) already.
+	for _, task := range enrichmentBuilt.StartupTasks {
+		task(ctx)
+	}
+
+	// Announced from here rather than by the deploy pipeline: this reports
+	// the build that is actually serving, however it got here — a pipeline
+	// deploy, a manual rollback, or a restart onto a hand-changed image.
+	adminAlerter.AnnounceRelease(ctx, version, commit)
 
 	log.Info("starting cs2predictor bot", "port", cfg.Port, "version", version, "commit", commit)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
