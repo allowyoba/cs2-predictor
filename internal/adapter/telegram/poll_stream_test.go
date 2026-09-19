@@ -24,6 +24,12 @@ func (m *recordingStreamMarker) MarkPollStreamAnnounced(_ context.Context, _ com
 // streamPoll wires a gateway over a match carrying streams, and closes a
 // poll whose already-announced link is announced.
 func streamPoll(t *testing.T, streams []competition.Stream, announced string) (*recordingStreamMarker, *[]map[string]any) {
+	return streamPollFor(t, streams, announced, true)
+}
+
+// streamPollFor is streamPoll with the chat's opt-in spelled out, for the
+// test that covers a chat which never asked for these messages.
+func streamPollFor(t *testing.T, streams []competition.Stream, announced string, announce bool) (*recordingStreamMarker, *[]map[string]any) {
 	t.Helper()
 	srv, calls := newRecordingServer(t)
 	t.Cleanup(srv.Close)
@@ -34,7 +40,7 @@ func streamPoll(t *testing.T, streams []competition.Stream, announced string) (*
 	}
 	chats := newFakeChats()
 	chatID := common.ChatID{Value: -1}
-	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true, StreamAnnouncements: announce}); err != nil {
 		t.Fatal(err)
 	}
 	eventID, matchID := common.NewEventID(), common.NewMatchID()
@@ -108,5 +114,17 @@ func TestClose_SaysNothingWhenNoOfficialBroadcastExists(t *testing.T) {
 
 	if sent := streamMessages(calls); len(sent) != 0 {
 		t.Fatalf("unofficial channels are never linked, got %v", sent)
+	}
+}
+
+// The announcement is an extra message in the room, so a chat that never
+// asked for it hears nothing — the default for every chat.
+func TestClose_SaysNothingUnlessTheChatAskedForBroadcastLinks(t *testing.T) {
+	_, calls := streamPollFor(t, []competition.Stream{
+		{Language: "ru", URL: "https://twitch.tv/major_ru", Main: true, Official: true},
+	}, "", false)
+
+	if sent := streamMessages(calls); len(sent) != 0 {
+		t.Fatalf("expected silence for a chat with broadcast links switched off, got %v", sent)
 	}
 }

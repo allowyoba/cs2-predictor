@@ -563,10 +563,13 @@ func (g *PollGateway) announceStream(ctx context.Context, poll prediction.Poll) 
 	if err != nil {
 		return err
 	}
-	locale, preferred := common.LocaleRU, common.LocaleRU
-	if settings != nil {
-		locale, preferred = settings.Locale, settings.StreamLocale()
+	// Opt-in, and off by default: this is an extra message in the room
+	// every time a poll closes, which a busy chat feels. A chat that wants
+	// it asks in the settings.
+	if settings == nil || !settings.StreamAnnouncements {
+		return nil
 	}
+	locale, preferred := settings.Locale, settings.StreamLocale()
 	stream, ok := match.StreamFor(preferred)
 	if !ok || stream.URL == poll.StreamURL {
 		return nil
