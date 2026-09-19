@@ -32,6 +32,9 @@ type backgroundJob struct {
 // with real decisions to get right (which slices to append to, whether to
 // share a lock key) rather than a flat, linear list of constructor calls.
 type enrichmentBuild struct {
+	// StartupTasks run once when the process comes up, before the
+	// schedulers settle into their intervals.
+	StartupTasks     []func(ctx context.Context)
 	Sources          []enrichment.Source
 	TeamMatchSources []enrichment.Source
 	Jobs             []backgroundJob
@@ -89,6 +92,11 @@ func buildEnrichment(
 			backgroundJob{cfg.ApifyRankingCheckInterval, hltvSync.Dispatch},
 			backgroundJob{cfg.ApifyRankingCheckInterval, vrsApifySync.Dispatch},
 		)
+		// A run can finish while the bot is down — during the deploy that
+		// restarts it, most of all. Reading that finished run costs
+		// nothing, so it happens at startup rather than waiting for the
+		// weekly window to come round again.
+		b.StartupTasks = append(b.StartupTasks, hltvSync.RefreshFromCache, vrsApifySync.RefreshFromCache)
 	}
 
 	// SourceValveVRS is registered once here, covering either or both of

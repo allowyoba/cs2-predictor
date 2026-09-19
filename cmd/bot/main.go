@@ -316,6 +316,14 @@ func run() error {
 		}
 	}()
 
+	// Opportunistic catch-up before serving: adopt anything a provider
+	// already finished while this process was down — a weekly feed would
+	// otherwise sit unread until its next window, even though the result
+	// exists (and was paid for) already.
+	for _, task := range enrichmentBuilt.StartupTasks {
+		task(ctx)
+	}
+
 	log.Info("starting cs2predictor bot", "port", cfg.Port, "version", version, "commit", commit)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("http server: %w", err)
