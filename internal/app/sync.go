@@ -337,13 +337,13 @@ func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event
 		if !settings.GameEnabled(event.Game) {
 			continue
 		}
-		// AutoSubscribeTopTier skips the offer entirely and just joins the
+		// Auto-subscription skips the offer entirely and just joins the
 		// chat to the tournament — still announced, but as a fait accompli
 		// ("auto-subscribed") rather than a "want to add this?" the chat
 		// would otherwise have to tap through every single time a new S/A
 		// tournament shows up.
 		eventType, notifyType := "telegram.big-event-discovered", "big event discovered"
-		if settings.AutoSubscribeTopTier {
+		if settings.AutoSubscribesTo(event.Game) {
 			if _, err := s.Subscriptions.Subscribe(ctx, subscription.EventSubscription{ChatID: settings.ChatID, EventID: event.ID}); err != nil {
 				s.Log.Error("auto-subscribe failed", "chatId", settings.ChatID.Value, "eventId", event.ID.Value, "error", err)
 				continue

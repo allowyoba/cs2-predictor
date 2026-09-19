@@ -30,11 +30,14 @@ type Settings struct {
 	// "all"/"все" prefix on a given search still overrides it for that one
 	// search.
 	DefaultTopTierOnly bool
-	// AutoSubscribeTopTier, when set, subscribes this chat to a newly
-	// discovered S/A tier tournament immediately instead of only offering
-	// it via the proactive big-event-discovered notification — see
-	// CompetitionSynchronization.announceBigEvent.
-	AutoSubscribeTopTier bool
+	// AutoSubscribeGames lists the games whose newly discovered S/A tier
+	// tournaments this chat joins immediately, instead of only being
+	// offered them via the proactive big-event-discovered notification —
+	// see CompetitionSynchronization.announceBigEvent. Per game, because a
+	// chat can follow one game closely enough to want everything in it and
+	// still pick its other games' tournaments by hand. Read-only here;
+	// change it via Repository.SetAutoSubscribeGame, not Save.
+	AutoSubscribeGames []competition.GameCode
 	// StreamLanguage is the language this chat wants match broadcasts in.
 	// Empty — the default — means "follow the bot's language"; resolve it
 	// through StreamLocale rather than reading it directly.
@@ -53,6 +56,21 @@ type Settings struct {
 // showing one at all.
 func (s Settings) GameEnabled(game competition.GameCode) bool {
 	for _, g := range s.EnabledGames {
+		if g == game {
+			return true
+		}
+	}
+	return false
+}
+
+// AutoSubscribesTo reports whether a newly discovered top-tier tournament
+// of this game should be joined outright rather than offered. A game the
+// chat no longer follows never qualifies, whatever the stored flag says.
+func (s Settings) AutoSubscribesTo(game competition.GameCode) bool {
+	if !s.GameEnabled(game) {
+		return false
+	}
+	for _, g := range s.AutoSubscribeGames {
 		if g == game {
 			return true
 		}
@@ -117,6 +135,12 @@ type Repository interface {
 	// SetModeratorPermissions's replace-the-set semantics rather than
 	// living on Save, which never otherwise touches a satellite table.
 	SetEnabledGames(ctx context.Context, chatID common.ChatID, games []competition.GameCode) error
+	// SetAutoSubscribeGame turns auto-subscription on or off for one game
+	// the chat follows — one game at a time rather than a set, because
+	// that is exactly how the settings screen changes it, and a
+	// replace-the-set call would make two managers toggling two different
+	// games race each other into losing one of the changes.
+	SetAutoSubscribeGame(ctx context.Context, chatID common.ChatID, game competition.GameCode, enabled bool) error
 	// MigrateChatID renames a chat's id everywhere at once (via ON UPDATE
 	// CASCADE on every foreign key referencing it) — Telegram permanently
 	// renumbers a group's id when it's upgraded to a supergroup, announced

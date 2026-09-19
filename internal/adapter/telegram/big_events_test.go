@@ -112,12 +112,18 @@ func TestSettingsTopTierCallback_TogglesAndRequiresManager(t *testing.T) {
 }
 
 // Same shape as the top_tier toggle above, for "settings:auto_subscribe".
-func TestSettingsAutoSubscribeCallback_TogglesAndRequiresManager(t *testing.T) {
+// With a single game followed the row toggles that game in place — there is
+// nothing to choose between, so it behaves exactly as the old chat-wide
+// switch did.
+func TestSettingsAutoSubscribeCallback_TogglesTheOnlyGameAndRequiresManager(t *testing.T) {
 	srv, calls := newRecordingServer(t)
 	defer srv.Close()
 	handler, chats := newTestHandler(t, srv)
 	chatID := common.ChatID{Value: -1}
 	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	if err := chats.SetEnabledGames(context.Background(), chatID, []competition.GameCode{competition.GameCS2}); err != nil {
+		t.Fatal(err)
+	}
 	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
 
 	data := "settings:auto_subscribe"
@@ -130,8 +136,8 @@ func TestSettingsAutoSubscribeCallback_TogglesAndRequiresManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !updated.AutoSubscribeTopTier {
-		t.Fatal("expected AutoSubscribeTopTier = true after one toggle")
+	if !updated.AutoSubscribesTo(competition.GameCS2) {
+		t.Fatal("expected the chat's only game to be auto-subscribed after one toggle")
 	}
 	if len(*calls) == 0 {
 		t.Fatal("expected the settings view to be re-rendered after toggling")
@@ -145,8 +151,51 @@ func TestSettingsAutoSubscribeCallback_TogglesAndRequiresManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stillOn.AutoSubscribeTopTier {
-		t.Fatal("a plain member's toggle attempt must be denied, AutoSubscribeTopTier should remain true")
+	if !stillOn.AutoSubscribesTo(competition.GameCS2) {
+		t.Fatal("a plain member's toggle attempt must be denied, the setting should remain on")
+	}
+}
+
+// Following several games, the row opens a screen instead: the point of
+// splitting the setting is that a chat can auto-join every CS2 major and
+// still be asked about Dota 2.
+func TestSettingsAutoSubscribe_IsChosenPerGameWhenTheChatFollowsSeveral(t *testing.T) {
+	srv, _ := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
+	if err := chats.SetEnabledGames(context.Background(), chatID, []competition.GameCode{competition.GameCS2, competition.GameDota2}); err != nil {
+		t.Fatal(err)
+	}
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+
+	// The menu row itself changes nothing — it only opens the picker.
+	menu := "settings:auto_subscribe"
+	if err := handler.handleCallback(context.Background(), &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &menu}); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opened.AutoSubscribeGames) != 0 {
+		t.Fatalf("opening the picker must not subscribe anything, got %v", opened.AutoSubscribeGames)
+	}
+
+	pick := "settings:auto_subscribe:" + string(competition.GameCS2)
+	if err := handler.handleCallback(context.Background(), &CallbackQuery{ID: "cb2", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &pick}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := chats.Find(context.Background(), chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.AutoSubscribesTo(competition.GameCS2) {
+		t.Fatal("expected CS2 to be auto-subscribed after picking it")
+	}
+	if after.AutoSubscribesTo(competition.GameDota2) {
+		t.Fatal("the other game must be left exactly as it was")
 	}
 }
 

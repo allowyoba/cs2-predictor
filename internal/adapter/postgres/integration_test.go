@@ -868,38 +868,6 @@ func TestChatRepository_DefaultTopTierOnlyRoundTrips(t *testing.T) {
 	}
 }
 
-// TestChatRepository_AutoSubscribeTopTierRoundTrips covers the
-// auto_subscribe_top_tier column (migration 0029) the same way its sibling
-// above covers default_top_tier_only.
-func TestChatRepository_AutoSubscribeTopTierRoundTrips(t *testing.T) {
-	pool, ctx := newTestPool(t)
-	chats := pg.NewChatRepository(pool)
-	chatID := common.ChatID{Value: -889}
-
-	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := chats.Find(ctx, chatID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.AutoSubscribeTopTier {
-		t.Fatal("expected AutoSubscribeTopTier to default to false")
-	}
-
-	got.AutoSubscribeTopTier = true
-	if _, err := chats.Save(ctx, *got); err != nil {
-		t.Fatal(err)
-	}
-	got, err = chats.Find(ctx, chatID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.AutoSubscribeTopTier {
-		t.Fatal("expected AutoSubscribeTopTier = true after saving it as true")
-	}
-}
-
 // A chat with no explicit broadcast language follows its UI language; an
 // explicit one survives the round trip and overrides it.
 func TestChatRepository_StreamLanguageRoundTrips(t *testing.T) {
@@ -1738,6 +1706,49 @@ func TestPredictionRepository_AnnouncedStreamRoundTrips(t *testing.T) {
 	}
 	if after.StreamURL != url {
 		t.Fatalf("a later SavePoll dropped the announced link: %q", after.StreamURL)
+	}
+}
+
+// Auto-subscription lives on the chat's row for one game, so it has to
+// survive both a reload and the chat turning other games on and off.
+func TestChatRepository_AutoSubscribeIsPerGame(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+
+	chatID := common.ChatID{Value: -996}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetEnabledGames(ctx, chatID, []competition.GameCode{competition.GameCS2, competition.GameDota2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetAutoSubscribeGame(ctx, chatID, competition.GameCS2, true); err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found.AutoSubscribesTo(competition.GameCS2) || found.AutoSubscribesTo(competition.GameDota2) {
+		t.Fatalf("expected CS2 only, got %v", found.AutoSubscribeGames)
+	}
+
+	// A game switched off and back on starts from the default again —
+	// re-enabling a game must not silently resurrect a choice made before
+	// the chat stopped following it.
+	if err := chats.SetEnabledGames(ctx, chatID, []competition.GameCode{competition.GameDota2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetEnabledGames(ctx, chatID, []competition.GameCode{competition.GameCS2, competition.GameDota2}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := chats.Find(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.AutoSubscribeGames) != 0 {
+		t.Fatalf("expected the flag to be back at its default, got %v", after.AutoSubscribeGames)
 	}
 }
 
