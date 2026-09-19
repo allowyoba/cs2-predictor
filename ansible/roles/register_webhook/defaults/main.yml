@@ -1,0 +1,11 @@
+---
+# Telegram delivers webhooks over IPv4 only ("Supports IPv4, IPv6 is
+# currently not supported for webhooks" — core.telegram.org/bots/webhooks),
+# so a domain with no A record produces a webhook that registers cleanly
+# and then never receives a single update. The check below turns that into
+# a failure at registration time instead.
+#
+# Set to false only when the A record is deliberately published after this
+# runs (a proxy being cut over, say) — never as a way to make an
+# IPv6-only endpoint work, because it cannot.
+register_webhook_require_ipv4: true
