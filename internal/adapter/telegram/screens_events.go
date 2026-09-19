@@ -62,6 +62,16 @@ func (h *UpdateHandler) menu(ctx context.Context, target replyTarget, settings c
 	if dmContext {
 		text = "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.manage_context", locale)
 	}
+	// A chat that has picked no game gets nothing at all — no tournaments
+	// to find, no polls, no leaderboard — and nothing on this screen would
+	// otherwise say why. The one step that unblocks everything else goes
+	// first, and only until it is done.
+	if len(settings.EnabledGames) == 0 {
+		text += "\n\n" + h.Texts.Get("menu.setup_games", locale)
+		if dmContext {
+			rows = append([][]InlineButton{{button(h.Texts.Get("settings.games", locale), "settings:games")}}, rows...)
+		}
+	}
 	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
@@ -73,6 +83,23 @@ func (h *UpdateHandler) readOnlyGroupMenu(ctx context.Context, target replyTarge
 	}
 	text := "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.view_context", settings.Locale)
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+}
+
+// emptySubscriptionsText explains why a chat is seeing nothing, in terms of
+// the thing it can actually change: a chat with no games enabled is not
+// "out of tournaments", it has not chosen a game yet, and no amount of
+// searching will help until it does.
+func (h *UpdateHandler) emptySubscriptionsText(settings chat.Settings, dmContext bool) string {
+	if len(settings.EnabledGames) == 0 {
+		if dmContext {
+			return h.Texts.Get("events.empty_no_games", settings.Locale)
+		}
+		return h.Texts.Get("events.empty_no_games_group", settings.Locale)
+	}
+	if dmContext {
+		return h.Texts.Get("events.empty", settings.Locale)
+	}
+	return h.Texts.Get("events.empty_group", settings.Locale)
 }
 
 func (h *UpdateHandler) eventMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
@@ -384,9 +411,16 @@ func (h *UpdateHandler) subscribedEvents(ctx context.Context, target replyTarget
 	if dmContext && len(finished) > 0 {
 		rows = append(rows, []InlineButton{button(h.Texts.Get("events.cleanup", settings.Locale, len(finished)), "events:cleanup")})
 	}
+	// An empty list is a dead end unless it says what to do next: in the
+	// DM panel that is the tournament picker one row down, and in a group
+	// the same handoff every other administrative action uses.
+	hasEvents := len(rows) > 0
+	if !hasEvents && dmContext {
+		rows = append(rows, []InlineButton{button(h.Texts.Get("events.add", settings.Locale), "events:add")})
+	}
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:events")})
-	body := h.Texts.Get("events.empty", settings.Locale)
-	if len(rows) > 1 {
+	body := h.emptySubscriptionsText(settings, dmContext)
+	if hasEvents {
 		body = bold(escapeHTML(h.Texts.Get("events.mine", settings.Locale))) + "\n" +
 			h.Texts.Get("events.mine_summary", settings.Locale, len(live), len(finished))
 	}
@@ -537,13 +571,34 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		upcoming = upcoming[:upcomingMatchLimit]
 	}
 
-	body := h.Texts.Get("upcoming.empty", settings.Locale)
-	if len(upcoming) > 0 {
-		body = h.renderUpcomingGroups(upcoming, settings, h.Clock.Now().In(loc))
-	}
+	body, rows := h.upcomingBody(target, settings, upcoming, len(events), loc)
 	text := h.Texts.Get("upcoming.title", settings.Locale) + "\n\n" + body
-	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}}
+	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:main")})
+	kb := InlineKeyboard{InlineKeyboard: rows}
 	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
+}
+
+// upcomingBody renders the schedule, or — when there is none — says which
+// of its two very different causes applies. A chat that follows nothing yet
+// can act on that; one whose tournaments have no published schedule is
+// simply waiting, and offering it a button would be misleading.
+func (h *UpdateHandler) upcomingBody(target replyTarget, settings chat.Settings, upcoming []upcomingMatch,
+	followed int, loc *time.Location) (string, [][]InlineButton) {
+	if len(upcoming) > 0 {
+		return h.renderUpcomingGroups(upcoming, settings, h.Clock.Now().In(loc)), nil
+	}
+	if followed > 0 {
+		return h.Texts.Get("upcoming.empty", settings.Locale), nil
+	}
+	// Same signal managedScreenContext reads: a screen rendered somewhere
+	// other than the chat it is about is the DM panel, which is the only
+	// place the administrative buttons belong.
+	dmPanel := target.chatID != settings.ChatID
+	body := h.emptySubscriptionsText(settings, dmPanel)
+	if !dmPanel {
+		return body, nil
+	}
+	return body, [][]InlineButton{{button(h.Texts.Get("events.add", settings.Locale), "events:add")}}
 }
 
 // upcomingMatchLimit bounds the screen. Grouping makes each match cost
