@@ -26,10 +26,15 @@ type fakeSyncCatalog struct {
 	// event id — used to prove one event's failure doesn't stop the rest
 	// of a DiscoverEvents batch from being processed.
 	failSaveFor *common.EventID
+	// matches is the persisted match snapshot, so a test can observe the
+	// "have we seen this match before" signal processMatch keys on;
+	// failSaveMatchFor fails exactly one match's save.
+	matches          map[common.MatchID]competition.Match
+	failSaveMatchFor *common.MatchID
 }
 
 func newFakeSyncCatalog() *fakeSyncCatalog {
-	return &fakeSyncCatalog{events: map[common.EventID]competition.Event{}}
+	return &fakeSyncCatalog{events: map[common.EventID]competition.Event{}, matches: map[common.MatchID]competition.Match{}}
 }
 func (f *fakeSyncCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
@@ -43,7 +48,10 @@ func (f *fakeSyncCatalog) FindEvent(_ context.Context, id common.EventID) (*comp
 func (f *fakeSyncCatalog) FindEvents(context.Context, []common.EventID) ([]competition.Event, error) {
 	return nil, nil
 }
-func (f *fakeSyncCatalog) FindMatch(context.Context, common.MatchID) (*competition.Match, error) {
+func (f *fakeSyncCatalog) FindMatch(_ context.Context, id common.MatchID) (*competition.Match, error) {
+	if m, ok := f.matches[id]; ok {
+		return &m, nil
+	}
 	return nil, nil
 }
 func (f *fakeSyncCatalog) FindUnstartedMatches(context.Context, common.EventID) ([]competition.Match, error) {
@@ -63,6 +71,10 @@ func (f *fakeSyncCatalog) SaveEvent(_ context.Context, e competition.Event) (com
 	return e, nil
 }
 func (f *fakeSyncCatalog) SaveMatch(_ context.Context, m competition.Match) (competition.Match, error) {
+	if f.failSaveMatchFor != nil && m.ID == *f.failSaveMatchFor {
+		return competition.Match{}, errors.New("save match failed")
+	}
+	f.matches[m.ID] = m
 	return m, nil
 }
 
@@ -70,6 +82,7 @@ func (f *fakeSyncCatalog) SaveMatch(_ context.Context, m competition.Match) (com
 // subscribed-chats map, for announceBigEvent's "exclude already-subscribed
 // chats" filter.
 type fakeSyncSubs struct {
+	activeEvents      []common.EventID
 	subscribedByEvent map[common.EventID][]common.ChatID
 	subscribed        []subscription.EventSubscription
 	subscribeErr      error
@@ -86,7 +99,9 @@ func (f *fakeSyncSubs) Unsubscribe(context.Context, common.ChatID, common.EventI
 func (f *fakeSyncSubs) SubscribedChats(_ context.Context, eventID common.EventID) ([]common.ChatID, error) {
 	return f.subscribedByEvent[eventID], nil
 }
-func (f *fakeSyncSubs) ActiveEventIDs(context.Context) ([]common.EventID, error) { return nil, nil }
+func (f *fakeSyncSubs) ActiveEventIDs(context.Context) ([]common.EventID, error) {
+	return f.activeEvents, nil
+}
 func (f *fakeSyncSubs) Subscriptions(context.Context, common.ChatID) ([]subscription.EventSubscription, error) {
 	return nil, nil
 }
@@ -179,6 +194,19 @@ func newTestSync(t *testing.T, provider *fixedProvider, catalog *fakeSyncCatalog
 		Gateway: gw, Catalog: catalog, Subscriptions: subs, Chats: chats, ActiveChats: chats, Outbox: outbox,
 		Lock: fakeClusterLock{}, Clock: common.SystemUTCClock(), Metrics: newTestMetrics(), Log: slog.Default(),
 	}
+}
+
+// gatewayWithMatches builds a provider gateway whose Matches call returns
+// exactly this snapshot.
+func gatewayWithMatches(t *testing.T, matches []competition.Match) *CompetitionProviderGateway {
+	t.Helper()
+	provider := &fixedProvider{name: "PANDASCORE", matches: matches}
+	gw, err := NewCompetitionProviderGateway([]competition.DataProvider{provider},
+		ProviderRoutingConfig{Order: []string{provider.name}}, nil, common.SystemUTCClock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gw
 }
 
 func topTierEvent(name string) competition.Event {
