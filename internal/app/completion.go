@@ -118,6 +118,14 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 			return nil // idempotency guard: nothing changed since last completion pass (also the path a racer takes after waiting out the lock above)
 		}
 
+		// A chat that never voted on this tournament has no result to be
+		// told about: the recap would be a leaderboard with nobody in it.
+		// The completion is still recorded, so this stays a one-time
+		// decision rather than a check re-run on every sync.
+		if !anyPredictions(standings) {
+			return s.scoringRepo.MarkEventCompleted(txCtx, chatID, event.ID, hash, s.clock.Now())
+		}
+
 		if err := s.scoringRepo.AwardMedals(txCtx, chatID, event.ID, standings, s.clock.Now()); err != nil {
 			return err
 		}
@@ -178,6 +186,19 @@ func (s *EventCompletionService) awards(ctx context.Context, chatID common.ChatI
 		})
 	}
 	return out
+}
+
+// anyPredictions reports whether anybody in the chat actually predicted
+// anything in this tournament. Standings can be non-empty without it — a
+// member can appear with a zero count — so the votes are counted rather
+// than the rows.
+func anyPredictions(standings []scoring.UserStanding) bool {
+	for _, s := range standings {
+		if s.Predictions > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // completionHash is a cheap content hash of the final standings
