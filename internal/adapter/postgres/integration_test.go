@@ -928,6 +928,57 @@ func TestChatRepository_StreamLanguageRoundTrips(t *testing.T) {
 	}
 }
 
+// Partition maintenance must never queue for a lock. In PostgreSQL a
+// pending ACCESS EXCLUSIVE request blocks every reader that arrives after
+// it, so a sweep that waits (behind a backup's pg_dump, say) takes the
+// whole application down with it — which is exactly what happened in
+// production before this bound existed.
+func TestRetentionRepository_PartitionDropGivesUpRatherThanQueueingForALock(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	retention := pg.NewRetentionRepository(pool)
+	day := time.Now().UTC().AddDate(0, 0, -30)
+
+	if err := retention.EnsureOutboxPartition(ctx, day); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold a reader's lock on the partition, the way a dump would.
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, "SELECT count(*) FROM outbox_event_"+day.Format("20060102")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := holder.Exec(ctx, "LOCK TABLE outbox_event_"+day.Format("20060102")+" IN ACCESS SHARE MODE"); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	dropped, err := retention.DropOutboxPartitionIfEmpty(ctx, day)
+	elapsed := time.Since(started)
+
+	if err != nil {
+		t.Fatalf("a contended drop must be a quiet no-op, got %v", err)
+	}
+	if dropped {
+		t.Fatal("expected the drop to be skipped while the table is locked")
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("the drop waited %s; it must give up after about %s", elapsed, "2s")
+	}
+
+	// Once the reader is gone, the same call succeeds.
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dropped, err = retention.DropOutboxPartitionIfEmpty(ctx, day)
+	if err != nil || !dropped {
+		t.Fatalf("expected the drop to succeed once uncontended, got %v, %v", dropped, err)
+	}
+}
+
 // The tournament nominations depend on numbers no aggregate can produce:
 // who went against the chat's majority, who was the only one right, how
 // long a correct run lasted, and who voted in every single match. All four
