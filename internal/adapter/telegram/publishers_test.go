@@ -3,6 +3,9 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -220,5 +223,46 @@ func TestTeamMatchAskPublisher_DoesNotDoubleWrapCandidateNameInBold(t *testing.T
 	}
 	if !strings.Contains(text, "<b>NAVI</b>") {
 		t.Fatalf("expected the candidate name bolded exactly once by the template, got %q", text)
+	}
+}
+
+// A group that becomes a supergroup gets a new chat id, and Telegram says
+// so in the error. Without following it, every queued message for that chat
+// fails until its retries run out — which is how thirteen match results
+// were lost in production.
+func TestSendToChat_FollowsASupergroupMigration(t *testing.T) {
+	const oldID, newID = int64(-100), int64(-1001234567890)
+	var targets []int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		chatID, _ := body["chat_id"].(float64)
+		targets = append(targets, int64(chatID))
+		w.Header().Set("Content-Type", "application/json")
+		if int64(chatID) == oldID {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprintf(w, `{"ok":false,"error_code":400,"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":%d}}`, newID)
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(Config{BaseURL: server.URL, Token: "test-token"}, server.Client())
+	chats := newFakeChats()
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: common.ChatID{Value: oldID}, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := map[string]any{"chat_id": oldID, "text": "hi", "parse_mode": "HTML"}
+	if err := sendToChat(context.Background(), client, chats, payload); err != nil {
+		t.Fatalf("expected the send to succeed against the new chat id, got %v", err)
+	}
+	if len(targets) != 2 || targets[0] != oldID || targets[1] != newID {
+		t.Fatalf("targets = %v, want the old id then the new one", targets)
+	}
+	// The chat itself moves too, so the next message starts out correct.
+	if moved, err := chats.Find(context.Background(), common.ChatID{Value: newID}); err != nil || moved == nil {
+		t.Fatalf("expected the chat to be migrated to the new id, got %+v, err %v", moved, err)
 	}
 }

@@ -71,17 +71,54 @@ func annualHighlightsText(texts *Texts, locale common.LocaleCode, year int, h co
 	return texts.Get("digest.highlights", locale, year) + "\n\n" + strings.Join(items, "\n\n")
 }
 
-func sendDigest(ctx context.Context, client *Client, payload map[string]any) error {
+// sendToChat sends a group message, recovering from the two failures that
+// are not about the message itself: a forum topic that no longer exists,
+// and a group that has since become a supergroup.
+//
+// The migration case matters because a supergroup gets a brand-new chat id
+// and every queued message still addressed to the old one fails until it
+// runs out of retries — thirteen match results died that way in production
+// before this existed. Telegram hands back the new id in the error, so the
+// send can simply be re-aimed; chats (when provided) also learns it, so the
+// next message starts out addressed correctly.
+func sendToChat(ctx context.Context, client *Client, chats chat.Repository, payload map[string]any) error {
 	_, err := client.Call(ctx, "sendMessage", payload)
 	if err == nil {
 		return nil
 	}
 	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.IsTopicUnavailable() {
-		delete(payload, "message_thread_id")
-		_, err = client.Call(ctx, "sendMessage", payload)
+	if !errors.As(err, &apiErr) {
+		return err
 	}
+	if apiErr.IsTopicUnavailable() {
+		delete(payload, "message_thread_id")
+		if _, retryErr := client.Call(ctx, "sendMessage", payload); retryErr == nil {
+			return nil
+		} else if !errors.As(retryErr, &apiErr) {
+			return retryErr
+		}
+	}
+	newID, migrated := apiErr.MigratedTo()
+	if !migrated {
+		return err
+	}
+	oldID, _ := payload["chat_id"].(int64)
+	if chats != nil && oldID != 0 {
+		if migrateErr := chats.MigrateChatID(ctx, common.ChatID{Value: oldID}, common.ChatID{Value: newID}); migrateErr != nil {
+			// Worth retrying the send regardless: the message is the
+			// point, and the id will be corrected again next time.
+			_ = migrateErr
+		}
+	}
+	payload["chat_id"] = newID
+	// A supergroup keeps no forum topic from its predecessor.
+	delete(payload, "message_thread_id")
+	_, err = client.Call(ctx, "sendMessage", payload)
 	return err
+}
+
+func sendDigest(ctx context.Context, client *Client, payload map[string]any) error {
+	return sendToChat(ctx, client, nil, payload)
 }
 
 type MonthlyDigestPublisher struct {
@@ -253,15 +290,7 @@ func (p *EventFinishedPublisher) Publish(ctx context.Context, message common.Out
 		msgPayload["message_thread_id"] = *n.TopicID
 	}
 
-	_, err := p.client.Call(ctx, "sendMessage", msgPayload)
-	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && n.TopicID != nil && apiErr.IsTopicUnavailable() {
-			delete(msgPayload, "message_thread_id")
-			_, err = p.client.Call(ctx, "sendMessage", msgPayload)
-		}
-	}
-	return err
+	return sendToChat(ctx, p.client, p.chats, msgPayload)
 }
 
 // MatchResultPublisher publishes the "telegram.match-result" outbox event
@@ -802,13 +831,5 @@ func (p *EventEvePublisher) Publish(ctx context.Context, message common.OutboxMe
 		msgPayload["message_thread_id"] = *n.TopicID
 	}
 
-	_, err := p.client.Call(ctx, "sendMessage", msgPayload)
-	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && n.TopicID != nil && apiErr.IsTopicUnavailable() {
-			delete(msgPayload, "message_thread_id")
-			_, err = p.client.Call(ctx, "sendMessage", msgPayload)
-		}
-	}
-	return err
+	return sendToChat(ctx, p.client, p.chats, msgPayload)
 }
