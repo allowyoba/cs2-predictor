@@ -213,6 +213,33 @@ func TestDiscoverEvents_AnnouncesNewTopTierEventToActiveChatsNotYetSubscribed(t 
 	}
 }
 
+// Switching on a new game makes the provider hand over that game's whole
+// back catalogue at once. Those tournaments are over: offering them is an
+// invitation to subscribe to the past, and auto-subscribing a chat to one
+// drags it into a completion recap on the next match sync — which is
+// exactly the burst of finished-tournament messages chats were seeing.
+func TestDiscoverEvents_IgnoresTournamentsThatAreAlreadyOver(t *testing.T) {
+	finished := topTierEvent("IEM Katowice 2019")
+	finished.Status = competition.EventFinished
+	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{finished}}
+	subs := &fakeSyncSubs{}
+	chats := &fakeSyncChats{active: []chat.Settings{
+		{ChatID: common.ChatID{Value: -1}, Active: true, AutoSubscribeTopTier: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+		{ChatID: common.ChatID{Value: -2}, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+	}}
+	outbox := &fakeSyncOutbox{}
+	sync := newTestSync(t, provider, newFakeSyncCatalog(), subs, chats, outbox)
+
+	sync.DiscoverEvents(context.Background())
+
+	if len(outbox.enqueued) != 0 {
+		t.Fatalf("expected no announcement for a tournament that has already ended, got %+v", outbox.enqueued)
+	}
+	if len(subs.subscribed) != 0 {
+		t.Fatalf("expected nobody to be auto-subscribed to a finished tournament, got %+v", subs.subscribed)
+	}
+}
+
 // A chat with AutoSubscribeTopTier set skips the offer entirely: it's
 // actually subscribed, and told via a different ("auto-subscribed")
 // notification instead of the usual subscribe-button offer.

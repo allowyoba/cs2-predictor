@@ -181,7 +181,7 @@ func TestEventCompletionService_AwardsMedalsAndNotifiesOnceAllMatchesTerminal(t 
 	}}
 	chatID := common.ChatID{Value: -1}
 	subs := &fakeSubsForCompletion{chats: []common.ChatID{chatID}}
-	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1}}}
+	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1, Predictions: 3}}}
 	outbox := newTestOutboxForCompletion()
 
 	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
@@ -199,6 +199,34 @@ func TestEventCompletionService_AwardsMedalsAndNotifiesOnceAllMatchesTerminal(t 
 	}
 }
 
+// Enabling a new game in an existing chat pulls in that game's back
+// catalogue, and the chats auto-subscribed to those tournaments never voted
+// in them. A recap with an empty leaderboard is noise, so the completion is
+// recorded silently instead.
+func TestEventCompletionService_StaysSilentWhenNobodyInTheChatPredicted(t *testing.T) {
+	eventID := common.NewEventID()
+	catalog := &fakeCatalogForCompletion{matches: map[common.EventID][]competition.Match{
+		eventID: {newMatch(competition.MatchFinished)},
+	}}
+	chatID := common.ChatID{Value: -1}
+	subs := &fakeSubsForCompletion{chats: []common.ChatID{chatID}}
+	// A member on the board with nothing predicted is still nobody who
+	// played: the recap has no result to report.
+	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Rank: 1}}}
+	outbox := newTestOutboxForCompletion()
+
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Old Major"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(outbox.enqueued) != 0 || scoringRepo.medalsAwarded != 0 {
+		t.Fatalf("expected no recap for a tournament nobody predicted, got medals=%d outbox=%v", scoringRepo.medalsAwarded, outbox.enqueued)
+	}
+	if _, ok := scoringRepo.completionHashes[chatID]; !ok {
+		t.Fatal("the completion must still be recorded, or every sync re-runs this decision")
+	}
+}
+
 // Ground truth: re-completing with unchanged standings is a no-op per chat.
 func TestEventCompletionService_IsIdempotentPerChat(t *testing.T) {
 	eventID := common.NewEventID()
@@ -207,7 +235,7 @@ func TestEventCompletionService_IsIdempotentPerChat(t *testing.T) {
 	}}
 	chatID := common.ChatID{Value: -1}
 	subs := &fakeSubsForCompletion{chats: []common.ChatID{chatID}}
-	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1}}}
+	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1, Predictions: 3}}}
 	outbox := newTestOutboxForCompletion()
 
 	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
