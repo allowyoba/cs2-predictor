@@ -400,10 +400,16 @@ type cachedProvider struct {
 	cached      []enrichment.RankedTeam
 	cachedErr   error
 	cachedCalls int
+	// onFetch runs inside FetchLatestCached, so a test can observe what
+	// the caller was holding at that moment.
+	onFetch func()
 }
 
 func (c *cachedProvider) FetchLatestCached(context.Context) ([]enrichment.RankedTeam, error) {
 	c.cachedCalls++
+	if c.onFetch != nil {
+		c.onFetch()
+	}
 	return c.cached, c.cachedErr
 }
 
@@ -496,5 +502,51 @@ func TestRankingSync_RefreshFromCacheIgnoresPlainProviders(t *testing.T) {
 
 	if provider.calls != 0 {
 		t.Fatalf("expected no fetch at all, got %d", provider.calls)
+	}
+}
+
+// lockProbe records whether anything was still being fetched while the
+// cluster lock was held. The lock pins a pooled database connection, so a
+// provider call inside it starves every other job — which is exactly what
+// took production's background jobs down on the deploy that shipped the
+// startup refresh.
+type lockProbe struct {
+	held     bool
+	heldWhen func() bool
+	violated bool
+}
+
+func (l *lockProbe) Execute(ctx context.Context, _ string, action func(ctx context.Context) error) (bool, error) {
+	l.held = true
+	defer func() { l.held = false }()
+	if l.heldWhen != nil && l.heldWhen() {
+		l.violated = true
+	}
+	return true, action(ctx)
+}
+
+func TestRankingSync_RefreshFromCacheFetchesOutsideTheClusterLock(t *testing.T) {
+	store := newFakeEnrichmentStore()
+	probe := &lockProbe{}
+	provider := &cachedProvider{cached: []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Spirit"}, GlobalRank: intPtr(1),
+			PublishedAt: time.Now().Add(-time.Hour), Source: enrichment.SourceHLTV},
+	}}
+	// The provider reports whether the lock was held at fetch time.
+	provider.onFetch = func() {
+		if probe.held {
+			probe.violated = true
+		}
+	}
+	sync := newCachedSync(store, provider, common.NewTeamID())
+	sync.Lock = probe
+
+	sync.RefreshFromCache(context.Background())
+
+	if probe.violated {
+		t.Fatal("the provider must be called before the cluster lock is taken: the lock holds a pooled connection")
+	}
+	if provider.cachedCalls != 1 {
+		t.Fatalf("expected exactly one cached fetch, got %d", provider.cachedCalls)
 	}
 }

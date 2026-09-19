@@ -81,6 +81,12 @@ const (
 	// ranking older than this is not worth adopting: the weekly job will
 	// have a fresher one shortly, and a month-old table is worse than none.
 	cachedRunLookback = 10 * 24 * time.Hour
+	// cachedScanLimit bounds how many finished runs the startup catch-up
+	// will read before giving up. Each read is a full ranking payload over
+	// the network, and the mode we want is the most recent one or not
+	// there at all — scanning deeper spends real time on the boot path to
+	// learn something the scheduled job will handle anyway.
+	cachedScanLimit = 3
 	// adoptScanLimit bounds how many of the period's successful runs are
 	// examined when looking for one to adopt — two rankings a week means a
 	// handful at most, even counting retries.
@@ -261,6 +267,9 @@ func (p *Provider) FetchLatestCached(ctx context.Context) ([]enrichment.RankedTe
 	runs, err := p.succeededRunsSince(ctx, p.clock.Now().UTC().Add(-cachedRunLookback))
 	if err != nil {
 		return nil, err
+	}
+	if len(runs) > cachedScanLimit {
+		runs = runs[:cachedScanLimit]
 	}
 	for _, run := range runs {
 		teams, err := p.readRunOutput(ctx, run)

@@ -340,12 +340,22 @@ func run() error {
 		}
 	}()
 
-	// Opportunistic catch-up before serving: adopt anything a provider
-	// already finished while this process was down — a weekly feed would
-	// otherwise sit unread until its next window, even though the result
-	// exists (and was paid for) already.
+	// Opportunistic catch-up: adopt anything a provider already finished
+	// while this process was down — a weekly feed would otherwise sit
+	// unread until its next window, even though the result exists (and was
+	// paid for) already.
+	//
+	// Off the boot path and time-bounded. Run inline, it delayed serving by
+	// as long as the provider took to answer, and the scheduled jobs that
+	// had already started burned their own timeouts waiting behind it.
 	for _, task := range enrichmentBuilt.StartupTasks {
-		task(ctx)
+		backgroundJobs.Add(1)
+		go func(task func(ctx context.Context)) {
+			defer backgroundJobs.Done()
+			taskCtx, cancel := context.WithTimeout(ctx, cfg.JobTimeout)
+			defer cancel()
+			task(taskCtx)
+		}(task)
 	}
 
 	// Announced from here rather than by the deploy pipeline: this reports
