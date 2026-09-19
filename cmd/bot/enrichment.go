@@ -42,8 +42,13 @@ type enrichmentBuild struct {
 // the shared EnrichmentRepository. None of this affects PandaScore's role
 // as the sole source of truth for events/matches/results — it only ever
 // adds cached, best-effort context to a poll.
+// state is repo's sync-state port wrapped so provider outages reach the
+// administrators (see app.ObservedSyncState); every job takes it instead of
+// repo directly, which is what makes the alerting impossible to forget when
+// a new provider is added.
 func buildEnrichment(
-	cfg app.EnrichmentConfig, repo *pg.EnrichmentRepository, catalog competition.Catalog, subscriptions subscription.Repository,
+	cfg app.EnrichmentConfig, repo *pg.EnrichmentRepository, state enrichment.SyncStateRepository,
+	catalog competition.Catalog, subscriptions subscription.Repository,
 	httpClient *http.Client, clock common.Clock, lock common.ClusterLock, log *slog.Logger,
 ) enrichmentBuild {
 	var b enrichmentBuild
@@ -51,7 +56,7 @@ func buildEnrichment(
 	if cfg.ValveVRSEnabled {
 		sync := &app.RankingSync{
 			Source: enrichment.SourceValveVRS, Provider: valvevrs.NewProvider(valvevrs.DefaultConfig(), httpClient),
-			Teams: repo, Rankings: repo, Identity: repo, State: repo, Snapshots: repo,
+			Teams: repo, Rankings: repo, Identity: repo, State: state, Snapshots: repo,
 			Lock: lock, Log: log,
 		}
 		b.Jobs = append(b.Jobs, backgroundJob{cfg.ValveVRSSyncInterval, sync.Dispatch})
@@ -76,7 +81,7 @@ func buildEnrichment(
 			providerConfig.MaxTeams = cfg.ApifyMaxTeams
 			return &app.RankingSync{
 				Source: source, Provider: apifyhltv.NewProvider(providerConfig, httpClient),
-				Teams: repo, Rankings: repo, Identity: repo, State: repo, Snapshots: repo,
+				Teams: repo, Rankings: repo, Identity: repo, State: state, Snapshots: repo,
 				Gate: gate, LockKey: lockKey, Lock: lock, Log: log,
 			}
 		}
@@ -106,7 +111,7 @@ func buildEnrichment(
 		sync := &app.TeamStatsSync{
 			TeamStats: gridProvider, MatchStats: gridProvider,
 			Catalog: catalog, Subscriptions: subscriptions,
-			Form: repo, H2H: repo, State: repo, Lock: lock, Log: log,
+			Form: repo, H2H: repo, State: state, Lock: lock, Log: log,
 		}
 		b.Jobs = append(b.Jobs, backgroundJob{cfg.GRIDSyncInterval, sync.Dispatch})
 		b.Sources = append(b.Sources, enrichment.SourceGRID)
@@ -116,7 +121,7 @@ func buildEnrichment(
 		sync := &app.TournamentMetadataSync{
 			Provider: liquipedia.NewProvider(liquipedia.DefaultConfig(cfg.LiquipediaAPIKey), httpClient),
 			Catalog:  catalog, Subscriptions: subscriptions,
-			Metadata: repo, State: repo, Lock: lock, Log: log,
+			Metadata: repo, State: state, Lock: lock, Log: log,
 		}
 		b.Jobs = append(b.Jobs, backgroundJob{cfg.LiquipediaSyncInterval, sync.Dispatch})
 		b.Sources = append(b.Sources, enrichment.SourceLiquipedia)

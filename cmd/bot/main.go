@@ -116,7 +116,18 @@ func run() error {
 	// for events/matches/schedule/results — this only ever adds cached,
 	// best-effort context like a Valve VRS rank line to an outgoing poll) ---
 	enrichmentRepo := pg.NewEnrichmentRepository(pool)
-	enrichmentBuilt := buildEnrichment(cfg.Enrichment, enrichmentRepo, catalog, subscriptions, httpClient, clock, clusterLock, log)
+
+	// Operational notices to the administrator chats. Wired here, between
+	// the gateway and the sync jobs, because both report their health
+	// through it: the gateway via ObserveHealth, every enrichment sync via
+	// the ObservedSyncState decorator below.
+	adminAlerter := &app.AdminAlerter{
+		Outbox: outbox, Releases: enrichmentRepo, ChatIDs: cfg.TeamMatchOperatorChatIDs, Log: log,
+	}
+	gateway.ObserveHealth(adminAlerter)
+	enrichmentState := &app.ObservedSyncState{SyncStateRepository: enrichmentRepo, Observer: adminAlerter}
+
+	enrichmentBuilt := buildEnrichment(cfg.Enrichment, enrichmentRepo, enrichmentState, catalog, subscriptions, httpClient, clock, clusterLock, log)
 	enrichmentSources := enrichmentBuilt.Sources
 	teamMatchSources := enrichmentBuilt.TeamMatchSources
 
@@ -252,6 +263,7 @@ func run() error {
 			telegram.NewPollReminderPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewTeamMatchAskPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
+			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
 		},
 	}
 
@@ -315,6 +327,11 @@ func run() error {
 			log.Error("graceful shutdown failed", "error", err)
 		}
 	}()
+
+	// Announced from here rather than by the deploy pipeline: this reports
+	// the build that is actually serving, however it got here — a pipeline
+	// deploy, a manual rollback, or a restart onto a hand-changed image.
+	adminAlerter.AnnounceRelease(ctx, version, commit)
 
 	log.Info("starting cs2predictor bot", "port", cfg.Port, "version", version, "commit", commit)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

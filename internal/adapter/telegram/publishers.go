@@ -604,6 +604,49 @@ func NewTeamMatchOperatorPingPublisher(client *Client, chats chat.Repository, te
 	}
 }
 
+// NewAdminAlertPublisher delivers one operational notice to one configured
+// administrator chat (see app.AdminAlerter). Like the operator ping above
+// it renders in RU, this project's primary locale: these chats are an ops
+// contact list, not chats with a language setting of their own.
+func NewAdminAlertPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) common.OutboxPublisher {
+	return &personalNotePublisher{
+		eventType: "telegram.admin-alert", client: client, chats: chats, texts: texts, metrics: metrics,
+		compose: func(payload string) (int64, string, error) {
+			var n common.AdminAlertNotification
+			if err := json.Unmarshal([]byte(payload), &n); err != nil {
+				return 0, "", err
+			}
+			locale := common.LocaleRU
+			var text string
+			switch n.Kind {
+			case common.AdminAlertRelease:
+				text = texts.Get("admin.alert_release", locale, escapeHTML(n.Version), escapeHTML(shortCommit(n.Commit)))
+			case common.AdminAlertProviderDown:
+				text = texts.Get("admin.alert_provider_down", locale, escapeHTML(n.Provider), n.Failures)
+				if detail := strings.TrimSpace(n.Detail); detail != "" {
+					text += "\n" + code(escapeHTML(truncate(detail, 200)))
+				}
+			case common.AdminAlertProviderRecovered:
+				text = texts.Get("admin.alert_provider_recovered", locale, escapeHTML(n.Provider))
+			default:
+				// An unknown kind is a bug in the enqueuing side, but
+				// dropping the message silently would hide it twice over.
+				return 0, "", fmt.Errorf("unknown admin alert kind %q", n.Kind)
+			}
+			return n.ChatID, text, nil
+		},
+	}
+}
+
+// shortCommit trims a full SHA to the usual seven characters, leaving
+// anything shorter (or already short) alone.
+func shortCommit(commit string) string {
+	if len(commit) > 7 {
+		return commit[:7]
+	}
+	return commit
+}
+
 // TeamMatchAskPublisher delivers one crowd-review question to one helper's
 // DM (the "telegram.team-match-ask" outbox event type) — see
 // app.TeamMatchService.AskChatHelpers for who gets asked and how often.

@@ -19,7 +19,7 @@ func newTestEnrichmentRepo() *pg.EnrichmentRepository {
 }
 
 func TestBuildEnrichment_NothingEnabledProducesNothing(t *testing.T) {
-	b := buildEnrichment(app.EnrichmentConfig{}, newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
+	b := buildEnrichment(app.EnrichmentConfig{}, newTestEnrichmentRepo(), newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
 	if len(b.Sources) != 0 || len(b.TeamMatchSources) != 0 || len(b.Jobs) != 0 {
 		t.Fatalf("expected an empty build, got %+v", b)
 	}
@@ -27,7 +27,7 @@ func TestBuildEnrichment_NothingEnabledProducesNothing(t *testing.T) {
 
 func TestBuildEnrichment_ValveVRSAloneRegistersOneJobAndSource(t *testing.T) {
 	cfg := app.EnrichmentConfig{ValveVRSEnabled: true, ValveVRSSyncInterval: 6}
-	b := buildEnrichment(cfg, newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
+	b := buildEnrichment(cfg, newTestEnrichmentRepo(), newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
 	if len(b.Jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(b.Jobs))
 	}
@@ -45,7 +45,7 @@ func TestBuildEnrichment_ValveVRSAloneRegistersOneJobAndSource(t *testing.T) {
 // job alone can now produce that data.
 func TestBuildEnrichment_HLTVAloneRegistersPairedJobsAndBothSources(t *testing.T) {
 	cfg := app.EnrichmentConfig{HLTVEnabled: true, HLTVAPIToken: "tok", ApifyMaxTeams: 100, ApifyRankingCheckInterval: 1}
-	b := buildEnrichment(cfg, newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
+	b := buildEnrichment(cfg, newTestEnrichmentRepo(), newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
 	if len(b.Jobs) != 2 {
 		t.Fatalf("expected 2 jobs (HLTV + Apify-VRS), got %d", len(b.Jobs))
 	}
@@ -60,7 +60,7 @@ func TestBuildEnrichment_BothValveVRSAndHLTVRegisterValveVRSSourceOnlyOnce(t *te
 		ValveVRSEnabled: true, ValveVRSSyncInterval: 6,
 		HLTVEnabled: true, HLTVAPIToken: "tok", ApifyMaxTeams: 100, ApifyRankingCheckInterval: 1,
 	}
-	b := buildEnrichment(cfg, newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
+	b := buildEnrichment(cfg, newTestEnrichmentRepo(), newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
 	count := 0
 	for _, s := range b.Sources {
 		if s == enrichment.SourceValveVRS {
@@ -80,7 +80,7 @@ func TestBuildEnrichment_GRIDAndLiquipediaRegisterIndependently(t *testing.T) {
 		GRIDEnabled: true, GRIDAPIKey: "key", GRIDSyncInterval: 3,
 		LiquipediaEnabled: true, LiquipediaAPIKey: "key", LiquipediaSyncInterval: 24,
 	}
-	b := buildEnrichment(cfg, newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
+	b := buildEnrichment(cfg, newTestEnrichmentRepo(), newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
 	if len(b.Jobs) != 2 {
 		t.Fatalf("expected 2 jobs, got %d", len(b.Jobs))
 	}

@@ -201,6 +201,21 @@ func (r *EnrichmentRepository) AllAliases(ctx context.Context) (map[common.TeamI
 	return out, rows.Err()
 }
 
+// --- common.ReleaseAnnouncementStore ---
+
+// Claim records this build as announced and reports whether this caller is
+// the one that got there first. Insert-and-check rather than select-then-
+// insert: two instances starting at once must not both announce.
+func (r *EnrichmentRepository) Claim(ctx context.Context, version, commit string) (bool, error) {
+	tag, err := executor(ctx, r.pool).Exec(ctx,
+		`INSERT INTO release_announcement(version, commit_sha) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		version, commit)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // --- enrichment.SyncStateRepository ---
 
 func (r *EnrichmentRepository) RecordSuccess(ctx context.Context, provider enrichment.Source) error {
