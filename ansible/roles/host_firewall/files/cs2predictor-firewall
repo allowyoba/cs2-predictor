@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Managed by ansible/roles/host_firewall — do not edit by hand, changes are
+# overwritten the next time that role runs.
+#
+# Applies this host's ingress rules in two independent halves, so the same
+# script serves both the standalone unit and Docker's ExecStartPost:
+#   host   — the INPUT chain (CS2P-HOST): SSH, 80/443, ICMP, DHCP, drop the rest
+#   docker — the DOCKER-USER chain (CS2P-DOCKER), which is what actually
+#            guards published container ports; they are DNAT'd and never
+#            traverse INPUT at all
+set -Eeuo pipefail
+umask 077
+exec 8>/var/lock/cs2predictor-firewall.lock
+flock -w 30 8
+mode="${1:-all}"
+[[ $mode == all || $mode == host || $mode == docker ]] || exit 64
+ssh_port="$(cat /etc/cs2predictor/ssh-port)"
+[[ $ssh_port =~ ^[0-9]+$ ]] || exit 64
+
+for family in 4 6; do
+  if [[ $family == 4 ]]; then
+    filter=iptables
+    restore=iptables-restore
+    icmp=icmp
+  else
+    filter=ip6tables
+    restore=ip6tables-restore
+    icmp=ipv6-icmp
+    [[ -e /proc/net/if_inet6 ]] || continue
+  fi
+
+  if [[ $mode != docker ]]; then
+    {
+      printf '*filter\n:CS2P-HOST - [0:0]\n-F CS2P-HOST\n'
+      printf '%s\n' '-A CS2P-HOST -i lo -j RETURN'
+      printf '%s\n' '-A CS2P-HOST -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN'
+      printf '%s\n' '-A CS2P-HOST -m conntrack --ctstate INVALID -j DROP'
+      printf '%s\n' "-A CS2P-HOST -p $icmp -j RETURN"
+      if [[ $family == 4 ]]; then
+        printf '%s\n' '-A CS2P-HOST -p udp --sport 67 --dport 68 -j RETURN'
+      else
+        printf '%s\n' '-A CS2P-HOST -p udp --sport 547 --dport 546 -j RETURN'
+      fi
+      printf '%s\n' "-A CS2P-HOST -p tcp --dport $ssh_port -j RETURN"
+      printf '%s\n' '-A CS2P-HOST -p tcp -m multiport --dports 80,443 -j RETURN'
+      printf '%s\n' '-A CS2P-HOST -j DROP' 'COMMIT'
+    } | "$restore" --wait 10 --noflush
+    "$filter" -w 10 -C INPUT -j CS2P-HOST 2>/dev/null || "$filter" -w 10 -I INPUT 1 -j CS2P-HOST
+  fi
+
+  if [[ $mode != host ]]; then
+    # At boot this runs as docker.service's ExecStartPost, before DHCP has
+    # necessarily finished: wait for the default route rather than exiting
+    # non-zero, which takes the Docker daemon down with it and, past
+    # systemd's restart limit, leaves the host with no container runtime.
+    if [[ $family == 4 ]]; then
+      for _ in $(seq 1 60); do
+        [[ -n "$(ip -4 -o route show default)" ]] && break
+        sleep 1
+      done
+    fi
+    mapfile -t interfaces < <(ip -"$family" -o route show default | awk '{for(i=1;i<NF;i++) if($i=="dev") print $(i+1)}' | sort -u)
+    if [[ $family == 4 && ${#interfaces[@]} -eq 0 ]]; then
+      echo 'Cannot determine IPv4 ingress interface for Docker firewall' >&2
+      exit 1
+    fi
+    (( ${#interfaces[@]} > 0 )) || continue
+    if ! "$filter" -w 10 -nL DOCKER-USER >/dev/null 2>&1; then
+      [[ $family == 6 ]] && continue
+      echo 'DOCKER-USER is missing; Docker must use iptables backend' >&2
+      exit 1
+    fi
+    {
+      printf '*filter\n:CS2P-DOCKER - [0:0]\n-F CS2P-DOCKER\n'
+      printf '%s\n' '-A CS2P-DOCKER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN'
+      for interface in "${interfaces[@]}"; do
+        [[ $interface =~ ^[a-zA-Z0-9_.:-]+$ ]] || exit 64
+        for port in 80 443; do
+          # DOCKER-USER sees packets after DNAT. Match original host port.
+          printf '%s\n' "-A CS2P-DOCKER -i $interface -p tcp -m conntrack --ctdir ORIGINAL --ctorigdstport $port -j RETURN"
+        done
+        printf '%s\n' "-A CS2P-DOCKER -i $interface -j DROP"
+      done
+      printf '%s\n' '-A CS2P-DOCKER -j RETURN' 'COMMIT'
+    } | "$restore" --wait 10 --noflush
+    "$filter" -w 10 -C DOCKER-USER -j CS2P-DOCKER 2>/dev/null || "$filter" -w 10 -I DOCKER-USER 1 -j CS2P-DOCKER
+  fi
+done

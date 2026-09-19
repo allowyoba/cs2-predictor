@@ -117,12 +117,12 @@ ps: ## Show development stack container status
 
 ## --- Deployment ---
 
-ANSIBLE_PLAYBOOKS := site.yml bootstrap.yml deploy.yml webhook.yml notify_failure.yml scheduled_backup.yml
+ANSIBLE_PLAYBOOKS := site.yml bootstrap.yml deploy.yml webhook.yml notify_failure.yml scheduled_backup.yml firewall.yml
 
 .PHONY: deploy-check
 deploy-check: ## Syntax-check the Ansible playbooks and shellcheck scripts/ — what CI runs (needs: pip install ansible-core)
 	cd ansible && ansible-playbook -i inventory.example.yml $(ANSIBLE_PLAYBOOKS) --syntax-check
-	shellcheck scripts/configure-repository.sh
+	shellcheck scripts/configure-repository.sh ansible/roles/host_firewall/files/cs2predictor-firewall
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint the Ansible roles (not run in CI — see ansible/README.md for known pre-existing findings)
