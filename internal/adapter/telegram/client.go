@@ -46,6 +46,11 @@ type APIError struct {
 	// logging.
 	ErrorCode  int
 	RetryAfter int
+	// MigrateToChatID is the supergroup id that replaced the chat this
+	// call was aimed at (Telegram's own parameters.migrate_to_chat_id).
+	// Set only for that error, and the only way a caller can learn the new
+	// id without having seen the group's migration service message.
+	MigrateToChatID int64
 }
 
 func (e *APIError) Error() string { return e.Message }
@@ -63,6 +68,14 @@ func (e *APIError) isDescriptionContains(substrings ...string) bool {
 // IsTopicUnavailable matches Telegram's error text for a removed/invalid
 // forum topic (e.g. "message thread not found").
 func (e *APIError) IsTopicUnavailable() bool { return e.isDescriptionContains("thread", "topic") }
+
+// MigratedTo returns the supergroup id that replaced the target chat, and
+// whether this error is that migration at all. A group upgraded to a
+// supergroup gets a brand-new id, and every message still addressed to the
+// old one fails until it is re-aimed.
+func (e *APIError) MigratedTo() (int64, bool) {
+	return e.MigrateToChatID, e.MigrateToChatID != 0
+}
 
 // IsReplyUnavailable matches Telegram's error text for a reply target that
 // no longer exists (e.g. "message to be replied not found").
@@ -207,6 +220,10 @@ type apiEnvelope struct {
 	Result      json.RawMessage `json:"result"`
 	Parameters  *struct {
 		RetryAfter int `json:"retry_after"`
+		// MigrateToChatID arrives when the target group has since been
+		// upgraded to a supergroup: the old id is dead, and this is the
+		// one Telegram wants instead.
+		MigrateToChatID int64 `json:"migrate_to_chat_id"`
 	} `json:"parameters"`
 }
 
@@ -300,6 +317,7 @@ func (c *Client) doCall(ctx context.Context, method string, payload any) (json.R
 		apiErr := &APIError{Method: method, Message: fmt.Sprintf("telegram %s failed: %s", method, envelope.Description), ErrorCode: envelope.ErrorCode}
 		if envelope.Parameters != nil {
 			apiErr.RetryAfter = envelope.Parameters.RetryAfter
+			apiErr.MigrateToChatID = envelope.Parameters.MigrateToChatID
 		}
 		return nil, apiErr
 	}
@@ -400,6 +418,7 @@ func (c *Client) postSendPhoto(ctx context.Context, body *bytes.Buffer, contentT
 		apiErr := &APIError{Method: "sendPhoto", Message: fmt.Sprintf("telegram sendPhoto failed: %s", envelope.Description), ErrorCode: envelope.ErrorCode}
 		if envelope.Parameters != nil {
 			apiErr.RetryAfter = envelope.Parameters.RetryAfter
+			apiErr.MigrateToChatID = envelope.Parameters.MigrateToChatID
 		}
 		return apiErr
 	}
