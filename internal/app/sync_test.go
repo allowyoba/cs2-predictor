@@ -110,6 +110,10 @@ func (f *fakeSyncChats) Find(_ context.Context, chatID common.ChatID) (*chat.Set
 func (f *fakeSyncChats) Save(_ context.Context, s chat.Settings) (chat.Settings, error) {
 	return s, nil
 }
+func (f *fakeSyncChats) SetAutoSubscribeGame(context.Context, common.ChatID, competition.GameCode, bool) error {
+	return nil
+}
+
 func (f *fakeSyncChats) SetEnabledGames(context.Context, common.ChatID, []competition.GameCode) error {
 	return nil
 }
@@ -224,7 +228,7 @@ func TestDiscoverEvents_IgnoresTournamentsThatAreAlreadyOver(t *testing.T) {
 	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{finished}}
 	subs := &fakeSyncSubs{}
 	chats := &fakeSyncChats{active: []chat.Settings{
-		{ChatID: common.ChatID{Value: -1}, Active: true, AutoSubscribeTopTier: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+		{ChatID: common.ChatID{Value: -1}, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}, AutoSubscribeGames: []competition.GameCode{competition.GameCS2}},
 		{ChatID: common.ChatID{Value: -2}, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
 	}}
 	outbox := &fakeSyncOutbox{}
@@ -240,7 +244,7 @@ func TestDiscoverEvents_IgnoresTournamentsThatAreAlreadyOver(t *testing.T) {
 	}
 }
 
-// A chat with AutoSubscribeTopTier set skips the offer entirely: it's
+// A chat auto-subscribing that game skips the offer entirely: it's
 // actually subscribed, and told via a different ("auto-subscribed")
 // notification instead of the usual subscribe-button offer.
 func TestDiscoverEvents_AutoSubscribesChatsThatOptedIn(t *testing.T) {
@@ -250,7 +254,7 @@ func TestDiscoverEvents_AutoSubscribesChatsThatOptedIn(t *testing.T) {
 	subs := &fakeSyncSubs{}
 	autoChat, plainChat := common.ChatID{Value: -1}, common.ChatID{Value: -2}
 	chats := &fakeSyncChats{active: []chat.Settings{
-		{ChatID: autoChat, Active: true, AutoSubscribeTopTier: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+		{ChatID: autoChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}, AutoSubscribeGames: []competition.GameCode{competition.GameCS2}},
 		{ChatID: plainChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
 	}}
 	outbox := &fakeSyncOutbox{}
@@ -276,6 +280,32 @@ func TestDiscoverEvents_AutoSubscribesChatsThatOptedIn(t *testing.T) {
 	}
 }
 
+// Auto-subscription is per game: the same chat joins its CS2 tournaments
+// outright and is still asked about its Dota 2 ones.
+func TestDiscoverEvents_AutoSubscribesOnlyForTheGamesTheChatChose(t *testing.T) {
+	dota := topTierEvent("The International")
+	dota.Game = competition.GameDota2
+	provider := &fixedProvider{name: "PANDASCORE", events: []competition.Event{dota}}
+	subs := &fakeSyncSubs{}
+	chatID := common.ChatID{Value: -1}
+	chats := &fakeSyncChats{active: []chat.Settings{{
+		ChatID: chatID, Active: true,
+		EnabledGames:       []competition.GameCode{competition.GameCS2, competition.GameDota2},
+		AutoSubscribeGames: []competition.GameCode{competition.GameCS2},
+	}}}
+	outbox := &fakeSyncOutbox{}
+	sync := newTestSync(t, provider, newFakeSyncCatalog(), subs, chats, outbox)
+
+	sync.DiscoverEvents(context.Background())
+
+	if len(subs.subscribed) != 0 {
+		t.Fatalf("Dota 2 is not auto-subscribed for this chat, got %+v", subs.subscribed)
+	}
+	if len(outbox.enqueued) != 1 || outbox.enqueued[0].eventType != "telegram.big-event-discovered" {
+		t.Fatalf("expected the usual subscribe offer instead, got %+v", outbox.enqueued)
+	}
+}
+
 // A Subscribe failure for one auto-subscribing chat must not stop the rest
 // of the batch (a different chat, or a plain offer) from being processed —
 // same per-item resilience as an outbox enqueue failure already gets.
@@ -286,7 +316,7 @@ func TestDiscoverEvents_AutoSubscribeFailureDoesNotStopTheRestOfTheBatch(t *test
 	subs := &fakeSyncSubs{subscribeErr: errors.New("db unavailable")}
 	failingChat, plainChat := common.ChatID{Value: -1}, common.ChatID{Value: -2}
 	chats := &fakeSyncChats{active: []chat.Settings{
-		{ChatID: failingChat, Active: true, AutoSubscribeTopTier: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
+		{ChatID: failingChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}, AutoSubscribeGames: []competition.GameCode{competition.GameCS2}},
 		{ChatID: plainChat, Active: true, EnabledGames: []competition.GameCode{competition.GameCS2}},
 	}}
 	outbox := &fakeSyncOutbox{}
