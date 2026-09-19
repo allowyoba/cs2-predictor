@@ -213,6 +213,7 @@ var callbackRoutes = []callbackRoute{
 	{match: exact("settings:locale"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsLocale},
 	{match: exact("settings:top_tier"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsTopTier},
 	{match: exact("settings:auto_subscribe"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribe},
+	{match: prefixed("settings:auto_subscribe:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribeGame},
 	{match: exact("settings:stream_language"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamLanguage},
 	{match: exact("settings:games"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).gamesView)},
 	{match: prefixed("settings:games:toggle:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsGamesToggle},
@@ -668,21 +669,67 @@ func routeSettingsTopTier(h *UpdateHandler, ctx context.Context, cb *CallbackQue
 	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 }
 
+// routeSettingsAutoSubscribe is the menu row. With several games followed
+// it opens the per-game screen; with one (or none) there is nothing to
+// choose between, so it toggles that game in place and stays on the menu —
+// the same behaviour this row had before the setting was split.
 func routeSettingsAutoSubscribe(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-	settings.AutoSubscribeTopTier = !settings.AutoSubscribeTopTier
-	if _, err := h.Chats.Save(ctx, settings); err != nil {
+	if len(settings.EnabledGames) > 1 {
+		return false, h.autoSubscribeView(ctx, target, settings)
+	}
+	if len(settings.EnabledGames) == 0 {
+		// Nothing to subscribe to until a game is followed; say so rather
+		// than silently doing nothing to a toggle that was just tapped.
+		return false, h.toast(ctx, cb.ID, h.Texts.Get("settings.auto_subscribe_needs_game", settings.Locale))
+	}
+	updated, err := h.toggleAutoSubscribe(ctx, cb, settings, settings.EnabledGames[0])
+	if err != nil {
 		return false, err
 	}
-	state := "off"
-	toastKey := "settings.auto_subscribe_off"
-	if settings.AutoSubscribeTopTier {
+	return true, h.settingsView(ctx, target, updated, cb.Message.Chat.Type == "private")
+}
+
+// routeSettingsAutoSubscribeGame toggles one game from the per-game screen.
+func routeSettingsAutoSubscribeGame(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	code := competition.GameCode(strings.TrimPrefix(data, "settings:auto_subscribe:"))
+	if !settings.GameEnabled(code) {
+		return false, newValidationError("game %q is not enabled for this chat", code)
+	}
+	updated, err := h.toggleAutoSubscribe(ctx, cb, settings, code)
+	if err != nil {
+		return false, err
+	}
+	return true, h.autoSubscribeView(ctx, target, updated)
+}
+
+// toggleAutoSubscribe flips one game's auto-subscription, records it in the
+// chat's history, and confirms it with a toast naming the game — the same
+// tap means something different per game now, so the confirmation has to
+// say which one it applied to.
+func (h *UpdateHandler) toggleAutoSubscribe(ctx context.Context, cb *CallbackQuery, settings chat.Settings,
+	code competition.GameCode) (chat.Settings, error) {
+	on := !settings.AutoSubscribesTo(code)
+	if err := h.Chats.SetAutoSubscribeGame(ctx, settings.ChatID, code, on); err != nil {
+		return settings, err
+	}
+	next := make([]competition.GameCode, 0, len(settings.AutoSubscribeGames)+1)
+	for _, g := range settings.AutoSubscribeGames {
+		if g != code {
+			next = append(next, g)
+		}
+	}
+	if on {
+		next = append(next, code)
+	}
+	settings.AutoSubscribeGames = next
+
+	state, toastKey := "off", "settings.auto_subscribe_off"
+	if on {
 		state, toastKey = "on", "settings.auto_subscribe_on"
 	}
-	h.logAdminAction(ctx, settings.ChatID, &cb.From, "auto_subscribe", state)
-	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
-		return false, err
-	}
-	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
+	name := h.Texts.Get(gameShortLabelKey(code), settings.Locale)
+	h.logAdminAction(ctx, settings.ChatID, &cb.From, "auto_subscribe", name+":"+state)
+	return settings, h.toast(ctx, cb.ID, "✅ "+name+" — "+h.Texts.Get(toastKey, settings.Locale))
 }
 
 // routeSettingsStreamLanguage cycles the broadcast language between the

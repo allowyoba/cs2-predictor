@@ -169,6 +169,22 @@ func (f *fakeChats) SetEnabledGames(_ context.Context, chatID common.ChatID, gam
 	f.settings[chatID.Value] = s
 	return nil
 }
+func (f *fakeChats) SetAutoSubscribeGame(_ context.Context, chatID common.ChatID, game competition.GameCode, enabled bool) error {
+	s := f.settings[chatID.Value]
+	s.ChatID = chatID
+	next := make([]competition.GameCode, 0, len(s.AutoSubscribeGames)+1)
+	for _, g := range s.AutoSubscribeGames {
+		if g != game {
+			next = append(next, g)
+		}
+	}
+	if enabled {
+		next = append(next, game)
+	}
+	s.AutoSubscribeGames = next
+	f.settings[chatID.Value] = s
+	return nil
+}
 func (f *fakeChats) IsModerator(_ context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {
 	return f.moderators[[2]int64{chatID.Value, userID.Value}], nil
 }

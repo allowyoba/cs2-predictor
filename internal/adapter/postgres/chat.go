@@ -25,27 +25,27 @@ func NewChatRepository(pool *pgxpool.Pool) *ChatRepository {
 
 func (r *ChatRepository) Find(ctx context.Context, chatID common.ChatID) (*chat.Settings, error) {
 	row := executor(ctx, r.pool).QueryRow(ctx,
-		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier, stream_language FROM telegram_chat WHERE id = $1`, chatID.Value)
+		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, stream_language FROM telegram_chat WHERE id = $1`, chatID.Value)
 	var s chat.Settings
 	var id int64
-	if err := row.Scan(&id, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier, &s.StreamLanguage); err != nil {
+	if err := row.Scan(&id, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.StreamLanguage); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	s.ChatID = common.ChatID{Value: id}
-	games, err := r.enabledGames(ctx, []int64{id})
+	games, autoSubscribed, err := r.enabledGames(ctx, []int64{id})
 	if err != nil {
 		return nil, err
 	}
-	s.EnabledGames = games[id]
+	s.EnabledGames, s.AutoSubscribeGames = games[id], autoSubscribed[id]
 	return &s, nil
 }
 
 func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx,
-		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier, stream_language
+		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, stream_language
 		   FROM telegram_chat
 		  WHERE active = true
 		  ORDER BY id`)
@@ -58,7 +58,7 @@ func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error
 	var ids []int64
 	for rows.Next() {
 		var s chat.Settings
-		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier, &s.StreamLanguage); err != nil {
+		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.StreamLanguage); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -67,12 +67,13 @@ func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	games, err := r.enabledGames(ctx, ids)
+	games, autoSubscribed, err := r.enabledGames(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
 	for i := range out {
 		out[i].EnabledGames = games[out[i].ChatID.Value]
+		out[i].AutoSubscribeGames = autoSubscribed[out[i].ChatID.Value]
 	}
 	return out, nil
 }
@@ -80,27 +81,43 @@ func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error
 // enabledGames batch-resolves each chat id's enabled games in one round
 // trip — the same batching pattern providerCodes/gameCodes use in
 // competition.go, for the same reason: avoids an N+1 query per chat.
-func (r *ChatRepository) enabledGames(ctx context.Context, chatIDs []int64) (map[int64][]competition.GameCode, error) {
-	out := map[int64][]competition.GameCode{}
+func (r *ChatRepository) enabledGames(ctx context.Context, chatIDs []int64) (games, autoSubscribed map[int64][]competition.GameCode, err error) {
+	games, autoSubscribed = map[int64][]competition.GameCode{}, map[int64][]competition.GameCode{}
 	if len(chatIDs) == 0 {
-		return out, nil
+		return games, autoSubscribed, nil
 	}
 	rows, err := executor(ctx, r.pool).Query(ctx,
-		`SELECT ceg.chat_id, g.code FROM chat_enabled_game ceg JOIN game g ON g.id = ceg.game_id WHERE ceg.chat_id = ANY($1)`,
+		`SELECT ceg.chat_id, g.code, ceg.auto_subscribe_top_tier
+		 FROM chat_enabled_game ceg JOIN game g ON g.id = ceg.game_id WHERE ceg.chat_id = ANY($1)`,
 		chatIDs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var chatID int64
 		var code string
-		if err := rows.Scan(&chatID, &code); err != nil {
-			return nil, err
+		var auto bool
+		if err := rows.Scan(&chatID, &code, &auto); err != nil {
+			return nil, nil, err
 		}
-		out[chatID] = append(out[chatID], competition.GameCode(code))
+		games[chatID] = append(games[chatID], competition.GameCode(code))
+		if auto {
+			autoSubscribed[chatID] = append(autoSubscribed[chatID], competition.GameCode(code))
+		}
 	}
-	return out, rows.Err()
+	return games, autoSubscribed, rows.Err()
+}
+
+// SetAutoSubscribeGame flips the flag on the chat's row for that game. A
+// game the chat does not follow has no row to flip, and silently gains
+// nothing — enabling it later starts from the default, off.
+func (r *ChatRepository) SetAutoSubscribeGame(ctx context.Context, chatID common.ChatID, game competition.GameCode, enabled bool) error {
+	_, err := executor(ctx, r.pool).Exec(ctx,
+		`UPDATE chat_enabled_game SET auto_subscribe_top_tier = $3
+		 WHERE chat_id = $1 AND game_id = (SELECT id FROM game WHERE code = $2)`,
+		chatID.Value, string(game), enabled)
+	return err
 }
 
 // SetEnabledGames replaces the chat's whole set in one transaction — small,
@@ -128,15 +145,14 @@ func (r *ChatRepository) SetEnabledGames(ctx context.Context, chatID common.Chat
 // used by every upsert in the original JPA adapters.
 func (r *ChatRepository) Save(ctx context.Context, s chat.Settings) (chat.Settings, error) {
 	_, err := executor(ctx, r.pool).Exec(ctx,
-		`INSERT INTO telegram_chat(id, title, locale, timezone, default_topic_id, active, default_top_tier_only, auto_subscribe_top_tier, stream_language, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+		`INSERT INTO telegram_chat(id, title, locale, timezone, default_topic_id, active, default_top_tier_only, stream_language, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   title = excluded.title, locale = excluded.locale, timezone = excluded.timezone,
 		   default_topic_id = excluded.default_topic_id, active = excluded.active,
 		   default_top_tier_only = excluded.default_top_tier_only,
-		   auto_subscribe_top_tier = excluded.auto_subscribe_top_tier,
 		   stream_language = excluded.stream_language, updated_at = now()`,
-		s.ChatID.Value, s.Title, s.Locale, s.Timezone, s.DefaultTopicID, s.Active, s.DefaultTopTierOnly, s.AutoSubscribeTopTier,
+		s.ChatID.Value, s.Title, s.Locale, s.Timezone, s.DefaultTopicID, s.Active, s.DefaultTopTierOnly,
 		s.StreamLanguage)
 	return s, err
 }
@@ -532,7 +548,7 @@ func (r *ChatRepository) RecordManaged(ctx context.Context, chatID common.ChatID
 
 func (r *ChatRepository) ManagedChats(ctx context.Context, userID common.UserID) ([]chat.Settings, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx, `
-		SELECT c.id, c.title, c.locale, c.timezone, c.default_topic_id, c.active, c.default_top_tier_only, c.auto_subscribe_top_tier, c.stream_language
+		SELECT c.id, c.title, c.locale, c.timezone, c.default_topic_id, c.active, c.default_top_tier_only, c.stream_language
 		  FROM chat_manager_seen s
 		  JOIN telegram_chat c ON c.id = s.chat_id
 		 WHERE s.user_id = $1 AND c.active = true
@@ -544,7 +560,7 @@ func (r *ChatRepository) ManagedChats(ctx context.Context, userID common.UserID)
 	var out []chat.Settings
 	for rows.Next() {
 		var s chat.Settings
-		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.AutoSubscribeTopTier, &s.StreamLanguage); err != nil {
+		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.StreamLanguage); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

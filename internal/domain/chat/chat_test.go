@@ -22,6 +22,10 @@ type fakeRepo struct {
 
 func (f fakeRepo) Find(context.Context, common.ChatID) (*Settings, error) { return nil, nil }
 func (f fakeRepo) Save(_ context.Context, s Settings) (Settings, error)   { return s, nil }
+func (f fakeRepo) SetAutoSubscribeGame(context.Context, common.ChatID, competition.GameCode, bool) error {
+	return nil
+}
+
 func (f fakeRepo) SetEnabledGames(context.Context, common.ChatID, []competition.GameCode) error {
 	return nil
 }

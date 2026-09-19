@@ -74,6 +74,10 @@ func (fakeChatsForCompletion) Find(_ context.Context, chatID common.ChatID) (*ch
 func (fakeChatsForCompletion) Save(_ context.Context, s chat.Settings) (chat.Settings, error) {
 	return s, nil
 }
+func (fakeChatsForCompletion) SetAutoSubscribeGame(context.Context, common.ChatID, competition.GameCode, bool) error {
+	return nil
+}
+
 func (fakeChatsForCompletion) SetEnabledGames(context.Context, common.ChatID, []competition.GameCode) error {
 	return nil
 }

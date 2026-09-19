@@ -31,11 +31,7 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		tournamentMode = h.Texts.Get("settings.tournaments_top", settings.Locale)
 	}
 	topTierLabel := h.Texts.Get("settings.tournaments_label", settings.Locale, tournamentMode)
-	autoSubscribeState := h.Texts.Get("settings.auto_subscribe_off", settings.Locale)
-	if settings.AutoSubscribeTopTier {
-		autoSubscribeState = h.Texts.Get("settings.auto_subscribe_on", settings.Locale)
-	}
-	autoSubscribeLabel := h.Texts.Get("settings.auto_subscribe_label", settings.Locale, autoSubscribeState)
+	autoSubscribeLabel := h.Texts.Get("settings.auto_subscribe_label", settings.Locale, h.autoSubscribeState(settings))
 	streamLanguageLabel := h.Texts.Get("settings.stream_language_label", settings.Locale, h.localeName(settings.StreamLocale(), settings.Locale))
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
 		{button(languageLabel, "settings:locale")},
@@ -76,6 +72,45 @@ func gameLabelKey(code competition.GameCode) string {
 // rather than standing alone as a heading.
 func gameShortLabelKey(code competition.GameCode) string {
 	return gameLabelKey(code) + "_short"
+}
+
+// autoSubscribeState summarises the setting for the menu row: "on"/"off"
+// while the chat follows a single game — naming it there would only repeat
+// what the row above already says — and the names of the games it is on for
+// once there are several, which is the whole point of splitting it.
+func (h *UpdateHandler) autoSubscribeState(settings chat.Settings) string {
+	on := make([]string, 0, len(settings.EnabledGames))
+	for _, code := range settings.EnabledGames {
+		if settings.AutoSubscribesTo(code) {
+			on = append(on, h.Texts.Get(gameShortLabelKey(code), settings.Locale))
+		}
+	}
+	if len(on) == 0 {
+		return h.Texts.Get("settings.auto_subscribe_off", settings.Locale)
+	}
+	if len(settings.EnabledGames) < 2 {
+		return h.Texts.Get("settings.auto_subscribe_on", settings.Locale)
+	}
+	return strings.Join(on, ", ")
+}
+
+// autoSubscribeView is the per-game screen, shown only once a chat follows
+// more than one game: with a single game there is nothing to split, and the
+// menu row toggles it in place instead of spending a tap on a screen with
+// one button on it.
+func (h *UpdateHandler) autoSubscribeView(ctx context.Context, target replyTarget, settings chat.Settings) error {
+	rows := make([][]InlineButton, 0, len(settings.EnabledGames)+1)
+	for _, code := range settings.EnabledGames {
+		mark := "⬜️ "
+		if settings.AutoSubscribesTo(code) {
+			mark = "✅ "
+		}
+		rows = append(rows, []InlineButton{button(mark+h.Texts.Get(gameLabelKey(code), settings.Locale), "settings:auto_subscribe:"+string(code))})
+	}
+	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:settings")})
+	text := bold(h.Texts.Get("settings.auto_subscribe_title", settings.Locale)) + "\n" +
+		h.Texts.Get("settings.auto_subscribe_hint", settings.Locale)
+	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
 // gamesView lists every supported game as a toggle — a chat starts with
