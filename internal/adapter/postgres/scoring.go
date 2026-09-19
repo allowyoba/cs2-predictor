@@ -892,7 +892,8 @@ WITH event_votes AS (
     SELECT poll_id,
            COUNT(*) FILTER (WHERE picked_side = 1) AS side_one,
            COUNT(*) FILTER (WHERE picked_side = 2) AS side_two,
-           COUNT(*) FILTER (WHERE correct) AS correct_voters
+           COUNT(*) FILTER (WHERE correct) AS correct_voters,
+           COUNT(*) AS voters
       FROM event_votes
      GROUP BY poll_id
 ), marked AS (
@@ -917,7 +918,10 @@ SELECT e.user_id,
              AND ((e.picked_side = 1 AND s.side_one < s.side_two)
                OR (e.picked_side = 2 AND s.side_two < s.side_one))
        )::int AS contrarian_wins,
-       COUNT(*) FILTER (WHERE e.correct AND s.correct_voters = 1)::int AS lone_correct,
+       -- "The only one who saw it" needs a crowd to be alone against:
+       -- in a poll two people voted on, being the only one right is a coin
+       -- flip, and in a chat with a single voter it is every correct pick.
+       COUNT(*) FILTER (WHERE e.correct AND s.correct_voters = 1 AND s.voters >= 3)::int AS lone_correct,
        COUNT(DISTINCT e.poll_id)::int AS voted_polls,
        COALESCE(MAX(st.longest_streak), 0)::int AS longest_streak
   FROM event_votes e

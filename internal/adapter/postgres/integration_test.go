@@ -1061,12 +1061,54 @@ func TestScoringRepository_EventSpecialsCountsCrowdRelativeAchievements(t *testi
 		}
 	}
 
+	// A fourth match nobody but one person voted on: being "the only one
+	// right" there means being the only one there, which is not a
+	// nomination.
+	soloMatch := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "m-spec-solo",
+		Status: competition.MatchFinished, Format: format,
+	}
+	soloPlayedAt := started.Add(4 * time.Hour)
+	soloMatch.ActualStartedAt = &soloPlayedAt
+	if _, err := catalog.SaveMatch(ctx, soloMatch); err != nil {
+		t.Fatal(err)
+	}
+	soloPoll, err := predictions.SavePoll(ctx, prediction.Poll{
+		ID: common.NewPollID(), ChatID: chatID, MatchID: soloMatch.ID, Options: options,
+		Status: prediction.PollClosed, ClosesAt: started,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := predictions.SaveVote(ctx, prediction.Vote{
+		PollID: soloPoll.ID, UserID: quiet, OptionIndex: firstWins, DisplayName: "user-503", VotedAt: started,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := scoringRepo.ReplaceAwards(ctx, soloPoll.ID, []scoring.Award{{
+		ChatID: chatID, EventID: event.ID, MatchID: soloMatch.ID, PollID: soloPoll.ID, UserID: quiet,
+		Points: 1, Kind: scoring.AwardOutcome, MatchStartedAt: soloPlayedAt, AwardedAt: started,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
 	specials, err := scoringRepo.EventSpecials(ctx, chatID, event.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if specials.TotalPolls != 3 {
-		t.Fatalf("TotalPolls = %d, want 3", specials.TotalPolls)
+	byUserOf := func(s scoring.EventSpecials, id int64) scoring.EventUserSpecials {
+		for _, u := range s.Users {
+			if u.UserID.Value == id {
+				return u
+			}
+		}
+		return scoring.EventUserSpecials{}
+	}
+	if specials.TotalPolls != 4 {
+		t.Fatalf("TotalPolls = %d, want 4", specials.TotalPolls)
+	}
+	if solo := byUserOf(specials, quiet.Value); solo.LoneCorrect != 0 {
+		t.Fatalf("a poll with a single voter must not produce a lone-correct award, got %+v", solo)
 	}
 	byUser := map[int64]scoring.EventUserSpecials{}
 	for _, u := range specials.Users {
