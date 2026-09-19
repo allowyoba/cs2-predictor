@@ -74,6 +74,35 @@ func (a *AdminAlerter) ProviderRecovered(ctx context.Context, provider string) {
 	})
 }
 
+// DeadLetters reports undelivered messages that will stay undelivered
+// until somebody replays them. aggregateID carries the count, so a pile
+// that has grown since the last alert is a new message rather than a
+// duplicate of one already sent.
+func (a *AdminAlerter) DeadLetters(ctx context.Context, count int, detail string) {
+	a.fanOut(ctx, "OUTBOX", "dead-letters:"+itoa(count), func(chatID int64) common.AdminAlertNotification {
+		return common.AdminAlertNotification{
+			ChatID: chatID, Kind: common.AdminAlertDeadLetters, Count: count, Detail: detail,
+		}
+	})
+}
+
+// WebhookBroken/WebhookRecovered report Telegram failing, and then
+// managing, to deliver updates to this bot.
+func (a *AdminAlerter) WebhookBroken(ctx context.Context, pending int, lastError string) {
+	a.fanOut(ctx, "WEBHOOK", "broken", func(chatID int64) common.AdminAlertNotification {
+		return common.AdminAlertNotification{
+			ChatID: chatID, Kind: common.AdminAlertWebhookBroken, Count: pending,
+			Detail: common.TruncateForLog([]byte(lastError)),
+		}
+	})
+}
+
+func (a *AdminAlerter) WebhookRecovered(ctx context.Context) {
+	a.fanOut(ctx, "WEBHOOK", "recovered", func(chatID int64) common.AdminAlertNotification {
+		return common.AdminAlertNotification{ChatID: chatID, Kind: common.AdminAlertWebhookRecovered}
+	})
+}
+
 // fanOut enqueues one message per administrator chat. Best effort by
 // design: an alert that cannot be enqueued is logged and dropped rather
 // than propagated, since every caller is either a background job or a

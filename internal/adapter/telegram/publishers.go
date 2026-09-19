@@ -665,6 +665,18 @@ func NewAdminAlertPublisher(client *Client, chats chat.Repository, texts *Texts,
 				}
 			case common.AdminAlertProviderRecovered:
 				text = texts.Get("admin.alert_provider_recovered", locale, escapeHTML(n.Provider))
+			case common.AdminAlertWebhookBroken:
+				text = texts.Get("admin.alert_webhook_broken", locale, n.Count)
+				if detail := strings.TrimSpace(n.Detail); detail != "" {
+					text += "\n" + code(escapeHTML(truncate(detail, 200)))
+				}
+			case common.AdminAlertWebhookRecovered:
+				text = texts.Get("admin.alert_webhook_recovered", locale)
+			case common.AdminAlertDeadLetters:
+				text = texts.Get("admin.alert_dead_letters", locale, n.Count)
+				if detail := strings.TrimSpace(n.Detail); detail != "" {
+					text += "\n" + code(escapeHTML(truncate(detail, 200)))
+				}
 			default:
 				// An unknown kind is a bug in the enqueuing side, but
 				// dropping the message silently would hide it twice over.

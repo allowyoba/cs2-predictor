@@ -138,6 +138,9 @@ type UpdateHandler struct {
 	// exposes, just human-readable inside a DM. Nil/empty omits them.
 	EnrichmentState   enrichment.SyncStateRepository
 	EnrichmentSources []enrichment.Source
+	// DeadLetters backs the undelivered-messages panel next to it. Nil
+	// omits the panel, exactly like the sections above.
+	DeadLetters common.DeadLetterStore
 }
 
 // requireManager wraps chat.AuthorizationService.RequireManager: on success

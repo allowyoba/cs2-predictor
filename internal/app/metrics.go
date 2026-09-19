@@ -24,6 +24,16 @@ type Metrics struct {
 	// arrive. Without these, "the bot never told me" has no answer.
 	AdminActions *prometheus.CounterVec
 	DMDeliveries *prometheus.CounterVec
+	// The three below answer "is this thing still working" rather than
+	// "what did it do": how long ago each scheduled job last finished a
+	// run, how far behind Telegram's own delivery queue is, and how many
+	// messages have been given up on. Each covers a failure that is
+	// otherwise completely silent — a job that stopped being scheduled, a
+	// webhook Telegram can no longer reach, a message nobody will ever
+	// receive.
+	JobLastRun   *prometheus.GaugeVec
+	WebhookState *prometheus.GaugeVec
+	DeadLetters  *prometheus.GaugeVec
 }
 
 // RecordAdminAction and RecordDMDelivery implement telegram.AdminMetrics.
@@ -77,9 +87,27 @@ func NewMetrics(registry *prometheus.Registry) *Metrics {
 			Name: "dm_deliveries_total", Help: "Private messages the bot tried to deliver, by outcome.",
 		}, []string{"result"}),
 	}
+	m.JobLastRun = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "scheduled_job_last_run_timestamp_seconds", Help: "Unix time each scheduled job last finished a run.",
+	}, []string{"job"})
+	m.WebhookState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "telegram_webhook_state", Help: "Telegram webhook health: pending updates, and 1/0 for whether Telegram reports an error.",
+	}, []string{"metric"})
+	m.DeadLetters = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "outbox_dead_letters", Help: "Undelivered outbox messages that have exhausted their retries, by event type.",
+	}, []string{"event_type"})
+	registry.MustRegister(m.JobLastRun, m.WebhookState, m.DeadLetters)
 	registry.MustRegister(m.SyncRuns, m.SyncEntities, m.ProviderCalls, m.ProviderLatency, m.PredictionPolls, m.OutboxEvents,
 		m.HTTPRequests, m.HTTPDuration, m.HTTPPanics, m.AdminActions, m.DMDeliveries)
 	return m
+}
+
+// RecordJobRun timestamps a scheduled job's completed run. An alert on
+// "this gauge stopped moving" catches a job that is no longer being
+// scheduled at all, which no counter can express: a counter that stops
+// increasing looks exactly like a counter with nothing to count.
+func (m *Metrics) RecordJobRun(job string, at time.Time) {
+	m.JobLastRun.WithLabelValues(job).Set(float64(at.Unix()))
 }
 
 // RecordCall implements ProviderMetrics for CompetitionProviderGateway.

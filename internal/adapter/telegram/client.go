@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cs2predictor/internal/platform/common"
 )
 
 // Config holds the Telegram Bot API client settings.
@@ -156,6 +158,35 @@ func (c *Client) GetMe(ctx context.Context) (User, error) {
 		return User{}, err
 	}
 	return me, nil
+}
+
+// WebhookInfo implements app.WebhookInspector: Telegram's own account of
+// whether it can deliver updates to this bot. Nothing on the receiving
+// side can answer that — a webhook Telegram cannot reach produces no
+// requests at all, which is indistinguishable from a quiet afternoon.
+func (c *Client) WebhookInfo(ctx context.Context) (common.WebhookInfo, error) {
+	raw, err := c.Call(ctx, "getWebhookInfo", nil)
+	if err != nil {
+		return common.WebhookInfo{}, err
+	}
+	var info struct {
+		URL                string `json:"url"`
+		PendingUpdateCount int    `json:"pending_update_count"`
+		LastErrorDate      int64  `json:"last_error_date"`
+		LastErrorMessage   string `json:"last_error_message"`
+		IPAddress          string `json:"ip_address"`
+	}
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return common.WebhookInfo{}, err
+	}
+	out := common.WebhookInfo{
+		URL: info.URL, PendingUpdateCount: info.PendingUpdateCount,
+		LastErrorMessage: info.LastErrorMessage, IPAddress: info.IPAddress,
+	}
+	if info.LastErrorDate > 0 {
+		out.LastErrorAt = time.Unix(info.LastErrorDate, 0).UTC()
+	}
+	return out, nil
 }
 
 // BotCommand is one entry Telegram shows in a chat's "/" command menu.
