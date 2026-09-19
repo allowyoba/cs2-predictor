@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -65,6 +66,47 @@ func streamPlatformLabel(rawURL, fallback string) string {
 		return fallback
 	}
 	return host
+}
+
+// countryFlag turns a team's ISO 3166-1 alpha-2 country code into its flag
+// emoji — the two regional indicator symbols for those letters.
+//
+// This is the compact form of "show the team's badge" that Telegram can
+// actually carry: a poll's question is plain text (no HTML, and custom
+// emoji are reserved for bots that bought a username on Fragment), and its
+// description is HTML without image support, so an actual logo cannot go
+// into the poll at all. A flag is two characters, needs no fetching, and is
+// what HLTV itself puts next to a team name.
+//
+// Empty for anything that is not two uppercase letters, which is also the
+// "we do not know where this team is from" case — about one team in ten.
+func countryFlag(alpha2 string) string {
+	if len(alpha2) != 2 {
+		return ""
+	}
+	const regionalIndicatorA = 0x1F1E6
+	out := make([]rune, 0, 2)
+	for _, c := range alpha2 {
+		if c < 'A' || c > 'Z' {
+			return ""
+		}
+		out = append(out, rune(regionalIndicatorA+int(c-'A')))
+	}
+	return string(out)
+}
+
+// teamNameWithFlag prefixes a team's name with its country flag when the
+// country is known, and changes nothing when it is not — a missing flag
+// must not turn into a placeholder box or a stray space.
+func teamNameWithFlag(team *competition.Team, name string) string {
+	if team == nil {
+		return name
+	}
+	flag := countryFlag(team.Location)
+	if flag == "" {
+		return name
+	}
+	return flag + " " + name
 }
 
 // ternary is a tiny helper so short locale-dependent literals (a label, a
