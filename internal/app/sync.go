@@ -97,12 +97,22 @@ func (s *CompetitionSynchronization) discoverOneEvent(ctx context.Context, event
 	if _, err := s.Catalog.SaveEvent(ctx, event); err != nil {
 		return err
 	}
-	if event.Status == competition.EventFinished && (previous == nil || previous.Status != competition.EventFinished) {
+	// Only a tournament this bot watched while it was running can have a
+	// result worth completing. One that is already over the first time it
+	// is seen — the whole back catalogue a newly enabled game brings in —
+	// has no chat subscribed to it and no prediction in it.
+	if event.Status == competition.EventFinished && previous != nil && previous.Status != competition.EventFinished {
 		if err := s.EventCompletion.Complete(ctx, event); err != nil {
 			return err
 		}
 	}
-	if previous == nil && event.Tier.IsTopTier() {
+	// A tournament that is already over when it first appears in the
+	// catalog is not news: announcing it invites a chat to subscribe to a
+	// finished event, and auto-subscribing one drags it into the completion
+	// recap that fires the next time its matches sync. Enabling a new game
+	// discovers months of that game's history at once, which is how a chat
+	// ended up with a burst of recaps for tournaments it never followed.
+	if previous == nil && event.Tier.IsTopTier() && event.IsSubscribable(s.Clock.Now()) {
 		if err := s.announceBigEvent(ctx, event); err != nil {
 			return err
 		}
