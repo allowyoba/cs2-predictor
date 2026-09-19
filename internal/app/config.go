@@ -23,10 +23,15 @@ type Config struct {
 	Providers  ProviderRoutingConfig
 	HTTP       HTTPClientConfig
 
-	SyncEventsDelay    time.Duration
-	SyncMatchesDelay   time.Duration
-	SyncPollCloseDelay time.Duration
-	DigestCheckDelay   time.Duration
+	SyncEventsDelay  time.Duration
+	SyncMatchesDelay time.Duration
+	// SyncMatchesColdInterval is how often the match sync asks about every
+	// subscribed tournament instead of only the ones with a match near or
+	// in play — see CompetitionSynchronization.selectEventsToSync. Zero
+	// fetches everything on every run, which is what this used to do.
+	SyncMatchesColdInterval time.Duration
+	SyncPollCloseDelay      time.Duration
+	DigestCheckDelay        time.Duration
 
 	// PollReminderLead is how far ahead of a poll closing the opt-in
 	// private reminder goes out; zero disables the job entirely.
@@ -158,6 +163,10 @@ type PandaScoreEnvConfig struct {
 	PageSize       int
 	EventBatchSize int
 	MaxConcurrency int
+	// MatchWindowPast/MatchWindowFuture bound which matches are asked for
+	// at all — see pandascore.Config for why.
+	MatchWindowPast   time.Duration
+	MatchWindowFuture time.Duration
 }
 
 // HTTPClientConfig mirrors app.http.* — connect/read/response timeouts
@@ -308,12 +317,21 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	matchWindowPast, err := envDuration("PANDASCORE_MATCH_WINDOW_PAST", 48*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	matchWindowFuture, err := envDuration("PANDASCORE_MATCH_WINDOW_FUTURE", 30*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
 	cfg.PandaScore = PandaScoreEnvConfig{
-		Token:          os.Getenv("PANDASCORE_TOKEN"),
-		BaseURL:        envString("PANDASCORE_BASE_URL", "https://api.pandascore.co"),
-		PageSize:       pageSize,
-		EventBatchSize: eventBatchSize,
-		MaxConcurrency: maxConcurrency,
+		Token:           os.Getenv("PANDASCORE_TOKEN"),
+		BaseURL:         envString("PANDASCORE_BASE_URL", "https://api.pandascore.co"),
+		PageSize:        pageSize,
+		EventBatchSize:  eventBatchSize,
+		MaxConcurrency:  maxConcurrency,
+		MatchWindowPast: matchWindowPast, MatchWindowFuture: matchWindowFuture,
 	}
 	if strings.TrimSpace(cfg.PandaScore.Token) == "" {
 		return Config{}, fmt.Errorf("PANDASCORE_TOKEN is required")
@@ -381,6 +399,9 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.SyncMatchesDelay, err = envDurationMillis("SYNC_MATCHES_DELAY_MS", 180000); err != nil {
+		return Config{}, err
+	}
+	if cfg.SyncMatchesColdInterval, err = envDurationMillis("SYNC_MATCHES_COLD_INTERVAL_MS", 1800000); err != nil {
 		return Config{}, err
 	}
 	if cfg.SyncPollCloseDelay, err = envDurationMillis("SYNC_POLL_CLOSE_DELAY_MS", 5000); err != nil {
