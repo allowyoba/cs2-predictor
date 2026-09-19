@@ -706,3 +706,66 @@ func (p *TeamMatchAskPublisher) Publish(ctx context.Context, message common.Outb
 	p.record("error")
 	return err
 }
+
+// EventEvePublisher publishes the "telegram.event-eve" outbox event type:
+// the day-before nudge for a tournament a chat follows (see
+// app.EventEveScheduler). Sent into the same topic the tournament's other
+// messages use, with the same topic-unavailable fallback the finished
+// notification applies, and with one button — the point of the message is
+// that acting on it takes a single tap.
+type EventEvePublisher struct {
+	client *Client
+	chats  chat.Repository
+	texts  *Texts
+}
+
+func NewEventEvePublisher(client *Client, chats chat.Repository, texts *Texts) *EventEvePublisher {
+	return &EventEvePublisher{client: client, chats: chats, texts: texts}
+}
+
+func (p *EventEvePublisher) Supports(eventType string) bool {
+	return eventType == "telegram.event-eve"
+}
+
+func (p *EventEvePublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
+	var n common.EventEveNotification
+	if err := json.Unmarshal([]byte(message.Payload), &n); err != nil {
+		return err
+	}
+	locale := resolveLocale(ctx, p.chats, common.ChatID{Value: n.ChatID})
+
+	lines := []string{
+		p.texts.Get("event.eve_title", locale, bold(escapeHTML(n.EventName))),
+		"",
+		p.texts.Get("event.eve_start", locale, code(escapeHTML(n.StartsAt)), n.FirstDayMatches),
+	}
+	for _, m := range n.Matches {
+		lines = append(lines, "  "+code(escapeHTML(m.LocalTime))+" "+
+			bold(escapeHTML(m.FirstTeam))+" — "+bold(escapeHTML(m.SecondTeam)))
+	}
+	if strings.TrimSpace(n.Champion) != "" {
+		lines = append(lines, "", p.texts.Get("event.eve_champion", locale, bold(escapeHTML(truncate(n.Champion, 28)))))
+	}
+	lines = append(lines, "", p.texts.Get("event.eve_call", locale))
+
+	keyboard := InlineKeyboard{InlineKeyboard: [][]InlineButton{
+		{button(p.texts.Get("menu.upcoming", locale), "menu:upcoming")},
+	}}
+	msgPayload := map[string]any{
+		"chat_id": n.ChatID, "text": strings.Join(lines, "\n"), "parse_mode": "HTML",
+		"reply_markup": keyboard,
+	}
+	if n.TopicID != nil {
+		msgPayload["message_thread_id"] = *n.TopicID
+	}
+
+	_, err := p.client.Call(ctx, "sendMessage", msgPayload)
+	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && n.TopicID != nil && apiErr.IsTopicUnavailable() {
+			delete(msgPayload, "message_thread_id")
+			_, err = p.client.Call(ctx, "sendMessage", msgPayload)
+		}
+	}
+	return err
+}

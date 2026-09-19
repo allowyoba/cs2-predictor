@@ -234,6 +234,14 @@ func run() error {
 		Outbox: outbox, Lock: clusterLock, Clock: clock, RunTx: runTx, Log: log,
 	}
 
+	// Runs on the digest job's own cadence: both are "is anything due for
+	// this chat right now?" sweeps, and neither needs a schedule of its own.
+	eve := &app.EventEveScheduler{
+		Chats: chats, ChatSettings: chats, Subscriptions: subscriptions, Catalog: catalog,
+		Scoring: scoringRepo, Store: reportStore, Outbox: outbox, Lock: clusterLock,
+		Clock: clock, Log: log, Lead: cfg.EventEveLead,
+	}
+
 	reminders := &app.PollReminderScheduler{
 		Predictions: predictionsRepo, Catalog: catalog, Audience: chats, ChatTitles: chatTitle,
 		Outbox: outbox, Lock: clusterLock, Clock: clock, RunTx: runTx, Log: log,
@@ -264,6 +272,7 @@ func run() error {
 			telegram.NewTeamMatchAskPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
+			telegram.NewEventEvePublisher(telegramClient, chats, texts),
 		},
 	}
 
@@ -294,6 +303,9 @@ func run() error {
 		runBackground(cfg.SyncMatchesDelay, synchronizer.SynchronizeMatches)
 		runBackground(cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
 		runBackground(cfg.DigestCheckDelay, digests.Dispatch)
+		if cfg.EventEveLead >= 0 {
+			runBackground(cfg.DigestCheckDelay, eve.Dispatch)
+		}
 		runBackground(cfg.OutboxDelay, dispatcher.Dispatch)
 		for _, job := range enrichmentBuilt.Jobs {
 			runBackground(job.interval, job.dispatch)

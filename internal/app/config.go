@@ -54,6 +54,12 @@ type Config struct {
 
 	Enrichment EnrichmentConfig
 
+	// EventEveLead is how far ahead of a tournament's first match the
+	// day-before nudge goes out (EVENT_EVE_LEAD). Zero uses
+	// app.DefaultEventEveLead; negative turns the nudge off entirely,
+	// which is the documented way to opt out of it.
+	EventEveLead time.Duration
+
 	// TeamMatchOperatorChatIDs receive a ping when a new team-identity
 	// review request needs attention, and are the only chat ids allowed to
 	// use /team_matches — reuses DEPLOY_NOTIFY_CHAT_IDS (already set for
@@ -400,6 +406,11 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.PollReminderCheckDelay, err = envDuration("POLL_REMINDER_CHECK_DELAY", time.Minute); err != nil {
+		return Config{}, err
+	}
+	// The day-before tournament nudge. Unset means DefaultEventEveLead; a
+	// negative value turns it off.
+	if cfg.EventEveLead, err = envDuration("EVENT_EVE_LEAD", DefaultEventEveLead); err != nil {
 		return Config{}, err
 	}
 	if cfg.PollReminderParticipantWindow, err = envDuration("POLL_REMINDER_PARTICIPANT_WINDOW", 60*24*time.Hour); err != nil {
