@@ -50,13 +50,13 @@ func (r *RetentionRepository) DeletePublishedOutboxBefore(ctx context.Context, c
 	return tag.RowsAffected(), nil
 }
 
-// DeleteResolvedUnsubscribesBefore drops confirmation requests that were
+// DeleteResolvedUnsubscribesBefore drops approval requests that were
 // already confirmed or rejected. Unresolved ones stay: they're read back
 // (and rejected on expiry) by the domain's own Expired check, which is what
 // makes a stale button fail closed rather than silently execute.
 func (r *RetentionRepository) DeleteResolvedUnsubscribesBefore(ctx context.Context, cutoff time.Time) (int64, error) {
 	tag, err := executor(ctx, r.pool).Exec(ctx,
-		`DELETE FROM pending_unsubscribe WHERE resolved_at IS NOT NULL AND resolved_at < $1`, cutoff)
+		`DELETE FROM pending_approval WHERE resolved_at IS NOT NULL AND resolved_at < $1`, cutoff)
 	if err != nil {
 		return 0, err
 	}

@@ -931,6 +931,54 @@ func TestChatRepository_StreamLanguageRoundTrips(t *testing.T) {
 	}
 }
 
+// The retention sweep deletes from the approvals table by name, so a
+// rename that misses this query leaves the sweep failing on every run —
+// with nothing but a log line to say so. This exercises the real delete
+// against the real schema.
+func TestRetentionRepository_SweepsResolvedApprovals(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	approvals := pg.NewPendingApprovalRepository(pool)
+	retention := pg.NewRetentionRepository(pool)
+
+	chatID := common.ChatID{Value: -7171}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	userID := common.UserID{Value: 7171}
+	if err := chats.RecordManaged(ctx, chatID, userID); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "E", ExternalID: "ev-retention", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	requestID := common.NewRequestID()
+	if err := approvals.Create(ctx, chat.PendingApproval{
+		ID: requestID, Kind: chat.ApprovalUnsubscribe, ChatID: chatID, EventID: &event.ID,
+		RequestedBy: userID, CreatedAt: now.Add(-48 * time.Hour), ExpiresAt: now.Add(-24 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Unresolved requests are never swept, however old.
+	if deleted, err := retention.DeleteResolvedUnsubscribesBefore(ctx, now); err != nil || deleted != 0 {
+		t.Fatalf("DeleteResolvedUnsubscribesBefore = %d, %v; want nothing deleted while unresolved", deleted, err)
+	}
+	if err := approvals.Resolve(ctx, requestID); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := retention.DeleteResolvedUnsubscribesBefore(ctx, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("DeleteResolvedUnsubscribesBefore = %d, want the resolved request gone", deleted)
+	}
+}
+
 // Partition maintenance must never queue for a lock. In PostgreSQL a
 // pending ACCESS EXCLUSIVE request blocks every reader that arrives after
 // it, so a sweep that waits (behind a backup's pg_dump, say) takes the
