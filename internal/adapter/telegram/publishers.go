@@ -687,6 +687,34 @@ func NewAdminAlertPublisher(client *Client, chats chat.Repository, texts *Texts,
 	}
 }
 
+// NewSuggestionPublisher delivers one accepted idea to one administrator
+// chat. Rendered in RU for the same reason the alerts above are: these are
+// an ops contact list rather than chats with a language of their own.
+//
+// The sender is named, with their @username when they have one, because
+// the useful next step for most ideas is a question back — and the text
+// itself is escaped and length-capped: it is the one string in this bot
+// written by a stranger.
+func NewSuggestionPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) common.OutboxPublisher {
+	return &personalNotePublisher{
+		eventType: "telegram.suggestion", client: client, chats: chats, texts: texts, metrics: metrics,
+		compose: func(payload string) (int64, string, error) {
+			var n common.SuggestionNotification
+			if err := json.Unmarshal([]byte(payload), &n); err != nil {
+				return 0, "", err
+			}
+			locale := common.LocaleRU
+			who := bold(escapeHTML(n.DisplayName))
+			if n.Username != "" {
+				who += " " + code("@"+escapeHTML(n.Username))
+			}
+			text := texts.Get("admin.suggestion", locale, who) + "\n\n" +
+				escapeHTML(truncate(n.Text, 1000))
+			return n.ChatID, text, nil
+		},
+	}
+}
+
 // shortCommit trims a full SHA to the usual seven characters, leaving
 // anything shorter (or already short) alone.
 func shortCommit(commit string) string {

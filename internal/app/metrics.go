@@ -34,6 +34,10 @@ type Metrics struct {
 	JobLastRun   *prometheus.GaugeVec
 	WebhookState *prometheus.GaugeVec
 	DeadLetters  *prometheus.GaugeVec
+	// Suggestions counts what the Ideas channel did with each incoming
+	// message, by outcome — the one place a flood is visible as a shape
+	// rather than as individual log lines.
+	Suggestions *prometheus.CounterVec
 }
 
 // RecordAdminAction and RecordDMDelivery implement telegram.AdminMetrics.
@@ -96,7 +100,10 @@ func NewMetrics(registry *prometheus.Registry) *Metrics {
 	m.DeadLetters = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "outbox_dead_letters", Help: "Undelivered outbox messages that have exhausted their retries, by event type.",
 	}, []string{"event_type"})
-	registry.MustRegister(m.JobLastRun, m.WebhookState, m.DeadLetters)
+	m.Suggestions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "feature_suggestions_total", Help: "Incoming feature suggestions, by outcome.",
+	}, []string{"outcome"})
+	registry.MustRegister(m.JobLastRun, m.WebhookState, m.DeadLetters, m.Suggestions)
 	registry.MustRegister(m.SyncRuns, m.SyncEntities, m.ProviderCalls, m.ProviderLatency, m.PredictionPolls, m.OutboxEvents,
 		m.HTTPRequests, m.HTTPDuration, m.HTTPPanics, m.AdminActions, m.DMDeliveries)
 	return m

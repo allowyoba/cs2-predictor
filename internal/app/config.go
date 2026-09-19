@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cs2predictor/internal/domain/feedback"
 )
 
 // Config is the full application configuration, loaded from environment
@@ -70,6 +72,9 @@ type Config struct {
 	// invisible, so the default is frequent enough to notice within
 	// minutes rather than hours.
 	WatchdogInterval time.Duration
+	// Feedback bounds the Ideas channel — the one surface anybody on the
+	// internet can write into. See feedback.Policy.
+	Feedback feedback.Policy
 	// DeliveryBacklogAlert is how many updates Telegram may be holding
 	// before that alone counts as broken delivery. A working webhook
 	// drains its queue in seconds.
@@ -449,6 +454,9 @@ func LoadConfig() (Config, error) {
 	if cfg.WatchdogInterval, err = envDuration("WATCHDOG_INTERVAL", 5*time.Minute); err != nil {
 		return Config{}, err
 	}
+	if cfg.Feedback, err = loadFeedbackPolicy(); err != nil {
+		return Config{}, err
+	}
 	if cfg.DeliveryBacklogAlert, err = envInt("WEBHOOK_BACKLOG_ALERT", 100); err != nil {
 		return Config{}, err
 	}
@@ -543,4 +551,37 @@ func LoadConfig() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// loadFeedbackPolicy reads the Ideas channel's limits, each defaulting to
+// feedback.DefaultPolicy's value. Every one of them is validated as
+// positive: a zero here would not "disable a limit", it would leave the
+// one surface open to the whole internet with no ceiling at all, which is
+// never what somebody setting an environment variable meant.
+func loadFeedbackPolicy() (feedback.Policy, error) {
+	policy := feedback.DefaultPolicy()
+	var err error
+	if policy.MaxRunes, err = envInt("FEEDBACK_MAX_CHARS", policy.MaxRunes); err != nil {
+		return feedback.Policy{}, err
+	}
+	if policy.Cooldown, err = envDuration("FEEDBACK_COOLDOWN", policy.Cooldown); err != nil {
+		return feedback.Policy{}, err
+	}
+	if policy.Quota, err = envInt("FEEDBACK_QUOTA", policy.Quota); err != nil {
+		return feedback.Policy{}, err
+	}
+	if policy.QuotaWindow, err = envDuration("FEEDBACK_QUOTA_WINDOW", policy.QuotaWindow); err != nil {
+		return feedback.Policy{}, err
+	}
+	if policy.FloodAttempts, err = envInt("FEEDBACK_FLOOD_ATTEMPTS", policy.FloodAttempts); err != nil {
+		return feedback.Policy{}, err
+	}
+	if policy.FloodWindow, err = envDuration("FEEDBACK_FLOOD_WINDOW", policy.FloodWindow); err != nil {
+		return feedback.Policy{}, err
+	}
+	if policy.MaxRunes <= 0 || policy.Quota <= 0 || policy.QuotaWindow <= 0 ||
+		policy.FloodAttempts <= 0 || policy.FloodWindow <= 0 || policy.Cooldown < 0 {
+		return feedback.Policy{}, fmt.Errorf("every FEEDBACK_* limit must be positive: %+v", policy)
+	}
+	return policy, nil
 }
