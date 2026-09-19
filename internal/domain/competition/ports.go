@@ -61,6 +61,15 @@ type Catalog interface {
 	SaveMatch(ctx context.Context, match Match) (Match, error)
 }
 
+// LiveMatchCatalog is an optional extension, checked with a type assertion
+// like MatchFactsCatalog: which of these events have a match in play right
+// now. It exists so the match sync can tell a tournament that is actually
+// being played from one that merely has not finished yet — the difference
+// between "poll this every few minutes" and "poll this twice an hour".
+type LiveMatchCatalog interface {
+	EventsWithLiveMatches(ctx context.Context, eventIDs []common.EventID) ([]common.EventID, error)
+}
+
 // DataProvider is an external competition-data feed (PandaScore today).
 // Implementations must resolve the supplied canonical Events back to their
 // own provider-specific ids before fetching matches — Matches is not a pure

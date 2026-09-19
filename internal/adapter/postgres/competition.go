@@ -378,6 +378,36 @@ func (r *CompetitionRepository) FindUnstartedMatchesForEvents(ctx context.Contex
 	return r.findMatches(ctx, ` WHERE m.event_id = ANY($1) AND m.status = $2`, values, competition.MatchNotStarted)
 }
 
+// EventsWithLiveMatches implements competition.LiveMatchCatalog: the ids of
+// whichever supplied events have a match in play. One narrow query rather
+// than loading every match of every event, because the caller only needs
+// the yes/no per event.
+func (r *CompetitionRepository) EventsWithLiveMatches(ctx context.Context, eventIDs []common.EventID) ([]common.EventID, error) {
+	if len(eventIDs) == 0 {
+		return nil, nil
+	}
+	values := make([]uuid.UUID, len(eventIDs))
+	for i, id := range eventIDs {
+		values[i] = id.Value
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT DISTINCT event_id FROM match WHERE event_id = ANY($1) AND status = $2`,
+		values, competition.MatchRunning)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []common.EventID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, common.EventID{Value: id})
+	}
+	return out, rows.Err()
+}
+
 func (r *CompetitionRepository) FindMatches(ctx context.Context, eventID common.EventID) ([]competition.Match, error) {
 	return r.findMatches(ctx, ` WHERE m.event_id = $1`, eventID.Value)
 }

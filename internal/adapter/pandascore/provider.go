@@ -253,7 +253,7 @@ func (p *Provider) Matches(ctx context.Context, events []competition.Event) ([]c
 			for _, e := range gb.batch {
 				ids = append(ids, e.ExternalID)
 			}
-			path := gb.game.endpoint("/"+gb.game.pathPrefix+"/matches", "filter[serie_id]="+strings.Join(ids, ","))
+			path := p.matchesPath(gb.game, ids)
 			dtos, err := fetchPages[matchDTO](ctx, p, path, -1)
 			if err != nil {
 				return err
@@ -284,6 +284,35 @@ func (p *Provider) Matches(ctx context.Context, events []competition.Event) ([]c
 // returned exactly pageSize rows AND (X-Total is unknown OR fewer rows than
 // X-Total have been collected so far).
 //
+// matchWindow renders PandaScore's range filter for begin_at, bounding a
+// request to the matches that can still change or still need settling.
+// Without it every request re-reads a long tournament's entire history:
+// a Major's group stage is several hundred finished matches, which is
+// several extra pages — several extra requests — on every single run, for
+// data that has been final for a week.
+//
+// Empty when either bound is unset, which keeps the old fetch-everything
+// behaviour available rather than silently truncating what a deployment
+// asks for.
+// matchesPath builds one batch's request: the series filter every batch
+// carries, plus the time window when one is configured.
+func (p *Provider) matchesPath(game gameSpec, serieIDs []string) string {
+	params := []string{"filter[serie_id]=" + strings.Join(serieIDs, ",")}
+	if window := p.matchWindow(); window != "" {
+		params = append(params, window)
+	}
+	return game.endpoint("/"+game.pathPrefix+"/matches", params...)
+}
+
+func (p *Provider) matchWindow() string {
+	if p.config.MatchWindowPast <= 0 || p.config.MatchWindowFuture <= 0 {
+		return ""
+	}
+	now := p.now()
+	return "range[begin_at]=" + now.Add(-p.config.MatchWindowPast).UTC().Format(time.RFC3339) +
+		"," + now.Add(p.config.MatchWindowFuture).UTC().Format(time.RFC3339)
+}
+
 //nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func fetchPages[T any](ctx context.Context, p *Provider, path string, maxPages int) ([]T, error) {
 	if strings.TrimSpace(p.config.Token) == "" {
