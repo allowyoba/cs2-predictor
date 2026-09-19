@@ -295,14 +295,14 @@ func TestUpcoming_NamesTheGameOnlyWhenMoreThanOneIsFollowed(t *testing.T) {
 		cs2:  {ID: cs2, Name: "CS Major", Game: competition.GameCS2},
 		dota: {ID: dota, Name: "The International", Game: competition.GameDota2},
 	})
-	if !strings.Contains(both, ru(t, "game.cs2")) || !strings.Contains(both, ru(t, "game.dota2")) {
+	if !strings.Contains(both, ru(t, "game.cs2_short")) || !strings.Contains(both, ru(t, "game.dota2_short")) {
 		t.Fatalf("expected both games named when both are followed:\n%s", both)
 	}
 
 	single := render(t, map[common.EventID]competition.Event{
 		cs2: {ID: cs2, Name: "CS Major", Game: competition.GameCS2},
 	})
-	if strings.Contains(single, ru(t, "game.cs2")) {
+	if strings.Contains(single, ru(t, "game.cs2_short")) {
 		t.Fatalf("a single-game chat needs no game label:\n%s", single)
 	}
 }

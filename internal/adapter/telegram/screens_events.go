@@ -246,6 +246,46 @@ func (h *UpdateHandler) gameSectionRows(events []competition.Event, locale commo
 	return out
 }
 
+// gameSectionLines is gameSectionRows for a plain-text list: same rule
+// (headings only when there is more than one game to separate), same
+// ordering, rendered as italic headings instead of disabled buttons.
+func (h *UpdateHandler) gameSectionLines(events []competition.Event, locale common.LocaleCode,
+	line func(competition.Event) string) []string {
+	byGame := map[competition.GameCode][]competition.Event{}
+	for _, e := range events {
+		byGame[e.Game] = append(byGame[e.Game], e)
+	}
+	if len(byGame) <= 1 {
+		out := make([]string, 0, len(events))
+		for _, e := range events {
+			out = append(out, line(e))
+		}
+		return out
+	}
+
+	var out []string
+	appendSection := func(code competition.GameCode, section []competition.Event) {
+		if len(section) == 0 {
+			return
+		}
+		if len(out) > 0 {
+			out = append(out, "")
+		}
+		out = append(out, italic(escapeHTML(h.Texts.Get(gameLabelKey(code), locale))))
+		for _, e := range section {
+			out = append(out, line(e))
+		}
+	}
+	for _, code := range competition.Games {
+		appendSection(code, byGame[code])
+		delete(byGame, code)
+	}
+	for code, section := range byGame {
+		appendSection(code, section)
+	}
+	return out
+}
+
 func eventLabel(e competition.Event) string {
 	return e.Tier.Badge() + truncate(e.Name, 48)
 }
@@ -479,7 +519,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		if event, ok := byEvent[m.EventID]; ok {
 			eventName = event.Tier.Badge() + event.Name
 			if multiGame {
-				eventName += " · " + h.Texts.Get(gameLabelKey(event.Game), settings.Locale)
+				eventName += " · " + h.Texts.Get(gameShortLabelKey(event.Game), settings.Locale)
 			}
 		}
 		upcoming = append(upcoming, upcomingMatch{
