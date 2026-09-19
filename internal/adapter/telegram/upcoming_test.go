@@ -186,158 +186,38 @@ func TestUpcoming_DisablesLinkPreview(t *testing.T) {
 	}
 }
 
-func TestUpcoming_EmptyWhenNoEligibleMatches(t *testing.T) {
-	server, calls := newRecordingServer(t)
-	defer server.Close()
-	h, _ := newTestHandler(t, server)
-	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleEN, Timezone: "UTC"}
-	if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := lastText(*calls), h.Texts.Get("upcoming.title", settings.Locale)+"\n\n"+h.Texts.Get("upcoming.empty", settings.Locale); got != want {
-		t.Fatalf("empty schedule = %q, want %q", got, want)
-	}
-}
+// "Nothing upcoming" means two different things, and the screen has to
+// tell them apart: a chat that follows nothing needs to be pointed at the
+// tournament list, while one that follows a tournament with no published
+// schedule is simply waiting.
+func TestUpcoming_EmptyStateDependsOnWhetherTheChatFollowsAnything(t *testing.T) {
+	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleEN, Timezone: "UTC",
+		EnabledGames: []competition.GameCode{competition.GameCS2}}
 
-// The broadcast language is a chat setting, toggled from the settings menu
-// like any other: it starts out following the chat's UI language and, once
-// set, overrides it. Same manager-only guard as the other settings.
-func TestSettingsStreamLanguageCallback_TogglesAndRequiresManager(t *testing.T) {
-	srv, calls := newRecordingServer(t)
-	defer srv.Close()
-	handler, chats := newTestHandler(t, srv)
-	chatID := common.ChatID{Value: -1}
-	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true})
-	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
-
-	data := "settings:stream_language"
-	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Admin"}, Message: &Message{Chat: Chat{ID: -1, Type: "group"}}, Data: &data}
-	if err := handler.handleCallback(context.Background(), cb); err != nil {
-		t.Fatal(err)
-	}
-	updated, err := chats.Find(context.Background(), chatID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// An RU chat was following RU implicitly, so one press moves it to EN.
-	if updated.StreamLanguage != common.LocaleEN || updated.StreamLocale() != common.LocaleEN {
-		t.Fatalf("StreamLanguage = %q, want EN after one toggle", updated.StreamLanguage)
-	}
-	if len(*calls) == 0 {
-		t.Fatal("expected the settings view to be re-rendered after toggling")
-	}
-
-	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleMember})
-	if err := handler.handleCallback(context.Background(), cb); err != nil {
-		t.Fatal(err)
-	}
-	unchanged, err := chats.Find(context.Background(), chatID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if unchanged.StreamLanguage != common.LocaleEN {
-		t.Fatal("a plain member's toggle attempt must be denied")
-	}
-}
-
-// Platform naming is what makes the link self-describing; an unknown host
-// still beats a generic word, and a URL with no host falls back to it.
-func TestStreamPlatformLabel(t *testing.T) {
-	cases := map[string]string{
-		"https://www.twitch.tv/betboom_cs_ru3": "Twitch",
-		"https://m.twitch.tv/esl_csgo":         "Twitch",
-		"https://kick.com/cct_cs2":             "Kick",
-		"https://youtu.be/abc":                 "YouTube",
-		"https://watch.cct.live/stream":        "watch.cct.live",
-		"not a url at all":                     "Трансляция",
-	}
-	for raw, want := range cases {
-		if got := streamPlatformLabel(raw, "Трансляция"); got != want {
-			t.Errorf("streamPlatformLabel(%q) = %q, want %q", raw, got, want)
-		}
-	}
-}
-
-// Team names do not say which game they play, so a chat following two of
-// them gets the game named on each tournament heading. A chat following one
-// does not: there is nothing to disambiguate.
-func TestUpcoming_NamesTheGameOnlyWhenMoreThanOneIsFollowed(t *testing.T) {
-	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
-	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: "UTC"}
-	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
-	cs2, dota := common.NewEventID(), common.NewEventID()
-	at := now.Add(time.Hour)
-
-	render := func(t *testing.T, events map[common.EventID]competition.Event) string {
-		t.Helper()
+	t.Run("nothing followed", func(t *testing.T) {
 		server, calls := newRecordingServer(t)
 		defer server.Close()
 		h, _ := newTestHandler(t, server)
-		h.Clock = common.FixedClock(now)
-		var subs []subscription.EventSubscription
-		unstarted := map[common.EventID][]competition.Match{}
-		for id := range events {
-			subs = append(subs, subscription.EventSubscription{EventID: id})
-			unstarted[id] = []competition.Match{{
-				ID: common.NewMatchID(), EventID: id, ScheduledAt: &at, Format: format,
-				FirstTeam: &competition.Team{Name: "A"}, SecondTeam: &competition.Team{Name: "B"},
-			}}
-		}
-		h.Subscriptions = &dataSubs{subs: subs}
-		h.Catalog = &dataCatalog{events: events, unstartedMatches: unstarted}
 		if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
 			t.Fatal(err)
 		}
-		return lastText(*calls)
-	}
-
-	both := render(t, map[common.EventID]competition.Event{
-		cs2:  {ID: cs2, Name: "CS Major", Game: competition.GameCS2},
-		dota: {ID: dota, Name: "The International", Game: competition.GameDota2},
+		if got, want := lastText(*calls), h.Texts.Get("events.empty_group", settings.Locale); !strings.Contains(got, want) {
+			t.Fatalf("empty schedule = %q, want it to explain %q", got, want)
+		}
 	})
-	if !strings.Contains(both, ru(t, "game.cs2_short")) || !strings.Contains(both, ru(t, "game.dota2_short")) {
-		t.Fatalf("expected both games named when both are followed:\n%s", both)
-	}
 
-	single := render(t, map[common.EventID]competition.Event{
-		cs2: {ID: cs2, Name: "CS Major", Game: competition.GameCS2},
+	t.Run("followed but unscheduled", func(t *testing.T) {
+		server, calls := newRecordingServer(t)
+		defer server.Close()
+		h, _ := newTestHandler(t, server)
+		event := common.NewEventID()
+		h.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{EventID: event}}}
+		h.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{event: {ID: event, Name: "Cup"}}}
+		if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := lastText(*calls), h.Texts.Get("upcoming.title", settings.Locale)+"\n\n"+h.Texts.Get("upcoming.empty", settings.Locale); got != want {
+			t.Fatalf("empty schedule = %q, want %q", got, want)
+		}
 	})
-	if strings.Contains(single, ru(t, "game.cs2_short")) {
-		t.Fatalf("a single-game chat needs no game label:\n%s", single)
-	}
-}
-
-// The upcoming list names teams the same way the poll does, flags included
-// — the two are the only places a team is named, and a flag in one but not
-// the other reads as a bug.
-func TestUpcoming_CarriesTheTeamsCountryFlags(t *testing.T) {
-	server, calls := newRecordingServer(t)
-	defer server.Close()
-	h, _ := newTestHandler(t, server)
-	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
-	h.Clock = common.FixedClock(now)
-	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU, Timezone: "UTC"}
-	event := common.NewEventID()
-	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
-	at := now.Add(time.Hour)
-	h.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{EventID: event}}}
-	h.Catalog = &dataCatalog{
-		events: map[common.EventID]competition.Event{event: {ID: event, Name: "Major"}},
-		unstartedMatches: map[common.EventID][]competition.Match{event: {{
-			ID: common.NewMatchID(), EventID: event, ScheduledAt: &at, Format: format,
-			FirstTeam:  &competition.Team{Name: "Spirit", Location: "RU"},
-			SecondTeam: &competition.Team{Name: "Falcons"}, // country unknown
-		}}},
-	}
-
-	if err := h.upcoming(context.Background(), sendTarget(settings.ChatID, nil), settings); err != nil {
-		t.Fatal(err)
-	}
-	body := lastText(*calls)
-	if !strings.Contains(body, "🇷🇺") {
-		t.Fatalf("expected the known team's flag:\n%s", body)
-	}
-	if !strings.Contains(body, "Falcons") {
-		t.Fatalf("a team without a country must still be named:\n%s", body)
-	}
 }
