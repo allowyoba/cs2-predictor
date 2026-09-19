@@ -149,6 +149,7 @@
           APIFY_RANKING_CHECK_INTERVAL={{ lookup('env', 'APIFY_RANKING_CHECK_INTERVAL') | default('') }}
           APIFY_MAX_TEAMS={{ lookup('env', 'APIFY_MAX_TEAMS') | default('') }}
           EVENT_EVE_LEAD={{ lookup('env', 'EVENT_EVE_LEAD') | default('') }}
+          DATABASE_POOL_SIZE={{ lookup('env', 'DATABASE_POOL_SIZE') | default('') }}
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
         mode: '0600'

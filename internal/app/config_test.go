@@ -236,3 +236,25 @@ func TestLoadConfig_LiquipediaDefaultsToDisabledAndRequiresAPIKeyWhenEnabled(t *
 		}
 	})
 }
+
+// The pool has to be wider than the number of jobs that can hold a
+// connection at once: every scheduled job takes a cluster lock for its
+// whole run, including the part where it is waiting on somebody's API. A
+// pool narrower than that turns one slow provider into a chain of timeouts
+// across unrelated jobs — which is how a production deploy behaved before
+// this default was raised.
+func TestLoadConfig_DatabasePoolIsWiderThanTheJobCount(t *testing.T) {
+	withEnv(t, validEnv(), func() {
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// cmd/bot schedules about a dozen background jobs; the exact
+		// number moves, the relationship must not.
+		const scheduledJobs = 12
+		if cfg.DatabasePoolSize <= scheduledJobs {
+			t.Fatalf("DatabasePoolSize = %d, want more than the %d jobs that each pin a connection",
+				cfg.DatabasePoolSize, scheduledJobs)
+		}
+	})
+}
