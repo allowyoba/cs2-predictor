@@ -596,7 +596,10 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, settings 
 // spelled out only when it isn't the one the chat asked for.
 func (h *UpdateHandler) upcomingMatchLines(item upcomingMatch, settings chat.Settings) string {
 	locale := settings.Locale
-	first, second := formatTeamCompact(item.match.FirstTeam), formatTeamCompact(item.match.SecondTeam)
+	// The same flags the poll carries: this list and the poll are the two
+	// places a team is named, and they should look like the same product.
+	first := teamNameWithFlag(item.match.FirstTeam, formatTeamCompact(item.match.FirstTeam))
+	second := teamNameWithFlag(item.match.SecondTeam, formatTeamCompact(item.match.SecondTeam))
 	match := matchStatusIcon(item.match.Status) + " " + code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
 	meta := item.match.Format.Label()
 	if item.match.Stage != nil {
