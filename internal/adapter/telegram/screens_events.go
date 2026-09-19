@@ -610,12 +610,7 @@ func (h *UpdateHandler) upcomingMatchLines(item upcomingMatch, settings chat.Set
 	lines := match + "\n  " + escapeHTML(meta)
 	preferred := settings.StreamLocale()
 	if stream, ok := item.match.StreamFor(preferred); ok {
-		label := streamPlatformLabel(stream.URL, h.Texts.Get("upcoming.stream", locale))
-		line := "📺 " + link(stream.URL, escapeHTML(label))
-		if !strings.EqualFold(stream.Language, preferred.Language()) {
-			line += " · " + strings.ToUpper(escapeHTML(stream.Language))
-		}
-		lines += "\n  " + line
+		lines += "\n  " + streamLine(h.Texts, locale, preferred, stream)
 	}
 	return lines
 }
