@@ -263,7 +263,12 @@ func LoadConfig() (Config, error) {
 	cfg.DatabaseURL = envString("DATABASE_URL", "postgresql://localhost:5432/cs2predictor")
 	cfg.DatabaseUser = envString("DATABASE_USER", "cs2predictor")
 	cfg.DatabasePassword = envString("DATABASE_PASSWORD", "cs2predictor")
-	poolSize, err := envInt("DATABASE_POOL_SIZE", 10)
+	// Above the number of scheduled jobs on purpose: each one holds a
+	// cluster lock — and with it a pooled connection — for as long as it
+	// runs, including while it waits on a provider's API. Sized below the
+	// job count, one slow provider starves every other job into its own
+	// timeout, which is exactly what a production deploy demonstrated.
+	poolSize, err := envInt("DATABASE_POOL_SIZE", 25)
 	if err != nil {
 		return Config{}, err
 	}
