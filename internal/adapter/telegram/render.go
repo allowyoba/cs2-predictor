@@ -30,6 +30,14 @@ func bold(s string) string   { return "<b>" + s + "</b>" }
 func italic(s string) string { return "<i>" + s + "</i>" }
 func code(s string) string   { return "<code>" + s + "</code>" }
 
+// link wraps already-escaped label in an anchor. The href is escaped more
+// strictly than escapeHTML does, because a bare quote inside the attribute
+// would break out of it and make Telegram reject the whole message — URLs
+// here come from a data provider, not from us.
+func link(url, label string) string {
+	return `<a href="` + strings.ReplaceAll(escapeHTML(url), `"`, "&quot;") + `">` + label + "</a>"
+}
+
 // paginationRow renders a "‹ page/total ›" navigation row for a paged list:
 // "‹"/"›" only when a neighboring page exists either side, nil when there's
 // only one page to show at all. dataFor builds the callback data for a given
@@ -108,6 +116,9 @@ func (h *UpdateHandler) respond(ctx context.Context, target replyTarget, text st
 	payload := map[string]any{
 		"chat_id": target.chatID.Value, "message_id": *target.messageID,
 		"text": text, "parse_mode": "HTML",
+		// Screens are dense lists; an auto-preview of whichever link
+		// happens to come first (a stream, say) would dwarf them.
+		"link_preview_options": map[string]any{"is_disabled": true},
 	}
 	if keyboard != nil {
 		payload["reply_markup"] = *keyboard
@@ -143,7 +154,8 @@ func (h *UpdateHandler) scopeKeyboard(ctx context.Context, keyboard *InlineKeybo
 // send posts text/keyboard as a brand-new sendMessage.
 func (h *UpdateHandler) send(ctx context.Context, chatID common.ChatID, text string, keyboard *InlineKeyboard, topicID *int64) error {
 	h.scopeKeyboard(ctx, keyboard)
-	payload := map[string]any{"chat_id": chatID.Value, "text": text, "parse_mode": "HTML"}
+	payload := map[string]any{"chat_id": chatID.Value, "text": text, "parse_mode": "HTML",
+		"link_preview_options": map[string]any{"is_disabled": true}}
 	if keyboard != nil {
 		payload["reply_markup"] = *keyboard
 	}

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"cs2predictor/internal/platform/common"
 )
 
 // Exact score sequences and point values the poll-option/scoring logic
@@ -167,5 +169,39 @@ func TestMatch_ParticipantsKnownAndShouldCancelPrediction(t *testing.T) {
 		if (Match{Status: status}).ShouldCancelPrediction() {
 			t.Errorf("ShouldCancelPrediction() = true for status %s, want false (postponed matches reschedule instead)", status)
 		}
+	}
+}
+
+// TestMatch_StreamFor covers the selection order: the preferred language's
+// main broadcast, then any official one in it, then the same two in English
+// — never an unofficial community channel.
+func TestMatch_StreamFor(t *testing.T) {
+	ruCommunity := Stream{Language: "ru", URL: "https://twitch.tv/betboom_cs_ru3"}
+	ruOfficial := Stream{Language: "ru", URL: "https://twitch.tv/official_ru", Official: true}
+	enMain := Stream{Language: "EN", URL: "https://kick.com/cct_cs2", Main: true, Official: true}
+	ptMain := Stream{Language: "pt", URL: "https://kick.com/gaules", Main: true, Official: true}
+
+	cases := []struct {
+		name      string
+		streams   []Stream
+		preferred common.LocaleCode
+		wantURL   string
+		wantOK    bool
+	}{
+		{"no streams at all", nil, common.LocaleRU, "", false},
+		{"preferred language's official stream wins over English", []Stream{enMain, ruOfficial}, common.LocaleRU, ruOfficial.URL, true},
+		{"main wins over another official one in the same language", []Stream{ruOfficial, {Language: "ru", URL: "https://vk.com/main_ru", Main: true, Official: true}}, common.LocaleRU, "https://vk.com/main_ru", true},
+		{"falls back to the English broadcast", []Stream{ruCommunity, enMain}, common.LocaleRU, enMain.URL, true},
+		{"unofficial stream in the preferred language is never linked", []Stream{ruCommunity}, common.LocaleRU, "", false},
+		{"no fallback to a third language", []Stream{ptMain}, common.LocaleRU, "", false},
+		{"English preference ignores the Russian official stream", []Stream{ruOfficial, enMain}, common.LocaleEN, enMain.URL, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stream, ok := (Match{Streams: c.streams}).StreamFor(c.preferred)
+			if stream.URL != c.wantURL || ok != c.wantOK {
+				t.Errorf("StreamFor(%s) = %q, %v, want %q, %v", c.preferred, stream.URL, ok, c.wantURL, c.wantOK)
+			}
+		})
 	}
 }

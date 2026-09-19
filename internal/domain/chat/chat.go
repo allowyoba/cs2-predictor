@@ -35,6 +35,10 @@ type Settings struct {
 	// it via the proactive big-event-discovered notification — see
 	// CompetitionSynchronization.announceBigEvent.
 	AutoSubscribeTopTier bool
+	// StreamLanguage is the language this chat wants match broadcasts in.
+	// Empty — the default — means "follow the bot's language"; resolve it
+	// through StreamLocale rather than reading it directly.
+	StreamLanguage common.LocaleCode
 	// EnabledGames lists the games this chat wants events/polls for — empty
 	// for a chat that hasn't turned any on yet (the default for every new
 	// chat; see chat_enabled_game's migration for why existing chats were
@@ -54,6 +58,15 @@ func (s Settings) GameEnabled(game competition.GameCode) bool {
 		}
 	}
 	return false
+}
+
+// StreamLocale resolves which language's broadcast to link for this chat,
+// falling back to its UI language while StreamLanguage is unset.
+func (s Settings) StreamLocale() common.LocaleCode {
+	if s.StreamLanguage == common.LocaleRU || s.StreamLanguage == common.LocaleEN {
+		return s.StreamLanguage
+	}
+	return s.Locale
 }
 
 // DefaultTimezone is the fallback IANA zone for a chat that hasn't set one.

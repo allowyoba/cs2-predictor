@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/platform/common"
 )
 
 func TestMapMatch(t *testing.T) {
@@ -102,6 +103,35 @@ func TestMapMatch_MissingResultsEntryLeavesScoreUnset(t *testing.T) {
 
 	if match.Score != nil {
 		t.Errorf("score = %+v, want nil (unresolved) when one team's result is missing", match.Score)
+	}
+}
+
+// TestMapMatch_StreamsListMapsEntriesAndDropsUnusableURLs mirrors a real
+// streams_list payload: a non-main Russian community stream, the official
+// English main broadcast, a language slot PandaScore reported with no
+// raw_url at all, and a non-http link — neither of the last two can go into
+// a message as an href.
+func TestMapMatch_StreamsListMapsEntriesAndDropsUnusableURLs(t *testing.T) {
+	beginAt := time.Date(2026, 9, 18, 14, 0, 0, 0, time.UTC)
+	dto := matchDTO{
+		ID: 9, Status: "not_started", BeginAt: &beginAt,
+		Serie: namedDTO{ID: 4, Name: "Event"},
+		StreamsList: []streamDTO{
+			{Language: "ru", RawURL: "https://www.twitch.tv/betboom_cs_ru3"},
+			{Language: "en", RawURL: "https://kick.com/cct_cs2", Main: true, Official: true},
+			{Language: "fr", RawURL: ""},
+			{Language: "de", RawURL: "javascript:alert(1)"},
+		},
+	}
+
+	match := mapMatch(dto, competition.GameCS2)
+
+	if len(match.Streams) != 2 {
+		t.Fatalf("streams = %+v, want 2 (the empty and non-http entries dropped)", match.Streams)
+	}
+	stream, ok := match.StreamFor(common.LocaleEN)
+	if !ok || stream.URL != "https://kick.com/cct_cs2" {
+		t.Errorf("StreamFor(EN) = %q, %v, want the official English kick.com URL", stream.URL, ok)
 	}
 }
 

@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"cs2predictor/internal/domain/chat"
@@ -18,6 +20,51 @@ import (
 // not have a @username.
 func mentionHTML(u User) string {
 	return fmt.Sprintf(`<a href="tg://user?id=%d">%s</a>`, u.ID, escapeHTML(u.DisplayName()))
+}
+
+// streamPlatforms names the hosts worth showing by brand — a link labelled
+// "Twitch" tells someone what they are about to open in a way "Трансляция"
+// does not. Anything unlisted falls back to its bare hostname.
+var streamPlatforms = map[string]string{
+	"twitch.tv":      "Twitch",
+	"youtube.com":    "YouTube",
+	"youtu.be":       "YouTube",
+	"kick.com":       "Kick",
+	"vk.com":         "VK Video",
+	"vkvideo.ru":     "VK Video",
+	"live.vkplay.ru": "VK Play",
+	"trovo.live":     "Trovo",
+	"nimo.tv":        "Nimo TV",
+	"huya.com":       "Huya",
+	"douyu.com":      "Douyu",
+	"bilibili.com":   "Bilibili",
+	"afreecatv.com":  "AfreecaTV",
+	"facebook.com":   "Facebook",
+}
+
+// streamPlatformLabel labels a stream link by its platform, falling back to
+// the hostname and finally — for a URL with no usable host — to fallback,
+// the caller's localized "Stream" wording.
+func streamPlatformLabel(rawURL, fallback string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return fallback
+	}
+	host := strings.ToLower(strings.TrimPrefix(parsed.Hostname(), "www."))
+	if name, ok := streamPlatforms[host]; ok {
+		return name
+	}
+	// A subdomain of a known platform (m.twitch.tv, live.youtube.com) is
+	// still that platform.
+	for domain, name := range streamPlatforms {
+		if strings.HasSuffix(host, "."+domain) {
+			return name
+		}
+	}
+	if host == "" {
+		return fallback
+	}
+	return host
 }
 
 // ternary is a tiny helper so short locale-dependent literals (a label, a
