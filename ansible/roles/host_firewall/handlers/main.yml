@@ -1,0 +1,26 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Applies both halves immediately, so a rule change does not wait for the
+# next boot. The docker half is skipped when the daemon is down: it writes
+# into DOCKER-USER, a chain only Docker creates.
+- name: Apply the firewall rules
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      /usr/local/sbin/cs2predictor-firewall host
+      if systemctl is-active --quiet docker; then
+        /usr/local/sbin/cs2predictor-firewall docker
+      fi
+    executable: /bin/bash
+  changed_when: true
+
+# Only fires when a drop-in actually changed. It restarts every container
+# with it, which is why it is not simply run on every pass.
+- name: Restart Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    state: restarted
+    daemon_reload: true

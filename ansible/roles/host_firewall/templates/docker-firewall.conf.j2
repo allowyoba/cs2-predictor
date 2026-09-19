@@ -1,0 +1,9 @@
+# Managed by ansible/roles/host_firewall — do not edit by hand.
+# The DOCKER-USER rules have to be re-applied after every daemon start:
+# Docker recreates that chain itself, dropping whatever was in it.
+[Unit]
+Requires=cs2predictor-firewall.service
+After=cs2predictor-firewall.service network-online.target
+
+[Service]
+ExecStartPost=/usr/local/sbin/cs2predictor-firewall docker

@@ -1,0 +1,18 @@
+---
+# One-time (and re-runnable) provisioning of this host's ingress firewall
+# and the boot ordering around Docker — run by hand, connecting as the
+# pre-existing `admin` account, the same way bootstrap.yml and
+# scheduled_backup.yml are (see ansible/README.md's "Host firewall").
+# Deliberately not part of deploy.yml: it installs root-owned systemd units
+# and rewrites packet filter rules, while the deploy SSH user only has
+# root-equivalent access to the app user.
+#
+# Re-running is safe and is how a host gets the superseded artifacts of
+# earlier iterations cleaned off it.
+- name: Install the host ingress firewall
+  hosts: production
+  become: true
+  gather_facts: false
+  serial: 1
+  roles:
+    - host_firewall

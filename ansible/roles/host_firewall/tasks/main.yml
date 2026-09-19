@@ -1,0 +1,163 @@
+---
+# Owns this host's ingress firewall and the boot ordering around it. Run by
+# hand as the pre-existing admin account (see ansible/firewall.yml), not
+# from deploy.yml: everything here is root-owned, and the deploy user has
+# root-equivalent access to the app user only.
+#
+# The rules live in two chains, because published container ports never
+# reach INPUT — Docker DNATs them straight into FORWARD:
+#   CS2P-HOST   in INPUT       — the host's own services (SSH)
+#   CS2P-DOCKER in DOCKER-USER — everything published by a container
+- name: Refuse an implausible SSH port
+  ansible.builtin.assert:
+    that:
+      - host_firewall_ssh_port | int > 0
+      - host_firewall_ssh_port | int < 65536
+    fail_msg: "host_firewall_ssh_port must be a valid port number; got {{ host_firewall_ssh_port }}"
+  when: host_firewall_ssh_port | length > 0
+
+- name: Create the configuration directory
+  ansible.builtin.file:
+    path: /etc/cs2predictor
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# Only when explicitly asked: see host_firewall_ssh_port's default for why
+# writing this file unprompted is a lockout waiting to happen.
+- name: Record the SSH port the firewall must keep open
+  ansible.builtin.copy:
+    dest: /etc/cs2predictor/ssh-port
+    content: "{{ host_firewall_ssh_port | int }}\n"
+    owner: root
+    group: root
+    mode: '0644'
+  when: host_firewall_ssh_port | length > 0
+  notify: Apply the firewall rules
+
+- name: Check whether an SSH port is already recorded
+  ansible.builtin.stat:
+    path: /etc/cs2predictor/ssh-port
+  register: host_firewall_ssh_port_file
+
+- name: Fail when no SSH port is recorded and none was given
+  ansible.builtin.fail:
+    msg: >-
+      /etc/cs2predictor/ssh-port does not exist and host_firewall_ssh_port was not set.
+      Re-run with -e host_firewall_ssh_port=<port>; applying these rules without it
+      would lock every SSH session out of this host.
+  when: not host_firewall_ssh_port_file.stat.exists and host_firewall_ssh_port | length == 0
+
+- name: Install the firewall script
+  ansible.builtin.copy:
+    src: cs2predictor-firewall
+    dest: /usr/local/sbin/cs2predictor-firewall
+    owner: root
+    group: root
+    mode: '0755'
+  notify: Apply the firewall rules
+
+- name: Install the firewall unit
+  ansible.builtin.template:
+    src: cs2predictor-firewall.service.j2
+    dest: /etc/systemd/system/cs2predictor-firewall.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Create the Docker drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the Docker drop-ins
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/docker.service.d/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - {src: docker-firewall.conf.j2, dest: 30-cs2predictor-firewall.conf}
+    - {src: docker-restart.conf.j2, dest: 40-cs2predictor-restart.conf}
+  notify:
+    - Reload systemd
+    - Restart Docker
+
+- name: Look for fail2ban
+  ansible.builtin.stat:
+    path: /lib/systemd/system/fail2ban.service
+  register: host_firewall_fail2ban
+
+- name: Order fail2ban after the firewall
+  when: host_firewall_fail2ban.stat.exists
+  block:
+    - name: Create the fail2ban drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/fail2ban.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the fail2ban drop-in
+      ansible.builtin.template:
+        src: fail2ban-firewall.conf.j2
+        dest: /etc/systemd/system/fail2ban.service.d/20-cs2predictor-firewall.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload systemd
+
+# --- superseded artifacts ---------------------------------------------
+# Both of these caused a real outage. The old Docker drop-in ran a script
+# that exited non-zero whenever DHCP had not yet produced a default route,
+# taking the daemon down with it; the old INPUT chain sat ahead of the
+# current one and ended in DROP, so the current rules were never reached.
+- name: Stop and disable the superseded firewall unit
+  ansible.builtin.systemd_service:
+    name: cs2predictor-host-firewall.service
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove the superseded units and scripts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ host_firewall_legacy_units + host_firewall_legacy_scripts }}"
+  notify: Reload systemd
+
+- name: Remove the superseded INPUT chain
+  # Unlinked, then flushed, then deleted — iptables refuses to delete a
+  # chain that is still referenced or non-empty. Every step tolerates
+  # failure so a host that never had the chain (or has already been
+  # cleaned) is a no-op rather than an error.
+  ansible.builtin.shell:
+    cmd: |
+      set -u
+      removed=0
+      for cmd in iptables ip6tables; do
+        command -v "$cmd" >/dev/null 2>&1 || continue
+        if "$cmd" -C INPUT -j {{ host_firewall_legacy_chain | quote }} 2>/dev/null; then
+          "$cmd" -D INPUT -j {{ host_firewall_legacy_chain | quote }} && removed=1
+        fi
+        "$cmd" -F {{ host_firewall_legacy_chain | quote }} 2>/dev/null || true
+        "$cmd" -X {{ host_firewall_legacy_chain | quote }} 2>/dev/null || true
+      done
+      echo "$removed"
+    executable: /bin/bash
+  register: host_firewall_legacy_chain_removed
+  changed_when: host_firewall_legacy_chain_removed.stdout | trim == '1'
+
+- name: Enable the firewall unit
+  ansible.builtin.systemd_service:
+    name: cs2predictor-firewall.service
+    enabled: true
+    state: started
+    daemon_reload: true

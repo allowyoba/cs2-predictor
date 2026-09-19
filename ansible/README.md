@@ -1,10 +1,11 @@
 # Ansible deployment
 
 The repository owns **application deployment**, plus the one-time migration of a host's SSH/sudo access to the model
-that deployment needs. Everything else about the VM — Docker Engine, the Compose plugin, firewalling, the
+that deployment needs. Everything else about the VM — Docker Engine, the Compose plugin, the
 `cs2predictor` service account and directory, `<APP_PATH>/.env` — is provisioned outside this repository, before either
 `bootstrap.yml` or
-`site.yml` ever runs.
+`site.yml` ever runs. The one exception is the ingress firewall and the boot ordering around Docker, which
+`firewall.yml` now owns: see "Host firewall" below for why it was brought in.
 
 By the time the ongoing deploy flow (`site.yml`, driven by GitHub Actions)
 runs, the target must already have:
@@ -33,9 +34,11 @@ actual logic lives in roles.
 | `deploy.yml`         | Install an already-resolved release against an existing inventory                                                             |
 | `webhook.yml`        | Manual, optional: re-register the Telegram webhook using secrets read from the server's own `.env`                            |
 | `notify_failure.yml` | Triggered only by `deploy.yml`'s own failure: DM the bot's administrators, using secrets read from the server's own `.env`    |
+| `firewall.yml`       | Manual, re-runnable: install the host ingress firewall, Docker's boot ordering, and clean off superseded rules/units          |
 
 | Role                   | Responsibility                                                                                                                                                             |
 |------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `host_firewall`        | Own the host's ingress rules (`CS2P-HOST`/`CS2P-DOCKER`), Docker's boot ordering and restart limits, and the removal of superseded firewall artifacts — see "Host firewall" |
 | `prepare_connection`   | Validate SSH/APP_PATH inputs, write the private key and known_hosts, add the target to the in-memory inventory — shared by every playbook that needs to reach `production` |
 | `prepare_deploy`       | Validate release inputs, resolve the GHCR tag to an immutable digest, **then** include `prepare_connection` and attach the release metadata to that host                   |
 | `host_access`          | Migrate a host's SSH/sudo policy for `cs2deploy` to ordinary exec/SFTP plus passwordless root sudo, reusing its existing keypair                                           |
@@ -309,6 +312,43 @@ ansible-playbook -i <private-inventory> scheduled_backup.yml \
 ```
 
 Nothing else needs to change — the script and units are re-templated idempotently on every run regardless.
+
+## Host firewall
+
+Two outages came out of this part of the host being unmanaged, so `firewall.yml` (role: `host_firewall`) owns it now.
+Run it by hand as the pre-existing `admin` account, the same way `bootstrap.yml` and `scheduled_backup.yml` are —
+it installs root-owned units, while the deploy user only ever reaches the app user:
+
+```bash
+ansible-playbook -i inventory.yml firewall.yml
+```
+
+The rules live in two chains, because a published container port never reaches `INPUT` — Docker DNATs it straight
+into `FORWARD`:
+
+| Chain         | Where         | Guards                                                     |
+|---------------|---------------|------------------------------------------------------------|
+| `CS2P-HOST`   | `INPUT`       | the host's own services: SSH, ICMP, DHCP, then drop the rest |
+| `CS2P-DOCKER` | `DOCKER-USER` | everything published by a container (80/443)                 |
+
+Both are applied by one script, `/usr/local/sbin/cs2predictor-firewall`, run twice: once by
+`cs2predictor-firewall.service` at boot, and again as `docker.service`'s `ExecStartPost`, because Docker recreates
+`DOCKER-USER` itself on every start and drops whatever was in it.
+
+What the role exists to prevent, both of which actually happened:
+
+- **The daemon taken down by its own `ExecStartPost`.** The script used to `exit 1` when `ip route show default`
+  came back empty, which at boot it does until DHCP finishes. A non-zero `ExecStartPost` fails the whole unit, and
+  after Docker's packaged limit of three failures in sixty seconds systemd gives up — the VM then has no container
+  runtime at all until somebody notices. The script now waits for the route (a genuinely absent one still fails,
+  since unguarded published ports are worse), and the `40-cs2predictor-restart.conf` drop-in widens the limit.
+- **Superseded rules silently winning.** An earlier drop-in and an earlier `INPUT` chain both outlived their
+  replacements. The old chain was inserted at position 1 and ended in `DROP`, so the current chain was never
+  reached at all. The role removes both on every run; that is also why re-running it is the way to clean a host.
+
+`host_firewall_ssh_port` is deliberately empty by default: the port lives in `/etc/cs2predictor/ssh-port`, and this
+role rewrites that file only when a port is passed explicitly (`-e host_firewall_ssh_port=666`). A default here
+would be a lockout waiting for the first run that forgets to override it.
 
 ## Deployment flow
 
