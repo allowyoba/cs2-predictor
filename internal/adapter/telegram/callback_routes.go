@@ -705,9 +705,9 @@ func routeSettingsStreamLanguage(h *UpdateHandler, ctx context.Context, cb *Call
 	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 }
 
-// routeSettingsGamesToggle flips one game on or off for this chat —
-// SetEnabledGames replaces the whole set, so this always builds the full
-// next set rather than issuing a single-row add/remove.
+// routeSettingsGamesToggle switches a game on immediately, and routes a
+// switch-off through the two-manager approval instead — see games_flow.go
+// for why the two directions are deliberately not symmetric.
 func routeSettingsGamesToggle(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 	code := competition.GameCode(strings.TrimPrefix(data, "settings:games:toggle:"))
 	var supported bool
@@ -721,25 +721,12 @@ func routeSettingsGamesToggle(h *UpdateHandler, ctx context.Context, cb *Callbac
 		return false, newValidationError("unknown game code %q", code)
 	}
 
-	var next []competition.GameCode
 	if settings.GameEnabled(code) {
-		for _, g := range settings.EnabledGames {
-			if g != code {
-				next = append(next, g)
-			}
-		}
-	} else {
-		next = append(append([]competition.GameCode{}, settings.EnabledGames...), code)
+		return h.requestGameDisable(ctx, cb, target, settings, code)
 	}
-	if err := h.Chats.SetEnabledGames(ctx, settings.ChatID, next); err != nil {
+	settings, err := h.setGameEnabled(ctx, settings, code, true, &cb.From)
+	if err != nil {
 		return false, err
 	}
-	settings.EnabledGames = next
-
-	state := "off"
-	if settings.GameEnabled(code) {
-		state = "on"
-	}
-	h.logAdminAction(ctx, settings.ChatID, &cb.From, "games", string(code)+":"+state)
 	return true, h.gamesView(ctx, target, settings)
 }

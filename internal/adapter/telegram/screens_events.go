@@ -140,10 +140,9 @@ func (h *UpdateHandler) renderEventBrowse(ctx context.Context, target replyTarge
 	if end > len(found) {
 		end = len(found)
 	}
-	var rows [][]InlineButton
-	for _, e := range found[start:end] {
-		rows = append(rows, []InlineButton{button(eventLabel(e), cbSubscribe(e.ID))})
-	}
+	rows := h.gameSectionRows(found[start:end], settings.Locale, func(e competition.Event) []InlineButton {
+		return []InlineButton{button(eventLabel(e), cbSubscribe(e.ID))}
+	})
 	mode := "all"
 	if topTierOnly {
 		mode = "top"
@@ -190,6 +189,101 @@ func (h *UpdateHandler) eventsByID(ctx context.Context, subs []subscription.Even
 		byID[e.ID] = e
 	}
 	return byID, nil
+}
+
+// distinctGames reports which games a set of tournaments spans.
+func distinctGames(events []competition.Event) map[competition.GameCode]struct{} {
+	out := map[competition.GameCode]struct{}{}
+	for _, e := range events {
+		out[e.Game] = struct{}{}
+	}
+	return out
+}
+
+// gameSectionRows lays a list of tournaments out under one header row per
+// game, in competition.Games' own order, and returns the rows ready for a
+// keyboard.
+//
+// A chat that follows only one game gets exactly what it always got: the
+// headers appear only when there is something to separate. Mixing two
+// games into one flat list is fine until a chat enables both and every
+// screen becomes a scavenger hunt — an inline keyboard has no grouping of
+// its own, so the header is a disabled ("noop") button, the same device
+// the pagination counter already uses.
+func (h *UpdateHandler) gameSectionRows(events []competition.Event, locale common.LocaleCode,
+	row func(competition.Event) []InlineButton) [][]InlineButton {
+	byGame := map[competition.GameCode][]competition.Event{}
+	for _, e := range events {
+		byGame[e.Game] = append(byGame[e.Game], e)
+	}
+	if len(byGame) <= 1 {
+		out := make([][]InlineButton, 0, len(events))
+		for _, e := range events {
+			out = append(out, row(e))
+		}
+		return out
+	}
+
+	var out [][]InlineButton
+	appendSection := func(code competition.GameCode, section []competition.Event) {
+		if len(section) == 0 {
+			return
+		}
+		out = append(out, []InlineButton{button("— "+h.Texts.Get(gameLabelKey(code), locale)+" —", "noop")})
+		for _, e := range section {
+			out = append(out, row(e))
+		}
+	}
+	for _, code := range competition.Games {
+		appendSection(code, byGame[code])
+		delete(byGame, code)
+	}
+	// Anything the catalog reports under a game this build does not know
+	// still has to be reachable, so it goes last rather than vanishing.
+	for code, section := range byGame {
+		appendSection(code, section)
+	}
+	return out
+}
+
+// gameSectionLines is gameSectionRows for a plain-text list: same rule
+// (headings only when there is more than one game to separate), same
+// ordering, rendered as italic headings instead of disabled buttons.
+func (h *UpdateHandler) gameSectionLines(events []competition.Event, locale common.LocaleCode,
+	line func(competition.Event) string) []string {
+	byGame := map[competition.GameCode][]competition.Event{}
+	for _, e := range events {
+		byGame[e.Game] = append(byGame[e.Game], e)
+	}
+	if len(byGame) <= 1 {
+		out := make([]string, 0, len(events))
+		for _, e := range events {
+			out = append(out, line(e))
+		}
+		return out
+	}
+
+	var out []string
+	appendSection := func(code competition.GameCode, section []competition.Event) {
+		if len(section) == 0 {
+			return
+		}
+		if len(out) > 0 {
+			out = append(out, "")
+		}
+		out = append(out, italic(escapeHTML(h.Texts.Get(gameLabelKey(code), locale))))
+		for _, e := range section {
+			out = append(out, line(e))
+		}
+	}
+	for _, code := range competition.Games {
+		appendSection(code, byGame[code])
+		delete(byGame, code)
+	}
+	for code, section := range byGame {
+		appendSection(code, section)
+	}
+	return out
 }
 
 func eventLabel(e competition.Event) string {
@@ -272,18 +366,19 @@ func (h *UpdateHandler) subscribedEvents(ctx context.Context, target replyTarget
 		hidden = len(subs) - subscribedEventsPageSize
 		subs = subs[:subscribedEventsPageSize]
 	}
-	var rows [][]InlineButton
+	ordered := make([]competition.Event, 0, len(subs))
 	for _, s := range subs {
-		event, ok := byID[s.EventID]
-		if !ok {
-			continue
+		if event, ok := byID[s.EventID]; ok {
+			ordered = append(ordered, event)
 		}
+	}
+	rows := h.gameSectionRows(ordered, settings.Locale, func(event competition.Event) []InlineButton {
 		label := eventLabel(event)
-		if _, isFinished := finishedIDs[s.EventID]; isFinished {
+		if _, isFinished := finishedIDs[event.ID]; isFinished {
 			label += " · " + h.Texts.Get("events.status_finished", settings.Locale)
 		}
-		rows = append(rows, []InlineButton{button(label, cbEventView(s.EventID))})
-	}
+		return []InlineButton{button(label, cbEventView(event.ID))}
+	})
 	// Bulk removal is administration, so DM only — same rule as the
 	// per-event unsubscribe button above.
 	if dmContext && len(finished) > 0 {
@@ -403,6 +498,12 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		byEvent[event.ID] = event
 	}
 
+	// With more than one game followed, a tournament name alone does not
+	// say which game its matches belong to — and team names do not either.
+	// The label is added only then: a single-game chat has nothing to
+	// disambiguate and does not need the extra word.
+	multiGame := len(distinctGames(events)) > 1
+
 	upcoming := make([]upcomingMatch, 0, len(matches))
 	for _, m := range matches {
 		if m.ScheduledAt == nil {
@@ -417,6 +518,9 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		eventName := h.Texts.Get("upcoming.default_tournament_name", settings.Locale)
 		if event, ok := byEvent[m.EventID]; ok {
 			eventName = event.Tier.Badge() + event.Name
+			if multiGame {
+				eventName += " · " + h.Texts.Get(gameShortLabelKey(event.Game), settings.Locale)
+			}
 		}
 		upcoming = append(upcoming, upcomingMatch{
 			eventName: eventName,

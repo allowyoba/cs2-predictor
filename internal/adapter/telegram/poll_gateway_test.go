@@ -886,3 +886,77 @@ func TestStop_PropagatesOtherErrors(t *testing.T) {
 		t.Fatal("expected an unrelated stopPoll error to propagate")
 	}
 }
+
+// A chat that follows two games gets the game named on the poll's
+// tournament line — a match between two team names says nothing about
+// which game it is. One game followed means no marker: the poll is dense
+// enough without repeating what everyone already knows.
+func TestSend_NamesTheGameOnlyWhenTheChatFollowsMoreThanOne(t *testing.T) {
+	send := func(t *testing.T, games []competition.GameCode) string {
+		t.Helper()
+		srv, calls := newRecordingServer(t)
+		defer srv.Close()
+		client := NewClient(Config{BaseURL: srv.URL, Token: "test-token"}, srv.Client())
+		texts, err := LoadTexts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		chats := newFakeChats()
+		chatID := common.ChatID{Value: -1}
+		if _, err := chats.Save(context.Background(), chat.Settings{
+			ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := chats.SetEnabledGames(context.Background(), chatID, games); err != nil {
+			t.Fatal(err)
+		}
+
+		eventID, matchID := common.NewEventID(), common.NewMatchID()
+		format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+		scheduledAt := time.Now().Add(time.Hour)
+		match := competition.Match{
+			ID: matchID, EventID: eventID, Format: format, Status: competition.MatchNotStarted,
+			FirstTeam: &competition.Team{Name: "Spirit"}, SecondTeam: &competition.Team{Name: "Falcons"},
+			ScheduledAt: &scheduledAt,
+		}
+		catalog := &dataCatalog{
+			events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}},
+			unstartedMatches: map[common.EventID][]competition.Match{eventID: {match}},
+		}
+		score, _ := competition.NewMatchScore(2, 0)
+		poll := prediction.Poll{
+			ID: common.NewPollID(), ChatID: chatID, MatchID: matchID,
+			Options: []prediction.Option{{Index: 0, Score: score}},
+			Status:  prediction.PollOpen, ClosesAt: scheduledAt,
+		}
+		gateway := NewPollGateway(client, catalog, chats, texts, slog.Default(), PollEnrichmentSources{})
+		if _, err := gateway.Send(context.Background(), poll); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range *calls {
+			if c["__method"] == "sendPoll" {
+				d, _ := c["description"].(string)
+				return d
+			}
+		}
+		t.Fatal("no sendPoll call recorded")
+		return ""
+	}
+
+	both := send(t, []competition.GameCode{competition.GameCS2, competition.GameDota2})
+	if !strings.Contains(both, ru(t, "game.cs2_short")) {
+		t.Fatalf("expected the game named for a two-game chat:\n%s", both)
+	}
+	// It rides on the tournament line rather than adding one of its own.
+	for _, line := range strings.Split(both, "\n") {
+		if strings.Contains(line, ru(t, "game.cs2_short")) && !strings.Contains(line, "Major") {
+			t.Fatalf("the game must share the tournament line, got %q", line)
+		}
+	}
+
+	single := send(t, []competition.GameCode{competition.GameCS2})
+	if strings.Contains(single, ru(t, "game.cs2_short")) {
+		t.Fatalf("a single-game chat needs no game marker:\n%s", single)
+	}
+}

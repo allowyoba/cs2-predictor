@@ -351,16 +351,17 @@ func newTestHandler(t *testing.T, server *httptest.Server) (*UpdateHandler, *fak
 	authz := chat.NewAuthorizationService(chats, fakeMembership{role: chat.RoleMember})
 
 	return &UpdateHandler{
-		Dedup:         newFakeDedup(),
-		Chats:         chats,
-		Authorization: authz,
-		Catalog:       fakeCatalog{},
-		Subscriptions: fakeSubs{},
-		Scoring:       fakeScoring{},
-		Texts:         texts,
-		Client:        client,
-		Clock:         common.SystemUTCClock(),
-		Log:           slog.Default(),
+		Dedup:            newFakeDedup(),
+		Chats:            chats,
+		Authorization:    authz,
+		PendingApprovals: newFakePendingApprovals(),
+		Catalog:          fakeCatalog{},
+		Subscriptions:    fakeSubs{},
+		Scoring:          fakeScoring{},
+		Texts:            texts,
+		Client:           client,
+		Clock:            common.SystemUTCClock(),
+		Log:              slog.Default(),
 	}, chats
 }
 
