@@ -24,6 +24,12 @@ type UserBet struct {
 	ActualScore    competition.MatchScore
 	Correct        bool
 	Points         int
+	// Game and EventName say what this bet was about. The bot's own bets
+	// screen is already scoped to one chat, but a cross-chat list — the
+	// Mini App's history — is unreadable without them: two rows of team
+	// names with no tournament and no discipline look like duplicates.
+	Game      competition.GameCode
+	EventName string
 }
 
 // UserBetsMaxRows bounds how much history a "my bets" screen reads — enough
