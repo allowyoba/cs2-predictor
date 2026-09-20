@@ -41,7 +41,12 @@ jobs:
           ref: refs/tags/${{ inputs.tag }}
           path: release
           persist-credentials: false
-          sparse-checkout: docker
+          # The Mini App's files travel with the release too: Caddy serves
+          # them straight from disk, so a checkout that only carries
+          # docker/ deploys a compose file whose mount points at nothing.
+          sparse-checkout: |
+            docker
+            miniapp-prototype
 
       - uses: actions/setup-python@v7
         with:

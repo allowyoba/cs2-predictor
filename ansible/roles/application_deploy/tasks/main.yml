@@ -217,14 +217,25 @@
             path: "{{ release_dir }}/miniapp-prototype"
           delegate_to: localhost
           become: false
-          register: application_deploy_miniapp_source
+          register: application_deploy_miniapp
+
+        - name: Confirm the Mini App actually landed
+          # An empty directory behind the mount serves 404s that look like
+          # a routing problem and are not — which is exactly how this
+          # shipped once, from a release checkout that carried docker/ and
+          # nothing else.
+          when: application_deploy_miniapp_source.stat.exists | default(false)
+          ansible.builtin.stat:
+            path: "{{ app_dir }}/miniapp/index.html"
+          register: application_deploy_miniapp_page
+          failed_when: not application_deploy_miniapp_page.stat.exists_source
 
         - name: Install the Mini App's static files
           # Caddy serves these straight from disk (see docker/Caddyfile):
           # a Telegram Mini App is a web page Telegram opens in its own
           # WebView, so it needs a real HTTPS address before it can be
           # attached to the bot at all.
-          when: application_deploy_miniapp_source.stat.exists
+          when: application_deploy_miniapp_source.stat.exists | default(false)
           ansible.builtin.copy:
             src: "{{ release_dir }}/miniapp-prototype/"
             dest: "{{ app_dir }}/miniapp/"
@@ -256,7 +267,9 @@
         # answers 404 — which is how the Mini App endpoint shipped and was
         # unreachable from outside.
         - name: Reload the reverse proxy when its configuration changed
-          when: application_deploy_config is changed or (application_deploy_miniapp is defined and application_deploy_miniapp is changed)
+          when: >-
+            application_deploy_config is changed
+            or (application_deploy_miniapp is defined and application_deploy_miniapp is changed)
           block:
             - name: Ask Caddy to reload its own configuration
               ansible.builtin.command:
