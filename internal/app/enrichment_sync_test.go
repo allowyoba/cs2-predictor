@@ -25,12 +25,24 @@ func (f *fakeRankingProvider) FetchRankings(context.Context) ([]enrichment.Ranke
 	return f.ranked, f.err
 }
 
+// fakeTeamLister records which games it was asked for: a ranking sync
+// asking for the wrong ones is the whole bug this filter exists for.
 type fakeTeamLister struct {
-	teams []competition.Team
+	teams      []competition.Team
+	byGame     map[competition.GameCode][]competition.Team
+	askedGames []competition.GameCode
 }
 
-func (f *fakeTeamLister) ListTeams(context.Context) ([]competition.Team, error) {
-	return f.teams, nil
+func (f *fakeTeamLister) ListTeams(_ context.Context, games ...competition.GameCode) ([]competition.Team, error) {
+	f.askedGames = games
+	if f.byGame == nil {
+		return f.teams, nil
+	}
+	var out []competition.Team
+	for _, g := range games {
+		out = append(out, f.byGame[g]...)
+	}
+	return out, nil
 }
 
 // fakeEnrichmentStore is a single in-memory fake covering
@@ -548,5 +560,39 @@ func TestRankingSync_RefreshFromCacheFetchesOutsideTheClusterLock(t *testing.T) 
 	}
 	if provider.cachedCalls != 1 {
 		t.Fatalf("expected exactly one cached fetch, got %d", provider.cachedCalls)
+	}
+}
+
+// The bug this prevents, at the layer where it happened: "BetBoom Team"
+// exists twice — a Counter-Strike roster and a Dota 2 roster under one
+// organisation — and the ranking sync used to match the CS2 feed against
+// both, attaching a VRS ranking to a Dota 2 team that never played a map
+// of Counter-Strike.
+func TestRankingSync_NeverMatchesATeamFromAGameTheFeedDoesNotRank(t *testing.T) {
+	cs2Team, dotaTeam := common.NewTeamID(), common.NewTeamID()
+	teams := &fakeTeamLister{byGame: map[competition.GameCode][]competition.Team{
+		competition.GameCS2:   {{ID: cs2Team, Name: "BetBoom Team"}},
+		competition.GameDota2: {{ID: dotaTeam, Name: "BetBoom Team"}},
+	}}
+	store := newFakeEnrichmentStore()
+	sync := &RankingSync{
+		Source: enrichment.SourceValveVRS,
+		Provider: &fakeRankingProvider{ranked: []enrichment.RankedTeam{
+			{Identity: enrichment.TeamIdentity{Name: "BetBoom Team"}, GlobalRank: intPtr(7), PublishedAt: time.Now(), Source: enrichment.SourceValveVRS},
+		}},
+		Teams: teams, Rankings: store, Identity: store, State: store,
+		Lock: fakeClusterLock{}, Log: slog.Default(),
+	}
+
+	sync.Dispatch(context.Background())
+
+	if len(teams.askedGames) != 1 || teams.askedGames[0] != competition.GameCS2 {
+		t.Fatalf("the sync asked for %v, want only the games its feed ranks", teams.askedGames)
+	}
+	if _, ok := store.rankings[cs2Team]; !ok {
+		t.Fatal("the Counter-Strike team must still get its ranking")
+	}
+	if _, ok := store.rankings[dotaTeam]; ok {
+		t.Fatal("the Dota 2 team shares an organisation, not a ranking")
 	}
 }

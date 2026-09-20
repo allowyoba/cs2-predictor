@@ -57,7 +57,12 @@ type MatchOdds struct {
 // implement it — the same "optional capability via type assertion" pattern
 // already used for MatchFactsCatalog/AdministratorLister/ModeratorLister.
 type TeamLister interface {
-	ListTeams(ctx context.Context) ([]competition.Team, error)
+	// games narrows the result to those games. It is not an optimization:
+	// a ranking feed matched against a team from a game it does not cover
+	// produces a confidently wrong answer whenever two rosters share an
+	// organisation's name — see RanksGame. An empty games list returns
+	// every team, for the callers that genuinely want all of them.
+	ListTeams(ctx context.Context, games ...competition.GameCode) ([]competition.Team, error)
 }
 
 // RankingRepository persists/reads cached TeamRanking rows.

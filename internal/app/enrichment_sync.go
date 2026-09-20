@@ -222,7 +222,10 @@ func (s *RankingSync) recordFailure(ctx context.Context, err error) {
 // roster-overlap step something to compare against even on a team that has
 // never matched by name/alias before.
 func (s *RankingSync) buildCandidates(ctx context.Context) ([]enrichment.TeamCandidate, error) {
-	teams, err := s.Teams.ListTeams(ctx)
+	// Only the games this feed actually ranks: see enrichment.RanksGame
+	// for what goes wrong when a ranking is matched against a team from a
+	// game it knows nothing about.
+	teams, err := s.Teams.ListTeams(ctx, enrichment.RankedGames(s.Source)...)
 	if err != nil {
 		return nil, err
 	}

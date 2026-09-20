@@ -610,7 +610,7 @@ func TestSubscribeCallback_CreatesPollsForEachUnstartedMatch(t *testing.T) {
 	firstTeam := competition.Team{ID: common.NewTeamID(), Name: "Spirit", ExternalID: "1"}
 	secondTeam := competition.Team{ID: common.NewTeamID(), Name: "NAVI", ExternalID: "2"}
 	catalog := &dataCatalog{
-		events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}},
+		events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}},
 		unstartedMatches: map[common.EventID][]competition.Match{eventID: {
 			{ID: common.NewMatchID(), EventID: eventID, Format: format, Status: competition.MatchNotStarted,
 				FirstTeam: &firstTeam, SecondTeam: &secondTeam, ScheduledAt: &scheduledAt},

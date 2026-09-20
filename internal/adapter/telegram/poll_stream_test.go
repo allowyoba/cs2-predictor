@@ -45,7 +45,7 @@ func streamPollFor(t *testing.T, streams []competition.Stream, announced string,
 	}
 	eventID, matchID := common.NewEventID(), common.NewMatchID()
 	catalog := &dataCatalog{
-		events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}},
+		events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}},
 		unstartedMatches: map[common.EventID][]competition.Match{eventID: {{ID: matchID, EventID: eventID, Streams: streams}}},
 	}
 	marker := &recordingStreamMarker{}

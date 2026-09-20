@@ -374,6 +374,14 @@ type sentPoll struct {
 // returns the question/description of the resulting sendPoll call.
 func sendTestPoll(t *testing.T, catalog competition.Catalog, enrichmentSources PollEnrichmentSources, firstTeam, secondTeam competition.Team) sentPoll {
 	t.Helper()
+	return sendTestPollForGame(t, catalog, enrichmentSources, firstTeam, secondTeam, competition.GameCS2)
+}
+
+// sendTestPollForGame is sendTestPoll with the tournament's game spelled
+// out, for the rules that depend on it.
+func sendTestPollForGame(t *testing.T, catalog competition.Catalog, enrichmentSources PollEnrichmentSources,
+	firstTeam, secondTeam competition.Team, game competition.GameCode) sentPoll {
+	t.Helper()
 	srv, calls := newRecordingServer(t)
 	defer srv.Close()
 	client := NewClient(Config{BaseURL: srv.URL, Token: "test-token"}, srv.Client())
@@ -400,14 +408,14 @@ func sendTestPoll(t *testing.T, catalog competition.Catalog, enrichmentSources P
 	}
 	if catalog == nil {
 		catalog = &dataCatalog{
-			events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}},
+			events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: game}},
 			unstartedMatches: map[common.EventID][]competition.Match{eventID: {match}},
 		}
 	} else if base, ok := catalog.(*dataCatalog); ok {
-		base.events = map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}
+		base.events = map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: game}}
 		base.unstartedMatches = map[common.EventID][]competition.Match{eventID: {match}}
 	} else if fc, ok := catalog.(*factsCatalog); ok {
-		fc.events = map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}
+		fc.events = map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: game}}
 		fc.unstartedMatches = map[common.EventID][]competition.Match{eventID: {match}}
 	}
 
@@ -790,7 +798,7 @@ func TestSend_OmitsCloseDateWhenTheLeadTimeIsTooShort(t *testing.T) {
 		ScheduledAt: &scheduledAt,
 	}
 	catalog := &dataCatalog{
-		events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}},
+		events:           map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}},
 		unstartedMatches: map[common.EventID][]competition.Match{eventID: {match}},
 	}
 	score, err := competition.NewMatchScore(2, 0)
@@ -977,5 +985,30 @@ func TestSend_QuestionCarriesTheTeamsCountryFlags(t *testing.T) {
 	}
 	if !strings.Contains(poll.question, "Falcons") {
 		t.Fatalf("the second team must still be named: %q", poll.question)
+	}
+}
+
+// The same guard on the way out. A ranking row written before the sync
+// learned to scope itself is still in the database; a Dota 2 poll must not
+// show it, however it got there.
+func TestSend_NeverShowsACounterStrikeRankingInAnotherGamesPoll(t *testing.T) {
+	first := competition.Team{ID: common.NewTeamID(), Name: "BetBoom Team"}
+	second := competition.Team{ID: common.NewTeamID(), Name: "Team Spirit"}
+	firstRank, secondRank := 1, 3
+	rankings := &fakeRankingRepository{rankings: map[common.TeamID]enrichment.TeamRanking{
+		first.ID:  {TeamID: first.ID, GlobalRank: &firstRank},
+		second.ID: {TeamID: second.ID, GlobalRank: &secondRank},
+	}}
+
+	dota := &dataCatalog{}
+	sent := sendTestPollForGame(t, dota, PollEnrichmentSources{Rankings: rankings}, first, second, competition.GameDota2)
+
+	if strings.Contains(sent.description, "VRS") || strings.Contains(sent.description, "#1") {
+		t.Fatalf("a Dota 2 poll must carry no Counter-Strike ranking, got %q", sent.description)
+	}
+	// The rest of the poll is unaffected: this removes a wrong line, it
+	// does not blank the description.
+	if !strings.Contains(sent.description, "🏆 Major") {
+		t.Fatalf("expected the tournament line to survive, got %q", sent.description)
 	}
 }
