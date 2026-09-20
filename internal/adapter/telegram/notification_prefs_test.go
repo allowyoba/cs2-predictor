@@ -176,3 +176,77 @@ func TestOperatorAlerts_EveryKindHasASwitchAndStartsOff(t *testing.T) {
 		}
 	}
 }
+
+// Through the real callback route, not the screen function: an exact route
+// is handed the whole string it matched, so a handler that treats the
+// remainder as a notification kind reads "settings:notify" as one and
+// answers the group with "could not do that". The direct-call test above
+// could never have caught it.
+func TestChatNotifications_OpenAndToggleFromTheGroupSettingsMenu(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	ctx := context.Background()
+	chatID := common.ChatID{Value: -100}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	tap := func(data string) {
+		t.Helper()
+		cb := &CallbackQuery{ID: "cb", From: User{ID: 7, FirstName: "Admin"},
+			Message: &Message{MessageID: 1, Chat: Chat{ID: chatID.Value, Type: "group"}}, Data: &data}
+		if err := handler.handleCallback(ctx, cb); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(lastText(*calls), ru(t, "error.generic")) {
+			t.Fatalf("%q answered with the generic failure", data)
+		}
+	}
+
+	tap("settings:notify")
+	cds, _ := findKeyboardButtons(*calls)
+	if !slices.Contains(cds, "settings:notify:"+string(common.ChatNotifyDigests)) {
+		t.Fatalf("the notifications screen did not render its switches: %v", cds)
+	}
+
+	tap("settings:notify:" + string(common.ChatNotifyDigests))
+	prefs, _ := chats.NotifySettings(ctx, common.ScopeChat, chatID.Value)
+	if !prefs[string(common.ChatNotifyDigests)] {
+		t.Fatal("tapping the switch through the route did not store anything")
+	}
+}
+
+// The scoring rules belong on the screen that shows the scores, and
+// nowhere twice. Somebody looking at a points table and wondering how the
+// points were arrived at should not have to go up a menu to a command
+// reference to find out.
+func TestRules_LiveOnTheBoardThatShowsThePoints(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
+	ctx := context.Background()
+	chatID := common.ChatID{Value: -100}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	data := "stats:all"
+	cb := &CallbackQuery{ID: "cb", From: User{ID: 7, FirstName: "Admin"},
+		Message: &Message{MessageID: 1, Chat: Chat{ID: chatID.Value, Type: "group"}}, Data: &data}
+	if err := handler.handleCallback(ctx, cb); err != nil {
+		t.Fatal(err)
+	}
+	cds, _ := findKeyboardButtons(*calls)
+	var rules int
+	for _, cd := range cds {
+		if strings.HasPrefix(cd, "menu:rules") {
+			rules++
+		}
+	}
+	if rules != 1 {
+		t.Fatalf("the leaderboard offers the rules %d times, want exactly one: %v", rules, cds)
+	}
+}

@@ -106,6 +106,15 @@ type teamDTO struct {
 	Predictions int    `json:"predictions"`
 }
 
+// chatRefDTO is one chat the person plays in, for the filter bar. Carries
+// its id because the filter travels back as a query parameter, and a title
+// is not a key — two chats may well be called the same thing.
+type chatRefDTO struct {
+	ID          int64  `json:"id"`
+	Title       string `json:"title"`
+	Predictions int    `json:"predictions"`
+}
+
 type dashboardDTO struct {
 	User struct {
 		ID          int64  `json:"id"`
@@ -115,8 +124,16 @@ type dashboardDTO struct {
 	Summary summaryDTO `json:"summary"`
 	Form    formDTO    `json:"form"`
 	Trend   *trendDTO  `json:"trend,omitempty"`
-	Games   []gameDTO  `json:"games"`
-	Teams   []teamDTO  `json:"teams"`
+	// Games and Chats are deliberately NOT narrowed by the current scope:
+	// they are what the filter bar is built from, and a filter that
+	// removes its own options as soon as you use one is a trap.
+	Games []gameDTO    `json:"games"`
+	Chats []chatRefDTO `json:"chats"`
+	// Best and Worst are the two ends of the same ranking, both inside the
+	// current scope. Naming only the teams somebody reads well answers
+	// half a question: the useful half is usually the other one.
+	Best  []teamDTO `json:"best_teams"`
+	Worst []teamDTO `json:"worst_teams"`
 }
 
 // accessDTO is what the app is told about its own right to be open.
@@ -128,22 +145,32 @@ type accessDTO struct {
 }
 
 // dashboardHandler serves GET /api/miniapp/v1/me/dashboard.
-func dashboardHandler(deps MiniAppDeps) http.Handler {
+//
+// Every figure here answers the same question as every other figure here,
+// because they are all built from the one scope the request carried. The
+// rail's own options are the exception, and say so.
+func dashboardHandler(deps MiniAppDeps, active MiniAppActive) http.Handler {
 	return withMiniAppAuth(deps, func(w http.ResponseWriter, r *http.Request, user authenticatedUser) {
-		insightsLimit := scoring.InsightsMaxPredictions
-		predictions, err := deps.Stats.UserPredictions(r.Context(), user.ID, insightsLimit)
+		selected, err := scopeFrom(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		all, err := deps.Stats.UserPredictions(r.Context(), user.ID, scoring.InsightsMaxPredictions)
 		if err != nil {
 			miniAppError(w, deps.Log, "prediction history unavailable", err)
 			return
 		}
-		overall, err := deps.Stats.UserStats(r.Context(), user.ID, scoring.AllTime())
+		overall, err := deps.Stats.UserStats(r.Context(), user.ID, selected.period(scoring.AllTime()))
 		if err != nil {
 			miniAppError(w, deps.Log, "statistics unavailable", err)
 			return
 		}
 
 		now := deps.Clock.Now()
-		insights := scoring.BuildPersonalInsights(predictions, now)
+		scoped := selected.filterPredictions(all)
+		insights := scoring.BuildPersonalInsights(scoped, now)
+
 		var body dashboardDTO
 		body.User.ID = user.ID.Value
 		body.User.DisplayName = deps.displayName(r.Context(), user)
@@ -160,22 +187,86 @@ func dashboardHandler(deps MiniAppDeps) http.Handler {
 			Recent: insights.RecentForm,
 		}
 		body.Trend = trendOf(insights)
-		for _, entry := range scoring.SplitByGame(predictions, now) {
-			game := gameDTO{
-				Game:          string(entry.Game),
-				CurrentStreak: entry.Insights.CurrentStreak,
-				Trend:         trendOf(entry.Insights),
-			}
-			game.Predictions, game.Accuracy = recordOf(entry.Insights)
-			body.Games = append(body.Games, game)
-		}
-		for _, team := range insights.Teams {
-			body.Teams = append(body.Teams, teamDTO{
-				Team: team.TeamName, Accuracy: team.AccuracyPercent(), Predictions: team.Predictions,
-			})
+		body.Games = gameBreakdown(all, selected, now)
+		body.Best, body.Worst = teamExtremes(scoped)
+		if chats, err := chatRefs(r.Context(), active, user.ID); err == nil {
+			body.Chats = chats
+		} else {
+			// The filter bar losing its chat list is not worth failing the
+			// whole screen over; the rest of the dashboard is intact.
+			deps.Log.Error("chat list unavailable", "error", err)
 		}
 		writeJSON(w, body)
 	})
+}
+
+// gameBreakdown is the rail: every discipline this person plays, whatever
+// the current filter says, but narrowed by the chat filter — a chat that
+// only follows one game genuinely has only one discipline to offer.
+func gameBreakdown(all []scoring.UserPrediction, selected scope, now time.Time) []gameDTO {
+	byChat := scope{ChatID: selected.ChatID}.filterPredictions(all)
+	out := make([]gameDTO, 0, 4)
+	for _, entry := range scoring.SplitByGame(byChat, now) {
+		game := gameDTO{
+			Game:          string(entry.Game),
+			CurrentStreak: entry.Insights.CurrentStreak,
+			Trend:         trendOf(entry.Insights),
+		}
+		game.Predictions, game.Accuracy = recordOf(entry.Insights)
+		out = append(out, game)
+	}
+	return out
+}
+
+// teamExtremes names the teams somebody reads best and worst, from the
+// same ranking. The worst end is read off the bottom rather than resorted,
+// so a team cannot appear in both lists with different numbers.
+func teamExtremes(scoped []scoring.UserPrediction) (best, worst []teamDTO) {
+	ranked := scoring.TeamAccuracyOf(scoped)
+	render := func(teams []scoring.TeamAccuracy) []teamDTO {
+		out := make([]teamDTO, 0, len(teams))
+		for _, team := range teams {
+			out = append(out, teamDTO{
+				Team: team.TeamName, Accuracy: team.AccuracyPercent(), Predictions: team.Predictions,
+			})
+		}
+		return out
+	}
+	// With too few teams to have two ends, there is one list and it is the
+	// ranking: splitting three teams into "best" and "worst" invents a
+	// verdict the sample cannot support.
+	if len(ranked) < 2*scoring.InsightsTeamLimit {
+		half := len(ranked) / 2
+		return render(ranked[:half]), reverse(render(ranked[half:]))
+	}
+	return render(ranked[:scoring.InsightsTeamLimit]), reverse(render(ranked[len(ranked)-scoring.InsightsTeamLimit:]))
+}
+
+// reverse puts the worst-read team first in its own list, so both tables
+// read top-down as "most notable first".
+func reverse(teams []teamDTO) []teamDTO {
+	for i, j := 0, len(teams)-1; i < j; i, j = i+1, j-1 {
+		teams[i], teams[j] = teams[j], teams[i]
+	}
+	return teams
+}
+
+// chatRefs lists the chats the filter bar can choose between.
+func chatRefs(ctx context.Context, active MiniAppActive, userID common.UserID) ([]chatRefDTO, error) {
+	if active == nil {
+		return nil, nil
+	}
+	standings, err := active.UserChatStats(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]chatRefDTO, 0, len(standings))
+	for _, standing := range standings {
+		out = append(out, chatRefDTO{
+			ID: standing.ChatID.Value, Title: standing.ChatTitle, Predictions: standing.Predictions,
+		})
+	}
+	return out, nil
 }
 
 // accessHandler serves GET /api/miniapp/v1/me/access and POST .../request:

@@ -85,7 +85,9 @@ func sampleDashboard() dashboardDTO {
 	body.Form = formDTO{CurrentStreak: 2, BestStreak: 5, Recent: []bool{true, false}}
 	body.Trend = &trendDTO{CurrentAccuracy: 70, PreviousAccuracy: 60, DeltaPP: 10, CurrentSample: 10, PreviousSample: 9}
 	body.Games = []gameDTO{{Game: "CS2", Predictions: 8, Accuracy: 75, CurrentStreak: 2, Trend: body.Trend}}
-	body.Teams = []teamDTO{{Team: "G2", Accuracy: 80, Predictions: 5}}
+	body.Chats = []chatRefDTO{{ID: -100, Title: "Прогнозы", Predictions: 8}}
+	body.Best = []teamDTO{{Team: "G2", Accuracy: 80, Predictions: 5}}
+	body.Worst = []teamDTO{{Team: "NAVI", Accuracy: 20, Predictions: 5}}
 	return body
 }
 
@@ -97,10 +99,36 @@ func sampleHistory() historyDTO {
 	}}}
 }
 
+func sampleActive() activeEntryDTO {
+	starts := time.Now()
+	return activeEntryDTO{
+		Game: "CS2", Event: "IEM", Chat: "Прогнозы", First: "G2", Second: "NAVI",
+		Predicted: "2:0", StartsAt: &starts, ClosesAt: starts, Stream: "https://example.invalid", Live: true,
+	}
+}
+
+func sampleChats() chatsDTO {
+	return chatsDTO{
+		Count: 1,
+		Chats: []chatStandingDTO{{
+			ID: -100, Chat: "Прогнозы", Predictions: 8, Accuracy: 75,
+			Points: 12, Tournaments: 2, Gold: 1, Silver: 1, Bronze: 1,
+		}},
+		Medals: []medalDTO{{Place: 1, Event: "IEM", Chat: "Прогнозы", Game: "CS2", AwardedAt: time.Now()}},
+	}
+}
+
 func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	script := appScript(t)
 	emitted := jsonKeys(t, sampleDashboard())
 	for key := range jsonKeys(t, sampleHistory()) {
+		emitted[key] = true
+	}
+	// The active, chats and medal payloads feed the same page too.
+	for key := range jsonKeys(t, activeDTO{Count: 1, Entries: []activeEntryDTO{sampleActive()}}) {
+		emitted[key] = true
+	}
+	for key := range jsonKeys(t, sampleChats()) {
 		emitted[key] = true
 	}
 	// The public team endpoint feeds the same page.

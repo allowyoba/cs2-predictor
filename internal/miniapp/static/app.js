@@ -49,7 +49,18 @@
 
   // --- data -----------------------------------------------------------
 
-  const RESULT_TEXT = { correct: '✓ Верно', wrong: '× Ошибка' };
+  /**
+   * Three outcomes, not two: calling the winner and calling the exact
+   * scoreline are worth different numbers of points, and showing both as
+   * a plain tick hides the harder one on the screen that lists it.
+   */
+  const RESULT_TEXT = { exact: '🎯 Точный счёт', correct: '✓ Верно', wrong: '× Ошибка' };
+
+  /** resultOf names which of the three a row is. */
+  function resultOf(entry) {
+    if (!entry.correct) return 'wrong';
+    return entry.predicted && entry.predicted === entry.actual ? 'exact' : 'correct';
+  }
 
   const params = new URLSearchParams(location.search);
   /**
@@ -194,7 +205,7 @@
 
     const result = el('div', `match-result ${entry.correct ? 'correct' : 'wrong'}`);
     result.append(el('strong', null, entry.actual),
-      el('span', null, entry.correct ? RESULT_TEXT.correct : RESULT_TEXT.wrong));
+      el('span', null, RESULT_TEXT[resultOf(entry)]));
     row.append(main, result);
     return row;
   }
@@ -212,14 +223,32 @@
   // — the screen says so instead of showing a number that means nothing.
 
   let dashboard = null;
-  /** currentGame is the rail's selection, used when looking up crests. */
-  let currentGame = '';
   /**
-   * analyticsGame is the rail's selection as the analytics screen reads
-   * it: empty means every discipline together, which is what the rail's
-   * own "all" chip selects.
+   * scope is the app's one filter, and the only one. Every screen renders
+   * what it describes and every request carries it, so "CS2" cannot mean
+   * one thing on the history page and another on the awards page — which
+   * is what happened while each screen narrowed its own data.
+   *
+   * Empty game means every discipline; null chat means every chat.
    */
-  let analyticsGame = '';
+  const scope = { game: '', chat: null };
+
+  /** currentGame is which crest map to look in; the rail's pick, or the
+   * only discipline there is. */
+  let currentGame = '';
+
+  /** scopeQuery renders the filter as the query string every endpoint
+   * reads with the same parser. */
+  function scopeQuery(extra = {}) {
+    const query = new URLSearchParams();
+    if (scope.game) query.set('game', scope.game.toUpperCase());
+    if (scope.chat !== null) query.set('chat', String(scope.chat));
+    for (const [key, value] of Object.entries(extra)) {
+      if (value) query.set(key, value);
+    }
+    const rendered = query.toString();
+    return rendered ? `?${rendered}` : '';
+  }
 
   /**
    * GAME_LABELS names a discipline the way people say it. The API answers
@@ -238,6 +267,13 @@
    * coin toss with a label on it.
    */
   const MIN_SEGMENT_SAMPLE = 10;
+
+  /**
+   * MIN_TEAM_SAMPLE mirrors the API's own threshold for naming a team at
+   * all — scoring.InsightsTeamMinPredictions. Stated on screen so an empty
+   * table reads as "not enough yet" rather than "this is broken".
+   */
+  const MIN_TEAM_SAMPLE = 3;
 
   /** applyDashboard overwrites the headline figures with real ones. */
   function applyDashboard(data) {
@@ -282,27 +318,35 @@
    * moved, which is worse than not offering the filter at all.
    */
   function renderAnalytics(data) {
+    // The rail's own options, which the API deliberately does not narrow.
     const all = [...(data.games || [])].filter((g) => g.predictions > 0);
-    const selected = analyticsGame ? all.filter((g) => g.game.toLowerCase() === analyticsGame) : all;
-    const games = selected.length ? selected : all;
+    const games = scope.game ? all.filter((g) => g.game.toLowerCase() === scope.game) : all;
 
-    setText('#analyticsGameLabel', analyticsGame && selected.length
-      ? gameLabel(selected[0].game)
+    setText('#analyticsGameLabel', scope.game && games.length
+      ? gameLabel(games[0].game)
       : (all.length ? 'все игры' : '—'));
     setText('#analyticsGameCount', games.length || '—');
     const total = games.reduce((sum, g) => sum + g.predictions, 0);
     setText('#analyticsCoverage', total ? `${total} прогнозов` : 'нет данных');
 
-    // Best and worst are only worth naming where the sample can support
-    // the claim; below that a percentage is a coin toss with a label.
-    const ranked = games.filter((g) => g.predictions >= MIN_SEGMENT_SAMPLE)
-      .sort((a, b) => b.accuracy - a.accuracy);
-    const best = ranked[0];
-    const worst = ranked.length > 1 ? ranked[ranked.length - 1] : null;
-    setText('#analyticsBest', best ? gameLabel(best.game) : '—');
-    setText('#analyticsBestNote', best ? `${percentText(best.accuracy)} на ${best.predictions}` : `нужно ${MIN_SEGMENT_SAMPLE}+ прогнозов`);
-    setText('#analyticsWorst', worst ? gameLabel(worst.game) : '—');
-    setText('#analyticsWorstNote', worst ? `${percentText(worst.accuracy)} на ${worst.predictions}` : 'пока не с чем сравнивать');
+    // Comparing disciplines needs two of them. With one — or with one
+    // selected — "strongest" and "weakest" name the same thing twice and
+    // the pair says nothing at all.
+    const comparable = all.length > 1 && !scope.game;
+    const overview = document.querySelector('#analyticsOverview');
+    if (overview) overview.dataset.comparing = String(comparable);
+    if (comparable) {
+      // Only worth naming where the sample can support the claim; below
+      // that a percentage is a coin toss with a label on it.
+      const ranked = games.filter((g) => g.predictions >= MIN_SEGMENT_SAMPLE)
+        .sort((a, b) => b.accuracy - a.accuracy);
+      const best = ranked[0];
+      const worst = ranked.length > 1 ? ranked[ranked.length - 1] : null;
+      setText('#analyticsBest', best ? gameLabel(best.game) : '—');
+      setText('#analyticsBestNote', best ? `${percentText(best.accuracy)} на ${best.predictions}` : `нужно ${MIN_SEGMENT_SAMPLE}+ прогнозов`);
+      setText('#analyticsWorst', worst ? gameLabel(worst.game) : '—');
+      setText('#analyticsWorstNote', worst ? `${percentText(worst.accuracy)} на ${worst.predictions}` : 'пока не с чем сравнивать');
+    }
 
     const gamesRoot = document.querySelector('#analyticsGames');
     if (gamesRoot) {
@@ -320,20 +364,31 @@
       if (!games.length) gamesRoot.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
     }
 
-    const teams = document.querySelector('#analyticsTeams');
-    if (teams) {
-      teams.replaceChildren(...(data.teams || []).map((team, index) => {
-        const row = el('div', 'team-row' + (team.accuracy < 50 ? ' low' : ''));
-        row.append(el('span', 'rank-num', String(index + 1).padStart(2, '0')), teamMark(currentGame, team.team));
-        const copy = el('div', 'team-copy');
-        copy.append(el('strong', null, team.team), el('small', null, `${team.predictions} прогнозов`));
-        row.append(copy, el('em', null, percentText(team.accuracy)));
-        return row;
-      }));
-      if (!(data.teams || []).length) {
-        teams.replaceChildren(emptyLine('Команда появится здесь, когда прогнозов по ней станет достаточно.'));
-      }
+    renderTeamTable('#analyticsTeams', data.best_teams || []);
+    renderTeamTable('#analyticsWorstTeams', data.worst_teams || []);
+    // Two tables with nothing in either is one empty state, not two.
+    const teamsEmpty = !(data.best_teams || []).length && !(data.worst_teams || []).length;
+    const worstCard = document.querySelector('#worstTeamsCard');
+    if (worstCard) worstCard.hidden = teamsEmpty || !(data.worst_teams || []).length;
+  }
+
+  /** renderTeamTable draws one end of the team ranking. Both ends use the
+   * same row so a team looks the same wherever it turns up. */
+  function renderTeamTable(selector, teams) {
+    const root = document.querySelector(selector);
+    if (!root) return;
+    if (!teams.length) {
+      root.replaceChildren(emptyLine(`Команда появится здесь, когда прогнозов по ней станет достаточно (от ${MIN_TEAM_SAMPLE}).`));
+      return;
     }
+    root.replaceChildren(...teams.map((team, index) => {
+      const row = el('div', 'team-row' + (team.accuracy < 50 ? ' low' : ''));
+      row.append(el('span', 'rank-num', String(index + 1).padStart(2, '0')), teamMark(currentGame, team.team));
+      const copy = el('div', 'team-copy');
+      copy.append(el('strong', null, team.team), el('small', null, `${team.predictions} прогнозов`));
+      row.append(copy, el('em', null, percentText(team.accuracy)));
+      return row;
+    }));
   }
 
   // --- active predictions ----------------------------------------------
@@ -346,7 +401,7 @@
     const root = document.querySelector('#activeList');
     if (!root) return;
     try {
-      const body = await fetchJSON('/api/miniapp/v1/me/active', { signed: true });
+      const body = await fetchJSON(`/api/miniapp/v1/me/active${scopeQuery()}`, { signed: true });
       renderActive(body.entries || []);
       setText('#activeCount', body.count ? `${body.count}` : '');
     } catch (error) {
@@ -411,19 +466,58 @@
     const root = document.querySelector('#chatStandings');
     if (!root) return;
     try {
-      const body = await fetchJSON('/api/miniapp/v1/me/chats', { signed: true });
+      const body = await fetchJSON(`/api/miniapp/v1/me/chats${scopeQuery()}`, { signed: true });
       renderChats(body.chats || []);
+      renderMedals(body.medals || []);
     } catch (error) {
       if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
       root.replaceChildren(emptyLine('Не удалось загрузить статистику по чатам.'));
     }
   }
 
+  /**
+   * renderMedals says what each medal is for. A count of three golds is a
+   * number; "1st place, IEM Katowice, in Прогнозы, in March" is the thing
+   * the number was standing in for, and it is what somebody actually
+   * remembers winning.
+   */
+  const PLACE_ICON = { 1: '🥇', 2: '🥈', 3: '🥉' };
+  const PLACE_NAME = { 1: '1 место', 2: '2 место', 3: '3 место' };
+
+  function renderMedals(medals) {
+    const root = document.querySelector('#medalList');
+    if (!root) return;
+    if (medals.length === 0) {
+      root.replaceChildren(emptyLine(scopeIsNarrowed()
+        ? 'В выбранной дисциплине и чате медалей пока нет.'
+        : 'Медали появятся, когда в чате завершится турнир с вашими прогнозами.'));
+      return;
+    }
+    root.replaceChildren(...medals.map((medal) => {
+      const row = el('article', 'medal-card place-' + medal.place);
+      row.append(el('div', 'medal-badge', PLACE_ICON[medal.place] || '🏅'));
+      const copy = el('div');
+      copy.append(el('strong', null, medal.event),
+        el('small', null, `${PLACE_NAME[medal.place] || 'призовое место'} · ${medal.chat} · ${gameLabel(medal.game)}`));
+      row.append(copy, el('time', 'medal-when', medalDate(medal.awarded_at)));
+      return row;
+    }));
+  }
+
+  function medalDate(value) {
+    const at = new Date(value);
+    if (Number.isNaN(at.getTime())) return '';
+    return at.toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' });
+  }
+
   function renderChats(chats) {
     const root = document.querySelector('#chatStandings');
     if (!root) return;
     if (chats.length === 0) {
-      root.replaceChildren(emptyLine('Здесь появятся ваши чаты, как только в них завершатся прогнозы.'));
+      chatMedalTotal = 0;
+      root.replaceChildren(emptyLine(scopeIsNarrowed()
+        ? 'В выбранном фильтре завершённых прогнозов пока нет.'
+        : 'Здесь появятся ваши чаты, как только в них завершатся прогнозы.'));
       return;
     }
     chatMedalTotal = chats.reduce((sum, c) => sum + c.gold + c.silver + c.bronze, 0);
@@ -509,16 +603,15 @@
   function renderRecent() {
     const root = document.querySelector('#recentMatches');
     if (!root) return;
-    const selected = analyticsGame
-      ? recentEntries.filter((entry) => entry.game.toLowerCase() === analyticsGame)
-      : recentEntries;
-    if (selected.length === 0) {
-      root.replaceChildren(emptyLine(analyticsGame
-        ? `Пока нет завершённых прогнозов в ${gameLabel(analyticsGame.toUpperCase())}.`
+    // Already narrowed by the API: this is the same feed the history
+    // screen shows, filtered once, on the way here.
+    if (recentEntries.length === 0) {
+      root.replaceChildren(emptyLine(scopeIsNarrowed()
+        ? 'В выбранной дисциплине и чате завершённых прогнозов пока нет.'
         : 'Здесь появятся ваши прогнозы после первых завершённых матчей.'));
       return;
     }
-    root.replaceChildren(...selected.slice(0, RECENT_ON_DASHBOARD).map(matchRow));
+    root.replaceChildren(...recentEntries.slice(0, RECENT_ON_DASHBOARD).map(matchRow));
   }
 
   /** renderAchievements shows the catalogue in full, earned or not, with
@@ -601,7 +694,12 @@
   /** chatMedalTotal is every medal won across chats, for the catalogue. */
   let chatMedalTotal = 0;
 
-  let historyGame = '';
+  /**
+   * historyResult is the one narrowing this screen owns: correct or
+   * wrong. The discipline and the chat are the app's filter and are not
+   * repeated here — the page used to carry its own chips for them right
+   * under the bar that already did the same job.
+   */
   let historyResult = '';
 
   async function loadHistory() {
@@ -609,15 +707,13 @@
     if (!feed) return;
     feed.replaceChildren(emptyLine('Загружаем…'));
     try {
-      const query = new URLSearchParams();
-      if (historyGame) query.set('game', historyGame);
-      if (historyResult) query.set('result', historyResult);
-      const suffix = query.toString() ? `?${query}` : '';
-      const body = await fetchJSON(`/api/miniapp/v1/me/history${suffix}`, { signed: true });
+      const body = await fetchJSON(`/api/miniapp/v1/me/history${scopeQuery({ result: historyResult })}`, { signed: true });
       renderHistory(body.entries || []);
-      // The dashboard's "latest" strip is the same feed, unfiltered — so
-      // it is filled here rather than fetched a second time.
-      if (!historyGame && !historyResult) {
+      // The dashboard's "latest" strip is this same feed under the same
+      // filter, so it is filled here rather than fetched a second time.
+      // Only when no result narrowing is on: "your last five" must not
+      // quietly become "your last five correct ones".
+      if (!historyResult) {
         recentEntries = body.entries || [];
         renderRecent();
       }
@@ -649,11 +745,13 @@
   }
 
   function historyCard(entry) {
+    const result = resultOf(entry);
     const card = el('article', `history-card ${entry.correct ? 'correct' : 'wrong'}`);
     const status = el('div', 'history-status');
+    const badgeClass = { exact: 'exact', correct: 'success', wrong: 'danger' }[result];
     status.append(
       el('span', 'game-mini', gameLabel(entry.game)),
-      el('span', `result-badge ${entry.correct ? 'success' : 'danger'}`, entry.correct ? '✓ Верно' : '× Ошибка'),
+      el('span', `result-badge ${badgeClass}`, RESULT_TEXT[result]),
       el('small', null, entry.points > 0 ? `+${entry.points}` : '0'),
     );
 
@@ -677,40 +775,6 @@
   }
 
   /**
-   * renderHistoryFilters builds one chip per game the person plays — and
-   * fills the sheet's own game select from the same list, so the two
-   * controls can never offer different games.
-   */
-  function renderHistoryFilters(games) {
-    const select = document.querySelector('#filterGame');
-    if (select) {
-      select.replaceChildren(el('option', null, 'Все игры'),
-        ...games.map((g) => {
-          const option = el('option', null, gameLabel(g.game));
-          option.value = g.game;
-          return option;
-        }));
-      select.querySelector('option').value = '';
-    }
-    const rail = document.querySelector('#historyFilters');
-    if (!rail) return;
-    const chips = [{ code: '', label: 'Все' }, ...games.map((g) => ({ code: g.game, label: gameLabel(g.game) }))];
-    rail.replaceChildren(...chips.map((chip) => {
-      const button = el('button', 'chip' + (chip.code === historyGame ? ' selected' : ''), chip.label);
-      button.dataset.filterGame = chip.code;
-      button.addEventListener('click', () => {
-        historyGame = chip.code;
-        const select = document.querySelector('#filterGame');
-        if (select) select.value = chip.code;
-        for (const other of rail.querySelectorAll('.chip')) other.classList.remove('selected');
-        button.classList.add('selected');
-        void loadHistory();
-      });
-      return button;
-    }));
-  }
-
-  /**
    * renderFormStrip draws the last results as a row of marks — the form
    * guide a sports page uses, and the one place on this screen where the
    * recent run is visible as a shape rather than a number.
@@ -726,32 +790,43 @@
   }
 
   /**
-   * renderGameRail replaces the demo rail with the games this person has
-   * actually predicted in. A game nobody has played is not a filter, it is
-   * a dead end with a label on it.
+   * renderFilterBar draws the app's one filter: the disciplines this
+   * person actually predicts in, and the chats they play in. Both live
+   * here and nowhere else — a screen that grows its own copy of either is
+   * how "CS2" started meaning two different things.
+   *
+   * A row with fewer than two options is not a choice, so it is not
+   * rendered: one discipline filtered to itself is furniture.
    */
+  function renderFilterBar(games, chats) {
+    renderGameRail(games);
+    renderChatRail(chats);
+    const wrap = document.querySelector('#filterBar');
+    if (wrap) {
+      wrap.hidden = games.length < 2 && chats.length < 2;
+    }
+  }
+
   function renderGameRail(games) {
-    const wrap = document.querySelector('#gameRailWrap');
     const rail = document.querySelector('#gameRail');
-    if (!rail || !wrap) return;
-    // One discipline is not a choice, and none is not a rail: in both
-    // cases the filter is furniture and the screens speak for themselves.
+    const row = document.querySelector('#gameRailRow');
+    if (!rail || !row) return;
     if (games.length < 2) {
-      wrap.hidden = true;
+      row.hidden = true;
       rail.replaceChildren();
-      analyticsGame = '';
+      scope.game = '';
       currentGame = games[0]?.game.toLowerCase() || '';
       if (currentGame) void loadLogos(currentGame);
       return;
     }
-    wrap.hidden = false;
+    row.hidden = false;
 
     const chips = [{ code: '', label: 'Все игры', accuracy: null },
       ...games.map((g) => ({ code: g.game.toLowerCase(), label: gameLabel(g.game), accuracy: g.accuracy }))];
     rail.replaceChildren(...chips.map((entry) => {
-      const chip = el('button', 'game-chip' + (entry.code === analyticsGame ? ' active' : ''));
+      const chip = el('button', 'game-chip' + (entry.code === scope.game ? ' active' : ''));
       chip.dataset.game = entry.code;
-      chip.setAttribute('aria-pressed', String(entry.code === analyticsGame));
+      chip.setAttribute('aria-pressed', String(entry.code === scope.game));
       chip.append(el('i', 'game-dot'), el('span', null, entry.label));
       if (entry.accuracy !== null) chip.append(el('small', null, percentText(entry.accuracy)));
       chip.addEventListener('click', () => setGame(entry.code));
@@ -760,6 +835,37 @@
     // Every game's crests, not just the selected one: the feeds below mix
     // disciplines, and a row from another game would come out bare.
     for (const game of games) void loadLogos(game.game.toLowerCase());
+  }
+
+  function renderChatRail(chats) {
+    const rail = document.querySelector('#chatRail');
+    const row = document.querySelector('#chatRailRow');
+    if (!rail || !row) return;
+    if (chats.length < 2) {
+      row.hidden = true;
+      rail.replaceChildren();
+      scope.chat = null;
+      return;
+    }
+    row.hidden = false;
+
+    const chips = [{ id: null, label: 'Все чаты' },
+      ...chats.map((c) => ({ id: c.id, label: c.title, count: c.predictions }))];
+    rail.replaceChildren(...chips.map((entry) => {
+      const active = entry.id === scope.chat;
+      const chip = el('button', 'chat-chip' + (active ? ' active' : ''));
+      chip.setAttribute('aria-pressed', String(active));
+      chip.append(el('span', null, entry.label));
+      if (entry.count) chip.append(el('small', null, String(entry.count)));
+      chip.addEventListener('click', () => setChat(entry.id));
+      return chip;
+    }));
+  }
+
+  /** scopeIsNarrowed says whether an empty screen is empty because of the
+   * filter — which is a different sentence from "you have no history". */
+  function scopeIsNarrowed() {
+    return Boolean(scope.game) || scope.chat !== null;
   }
 
   /** showAccessNotice replaces the screen with why it is empty. */
@@ -779,9 +885,9 @@
 
   async function loadDashboard() {
     try {
-      const data = await fetchJSON('/api/miniapp/v1/me/dashboard', { signed: true });
+      const data = await fetchJSON(`/api/miniapp/v1/me/dashboard${scopeQuery()}`, { signed: true });
       applyDashboard(data);
-      renderHistoryFilters(data.games || []);
+      renderFilterBar((data.games || []).filter((g) => g.predictions > 0), data.chats || []);
       void loadHistory();
       void loadActive();
       void loadChats();
@@ -798,27 +904,31 @@
   }
 
   /**
-   * setGame switches which discipline the screens are about. There is no
-   * data of its own to load: the dashboard already carries every game's
-   * record, and this only changes what is highlighted and which crests are
-   * fetched.
+   * setGame and setChat change the one filter and reload everything
+   * through it. Reloading rather than re-slicing in the browser: the
+   * totals, the streaks and the team tables are all computed over the
+   * filtered set, and recomputing half of them here is how two screens
+   * start disagreeing.
    */
   async function setGame(game) {
-    analyticsGame = game;
+    if (scope.game === game) return;
+    scope.game = game;
     currentGame = game || currentGame;
     document.documentElement.dataset.game = game || 'all';
-    for (const chip of document.querySelectorAll('.game-chip')) {
-      const active = (chip.dataset.game || '') === game;
-      chip.classList.toggle('active', active);
-      chip.setAttribute('aria-pressed', String(active));
-    }
     haptic();
-    // Crests arrive after the first paint: the screens are readable with
-    // initials, and re-rendering once they land avoids holding anything
-    // hostage to a network round trip.
-    if (game) await loadLogos(game);
-    renderRecent();
-    if (dashboard) renderAnalytics(dashboard);
+    await refresh();
+  }
+
+  async function setChat(chatID) {
+    if (scope.chat === chatID) return;
+    scope.chat = chatID;
+    haptic();
+    await refresh();
+  }
+
+  /** refresh reloads every screen under the current filter. */
+  async function refresh() {
+    await loadDashboard();
   }
 
   // --- navigation -----------------------------------------------------
@@ -882,13 +992,7 @@
     document.querySelector('#filterButton')?.addEventListener('click', open);
     document.querySelector('#closeSheet')?.addEventListener('click', close);
     document.querySelector('#applyFilters')?.addEventListener('click', () => {
-      historyGame = document.querySelector('#filterGame')?.value || '';
       historyResult = document.querySelector('#filterResult')?.value || '';
-      // The chips and the sheet are two views of one filter: whichever was
-      // touched last, both end up showing the same thing.
-      for (const chip of document.querySelectorAll('#historyFilters .chip')) {
-        chip.classList.toggle('selected', (chip.dataset.filterGame || '') === historyGame);
-      }
       void loadHistory();
       close();
     });
@@ -925,9 +1029,6 @@
     for (const button of navButtons) button.addEventListener('click', () => showScreen(button.dataset.target));
     for (const button of document.querySelectorAll('[data-go]')) {
       button.addEventListener('click', () => showScreen(button.dataset.go));
-    }
-    for (const chip of document.querySelectorAll('.game-chip')) {
-      chip.addEventListener('click', () => setGame(chip.dataset.game));
     }
     initFilters();
     initSheet();

@@ -19,14 +19,14 @@ import (
 
 type stubActive struct {
 	active    []scoring.ActivePrediction
-	medals    []scoring.MedalTally
+	medals    []scoring.EventMedal
 	standings []scoring.UserChatStanding
 }
 
 func (s *stubActive) ActivePredictions(context.Context, common.UserID, int) ([]scoring.ActivePrediction, error) {
 	return s.active, nil
 }
-func (s *stubActive) UserMedals(context.Context, common.UserID) ([]scoring.MedalTally, error) {
+func (s *stubActive) UserMedals(context.Context, common.UserID) ([]scoring.EventMedal, error) {
 	return s.medals, nil
 }
 func (s *stubActive) UserChatStats(context.Context, common.UserID) ([]scoring.UserChatStanding, error) {
@@ -91,7 +91,11 @@ func TestMiniappChats_ReportsMedalsWhereTheyWereWon(t *testing.T) {
 			{ChatID: first, ChatTitle: "Друзья", Points: 40, CorrectPredictions: 8, Predictions: 10, Tournaments: 2},
 			{ChatID: second, ChatTitle: "Работа", Points: 5, CorrectPredictions: 1, Predictions: 4, Tournaments: 1},
 		},
-		medals: []scoring.MedalTally{{ChatID: first, ChatTitle: "Друзья", Medals: scoring.MedalCount{Gold: 2, Bronze: 1}}},
+		medals: []scoring.EventMedal{
+			{ChatID: first, ChatTitle: "Друзья", EventName: "Major", Game: competition.GameCS2, Place: 1},
+			{ChatID: first, ChatTitle: "Друзья", EventName: "Minor", Game: competition.GameCS2, Place: 1},
+			{ChatID: first, ChatTitle: "Друзья", EventName: "Cup", Game: competition.GameCS2, Place: 3},
+		},
 	}
 	handler := chatsHandler(miniAppTestDeps(&stubAccess{}, &stubMiniAppStats{}, 7), active)
 

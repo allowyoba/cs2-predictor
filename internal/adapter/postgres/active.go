@@ -40,6 +40,14 @@ func (r *ScoringRepository) ActivePredictions(ctx context.Context, userID common
 		  LEFT JOIN team t2 ON t2.id = mt2.team_id
 		 WHERE v.user_id = $1
 		   AND m.status IN ('NOT_STARTED', 'RUNNING')
+		   -- A prediction on a tournament the chat has since dropped, or in
+		   -- a game it has switched off, is not something anybody is still
+		   -- waiting on: the chat stopped following it, and the poll will
+		   -- never be talked about again in the room it belongs to.
+		   AND EXISTS (SELECT 1 FROM event_subscription es
+		                WHERE es.chat_id = p.chat_id AND es.event_id = m.event_id AND es.active)
+		   AND EXISTS (SELECT 1 FROM chat_enabled_game ceg
+		                WHERE ceg.chat_id = p.chat_id AND ceg.game_id = e.game_id)
 		 ORDER BY m.scheduled_at ASC NULLS LAST
 		 LIMIT $2`, userID.Value, limit)
 	if err != nil {
@@ -88,34 +96,32 @@ func streamFor(raw []byte, streamLanguage, locale string) string {
 	return ""
 }
 
-// UserMedals counts the placings the bot has already awarded, per chat.
-// Read rather than recomputed: a medal is a decision that was made at the
-// time, and rebuilding it from today's standings would quietly rewrite
-// history whenever the scoring changed.
-func (r *ScoringRepository) UserMedals(ctx context.Context, userID common.UserID) ([]scoring.MedalTally, error) {
+// UserMedals lists the placings the bot has already awarded, newest
+// first. Read rather than recomputed: a medal is a decision that was made
+// at the time, and rebuilding it from today's standings would quietly
+// rewrite history whenever the scoring changed.
+func (r *ScoringRepository) UserMedals(ctx context.Context, userID common.UserID) ([]scoring.EventMedal, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx, `
-		SELECT c.id, c.title,
-		       COUNT(*) FILTER (WHERE em.place = 1),
-		       COUNT(*) FILTER (WHERE em.place = 2),
-		       COUNT(*) FILTER (WHERE em.place = 3)
+		SELECT c.id, c.title, e.name, g.code, em.place, em.awarded_at
 		  FROM event_medal em
 		  JOIN telegram_chat c ON c.id = em.chat_id
+		  JOIN tournament_event e ON e.id = em.event_id
+		  JOIN game g ON g.id = e.game_id
 		 WHERE em.user_id = $1
-		 GROUP BY c.id, c.title
-		 ORDER BY COUNT(*) FILTER (WHERE em.place = 1) DESC, c.title`, userID.Value)
+		 ORDER BY em.awarded_at DESC, em.place`, userID.Value)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []scoring.MedalTally
+	var out []scoring.EventMedal
 	for rows.Next() {
-		var tally scoring.MedalTally
-		if err := rows.Scan(&tally.ChatID.Value, &tally.ChatTitle,
-			&tally.Medals.Gold, &tally.Medals.Silver, &tally.Medals.Bronze); err != nil {
+		var medal scoring.EventMedal
+		if err := rows.Scan(&medal.ChatID.Value, &medal.ChatTitle, &medal.EventName,
+			&medal.Game, &medal.Place, &medal.AwardedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, tally)
+		out = append(out, medal)
 	}
 	return out, rows.Err()
 }

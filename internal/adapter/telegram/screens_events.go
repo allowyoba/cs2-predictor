@@ -41,13 +41,17 @@ func (h *UpdateHandler) menu(ctx context.Context, target replyTarget, settings c
 		rows = [][]InlineButton{
 			{button(h.Texts.Get("menu.stats", locale), "menu:stats"), button(h.Texts.Get("menu.upcoming", locale), "menu:upcoming")},
 			{button(h.Texts.Get("menu.events", locale), "menu:events"), button(h.Texts.Get("menu.settings", locale), "menu:settings")},
-			{button(h.Texts.Get("menu.rules", locale), "menu:rules"), button(h.Texts.Get("menu.help", locale), "menu:help")},
-			{button(h.Texts.Get("dm.change_group", locale), "manage:chats")},
+			{button(h.Texts.Get("menu.help", locale), "menu:help")},
+			// The same destination every other screen reaches with the
+			// standard back button. It used to be labelled "🔄 Сменить
+			// группу" here and "← Назад" one screen over, which made one
+			// action look like two.
+			{h.backButton(locale, "manage:chats")},
 		}
 	default:
 		rows = [][]InlineButton{
 			{button(h.Texts.Get("menu.stats", locale), "menu:stats"), button(h.Texts.Get("menu.upcoming", locale), "menu:upcoming")},
-			{button(h.Texts.Get("menu.rules", locale), "menu:rules"), button(h.Texts.Get("menu.help", locale), "menu:help")},
+			{button(h.Texts.Get("menu.help", locale), "menu:help")},
 		}
 		if link, ok := h.dmDeepLink(settings.ChatID); ok {
 			rows = append(rows, []InlineButton{urlButton(h.Texts.Get("menu.manage_in_dm", locale), link)})
@@ -78,7 +82,7 @@ func (h *UpdateHandler) menu(ctx context.Context, target replyTarget, settings c
 func (h *UpdateHandler) readOnlyGroupMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("menu.stats", settings.Locale), "menu:stats"), button(h.Texts.Get("menu.upcoming", settings.Locale), "menu:upcoming")},
-		{button(h.Texts.Get("menu.rules", settings.Locale), "menu:rules"), button(h.Texts.Get("menu.help", settings.Locale), "menu:help")},
+		{button(h.Texts.Get("menu.help", settings.Locale), "menu:help")},
 		{h.backButton(settings.Locale, "pstats:menu")},
 	}
 	text := "🎮 " + bold(escapeHTML(settings.Title)) + "\n" + h.Texts.Get("menu.view_context", settings.Locale)

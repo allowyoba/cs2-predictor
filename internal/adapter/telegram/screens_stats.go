@@ -311,7 +311,14 @@ func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scori
 	}); nav != nil {
 		rows = append(rows, nav)
 	}
-	rows = append(rows, []InlineButton{h.backButton(settings.Locale, backData)})
+	// The scoring rules belong on the board that shows the scores. This is
+	// where "why do I have that many points" is actually asked, and the
+	// answer used to live one menu up, next to the command reference,
+	// where nobody looking at a table would think to go.
+	rows = append(rows, []InlineButton{
+		button(h.Texts.Get("menu.rules", settings.Locale), rulesTarget(backData)),
+		h.backButton(settings.Locale, backData),
+	})
 	return &InlineKeyboard{InlineKeyboard: rows}
 }
 

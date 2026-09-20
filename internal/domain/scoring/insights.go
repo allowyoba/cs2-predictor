@@ -31,6 +31,9 @@ type UserPrediction struct {
 	// reading Dota 2 says nothing about reading Counter-Strike — and one
 	// merged number hides both.
 	Game competition.GameCode
+	// ChatID is which room the prediction was made in, so the same filter
+	// that narrows a leaderboard can narrow somebody's own form.
+	ChatID common.ChatID
 }
 
 // GameInsights is one game's slice of a person's form, with the game it
@@ -223,6 +226,17 @@ func recentForm(ordered []UserPrediction) []bool {
 // sample size and then on name, so the same history always renders the
 // same order — a list that reshuffles between views reads as broken.
 func teamAccuracy(ordered []UserPrediction) []TeamAccuracy {
+	teams := TeamAccuracyOf(ordered)
+	if len(teams) > InsightsTeamLimit {
+		teams = teams[:InsightsTeamLimit]
+	}
+	return teams
+}
+
+// TeamAccuracyOf is the same ranking with nothing cut off. A screen that
+// names who somebody reads best and who they read worst needs both ends of
+// this list, and the truncated view above only ever has one of them.
+func TeamAccuracyOf(ordered []UserPrediction) []TeamAccuracy {
 	totals := map[common.TeamID]*TeamAccuracy{}
 	for _, p := range ordered {
 		if p.TeamName == "" {
@@ -254,9 +268,6 @@ func teamAccuracy(ordered []UserPrediction) []TeamAccuracy {
 		}
 		return teams[a].TeamName < teams[b].TeamName
 	})
-	if len(teams) > InsightsTeamLimit {
-		teams = teams[:InsightsTeamLimit]
-	}
 	return teams
 }
 

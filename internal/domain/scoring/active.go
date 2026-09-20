@@ -39,11 +39,22 @@ type ActivePrediction struct {
 // matches than this is looking at a schedule, not a list.
 const ActivePredictionsMax = 50
 
-// MedalTally is one chat's medals for one person.
-type MedalTally struct {
+// EventMedal is one placing the bot awarded: which tournament, in which
+// chat, and when.
+//
+// A bare count answers "how many medals do I have" and nothing else. The
+// question somebody actually has in front of a trophy shelf is which
+// tournament each one is for — a gold in a four-person chat's minor and a
+// gold in a Major are not the same object, and a number that adds them
+// together describes neither.
+type EventMedal struct {
 	ChatID    common.ChatID
 	ChatTitle string
-	Medals    MedalCount
+	EventName string
+	Game      competition.GameCode
+	// Place is 1, 2 or 3.
+	Place     int
+	AwardedAt time.Time
 }
 
 // ActiveRepository reads the not-yet-settled half of somebody's record,
@@ -52,7 +63,7 @@ type ActiveRepository interface {
 	// ActivePredictions lists this person's votes on matches that have not
 	// been played yet, soonest first.
 	ActivePredictions(ctx context.Context, userID common.UserID, limit int) ([]ActivePrediction, error)
-	// UserMedals counts this person's tournament placings per chat — the
-	// medals already awarded by the bot, not a score recomputed here.
-	UserMedals(ctx context.Context, userID common.UserID) ([]MedalTally, error)
+	// UserMedals lists this person's tournament placings, newest first —
+	// the medals already awarded by the bot, not a score recomputed here.
+	UserMedals(ctx context.Context, userID common.UserID) ([]EventMedal, error)
 }

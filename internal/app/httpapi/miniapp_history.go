@@ -79,16 +79,23 @@ func historyHandler(deps MiniAppDeps, history MiniAppHistory) http.Handler {
 	})
 }
 
-// historyFilter is what the screen's chips and sheet narrow the feed by.
+// historyFilter is the scope every screen shares, plus the one narrowing
+// that belongs to this screen alone: correct or wrong. The discipline and
+// the chat are NOT read here — the page used to carry its own chips for
+// them beside the app's filter bar, two controls for one question.
 type historyFilter struct {
-	game   string
+	scope  scope
 	result string
 	limit  int
 }
 
 func parseHistoryFilter(r *http.Request) (historyFilter, error) {
+	selected, err := scopeFrom(r)
+	if err != nil {
+		return historyFilter{}, err
+	}
 	filter := historyFilter{
-		game:   strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("game"))),
+		scope:  selected,
 		result: strings.ToLower(strings.TrimSpace(r.URL.Query().Get("result"))),
 		limit:  miniappHistoryLimit,
 	}
@@ -149,7 +156,7 @@ func buildHistory(bets []scoring.UserBet, filter historyFilter) historyDTO {
 }
 
 func (f historyFilter) matches(bet scoring.UserBet) bool {
-	if f.game != "" && string(bet.Game) != f.game {
+	if !f.scope.keepsBet(bet) {
 		return false
 	}
 	switch f.result {

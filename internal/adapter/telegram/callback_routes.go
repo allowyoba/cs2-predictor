@@ -230,9 +230,7 @@ var callbackRoutes = []callbackRoute{
 	}},
 	{match: exact("settings:logos"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsLogos},
 	{match: exact("settings:notify"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsNotify},
-	{match: prefixed("settings:notify:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-		return routeSettingsNotify(h, ctx, cb, target, settings, strings.TrimPrefix(data, "settings:notify:"))
-	}},
+	{match: prefixed("settings:notify:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsNotifyToggle},
 	{match: exact("settings:stream_language"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamLanguage},
 	{match: exact("settings:games"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).gamesView)},
 	{match: prefixed("settings:games:toggle:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsGamesToggle},
@@ -779,17 +777,21 @@ func routeSettingsLogos(h *UpdateHandler, ctx context.Context, cb *CallbackQuery
 	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 }
 
-// routeSettingsNotify opens the chat's notification switchboard, or flips
-// one of its switches when the callback names a kind.
+// routeSettingsNotify opens the chat's notification switchboard. The
+// callback data is the whole "settings:notify" string, not an empty
+// remainder — every exact route here is handed what it matched.
 func routeSettingsNotify(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-	if data == "" {
-		return true, h.chatNotificationsMenu(ctx, target, settings.ChatID, settings.Locale)
-	}
-	h.logAdminAction(ctx, settings.ChatID, &cb.From, "notify", data)
+	return true, h.chatNotificationsMenu(ctx, target, settings.ChatID, settings.Locale)
+}
+
+// routeSettingsNotifyToggle flips one of those switches.
+func routeSettingsNotifyToggle(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	kind := strings.TrimPrefix(data, "settings:notify:")
+	h.logAdminAction(ctx, settings.ChatID, &cb.From, "notify", kind)
 	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get("notify.chat.title", settings.Locale)); err != nil {
 		return false, err
 	}
-	return true, h.toggleChatNotification(ctx, target, settings.ChatID, settings.Locale, data)
+	return true, h.toggleChatNotification(ctx, target, settings.ChatID, settings.Locale, kind)
 }
 
 // routeSettingsStreamLanguage cycles the broadcast language between the

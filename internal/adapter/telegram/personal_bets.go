@@ -79,17 +79,29 @@ func (h *UpdateHandler) privateBetsMenu(ctx context.Context, target replyTarget,
 	return h.respond(ctx, target, b.String(), &InlineKeyboard{InlineKeyboard: rows})
 }
 
-// betLine renders one settled bet: a ✅/❌ result marker, the matchup, the
+// betLine renders one settled bet: a 🎯/✅/❌ result marker, the matchup, the
 // predicted scoreline against the actual one, and the points it earned (if
 // any — a correct pick can still earn 0 if the awards for that poll haven't
 // settled, so this stays silent rather than claiming "+0"). The chat name is
 // only shown on the all-chats screen — on a chat-scoped one it would repeat
 // the same chat on every single row.
-func (h *UpdateHandler) betLine(bet scoring.UserBet, locale common.LocaleCode, hideChatName bool, zone *time.Location) string {
-	marker := "❌"
-	if bet.Correct {
-		marker = "✅"
+// betMarker distinguishes the two ways a bet can be right. Calling the
+// winner is worth a point; calling the scoreline exactly is worth several,
+// and is the thing people actually boast about — one glyph for both made
+// the harder result invisible on the very screen it is listed.
+func betMarker(bet scoring.UserBet) string {
+	switch {
+	case bet.Correct && bet.PredictedScore == bet.ActualScore:
+		return "🎯"
+	case bet.Correct:
+		return "✅"
+	default:
+		return "❌"
 	}
+}
+
+func (h *UpdateHandler) betLine(bet scoring.UserBet, locale common.LocaleCode, hideChatName bool, zone *time.Location) string {
+	marker := betMarker(bet)
 	matchup := fmt.Sprintf("%s — %s", escapeHTML(truncate(bet.FirstTeamName, 24)), escapeHTML(truncate(bet.SecondTeamName, 24)))
 	line := marker + " " + bold(matchup)
 	line += "\n" + h.Texts.Get("bets.line_scores", locale, bet.PredictedScore.String(), bet.ActualScore.String())
