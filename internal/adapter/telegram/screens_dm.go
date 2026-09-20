@@ -143,6 +143,12 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
 		{button(h.Texts.Get("menu.help", locale), "pstats:help")},
 	}
+	// The Mini App opens on top of this dashboard rather than replacing
+	// it: the bot stays the place predictions are made, and the app is
+	// where the history behind them is read.
+	if h.MiniAppURL != "" {
+		rows = append(rows, []InlineButton{webAppButton(h.Texts.Get("private.miniapp", locale), h.MiniAppURL)})
+	}
 	if backRow != nil {
 		rows = append(rows, backRow)
 	}

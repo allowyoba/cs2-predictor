@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
@@ -28,7 +29,17 @@ func (h *UpdateHandler) personalInsights() (scoring.PersonalInsightsRepository, 
 	return repo, nil
 }
 
-func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+// renderPersonalInsights draws "My form" for one slice of somebody's
+// history: everything they have predicted, or one game of it.
+//
+// Somebody who follows two games is keeping two separate records — reading
+// Dota 2 well says nothing about reading Counter-Strike — so a merged
+// number is not a summary, it is an average of two unrelated things. The
+// games are taken from what the person has actually predicted rather than
+// from any chat's settings, which is what keeps the picker free of rows
+// that would open on "no data yet".
+func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target replyTarget, userID common.UserID,
+	locale common.LocaleCode, game competition.GameCode) error {
 	repo, err := h.personalInsights()
 	if err != nil {
 		return err
@@ -37,13 +48,62 @@ func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target reply
 	if err != nil {
 		return err
 	}
-	insights := scoring.BuildPersonalInsights(predictions, h.Clock.Now())
-
-	back := InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "pstats:menu")}}}
-	if !insights.HasData() {
-		return h.respond(ctx, target, h.Texts.Get("insights.empty", locale), &back)
+	perGame := scoring.SplitByGame(predictions, h.Clock.Now())
+	// A game with nothing in it cannot be selected from the picker, so a
+	// stale button falls back to the overall view rather than an empty one.
+	if game != "" && !hasGame(perGame, game) {
+		game = ""
 	}
-	return h.respond(ctx, target, h.insightsText(insights, locale), &back)
+
+	selected := predictions
+	if game != "" {
+		selected = filterByGame(predictions, game)
+	}
+	insights := scoring.BuildPersonalInsights(selected, h.Clock.Now())
+	keyboard := h.insightsKeyboard(locale, perGame, game)
+	if !insights.HasData() {
+		return h.respond(ctx, target, h.Texts.Get("insights.empty", locale), keyboard)
+	}
+	return h.respond(ctx, target, h.insightsText(insights, locale, game, perGame), keyboard)
+}
+
+// insightsKeyboard renders the game picker above the back button, and only
+// when there is something to pick between: one game means one record, and
+// a filter with a single option is furniture.
+func (h *UpdateHandler) insightsKeyboard(locale common.LocaleCode, perGame []scoring.GameInsights,
+	selected competition.GameCode) *InlineKeyboard {
+	var rows [][]InlineButton
+	if len(perGame) > 1 {
+		row := []InlineButton{button(
+			statsFilterLabel(selected == "", h.Texts.Get("insights.all_games", locale)), "pstats:insights")}
+		for _, entry := range perGame {
+			row = append(row, button(
+				statsFilterLabel(selected == entry.Game, h.Texts.Get(gameShortLabelKey(entry.Game), locale)),
+				"pstats:insights:"+string(entry.Game)))
+		}
+		rows = append(rows, row)
+	}
+	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})
+	return &InlineKeyboard{InlineKeyboard: rows}
+}
+
+func hasGame(perGame []scoring.GameInsights, game competition.GameCode) bool {
+	for _, entry := range perGame {
+		if entry.Game == game {
+			return true
+		}
+	}
+	return false
+}
+
+func filterByGame(predictions []scoring.UserPrediction, game competition.GameCode) []scoring.UserPrediction {
+	out := make([]scoring.UserPrediction, 0, len(predictions))
+	for _, p := range predictions {
+		if p.Game == game {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // insightsText renders "My Form" as a small visual profile card rather than
@@ -51,9 +111,16 @@ func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target reply
 // guide in colored squares, a streak framed by how hot it actually is, the
 // 30-day trend (only when there's an earlier window to compare against —
 // see PersonalInsights.Trend), and a medal-ranked list of best-read teams.
-func (h *UpdateHandler) insightsText(insights scoring.PersonalInsights, locale common.LocaleCode) string {
+func (h *UpdateHandler) insightsText(insights scoring.PersonalInsights, locale common.LocaleCode,
+	game competition.GameCode, perGame []scoring.GameInsights) string {
 	var b strings.Builder
-	b.WriteString(bold(h.Texts.Get("insights.title", locale)))
+	title := h.Texts.Get("insights.title", locale)
+	if game != "" {
+		// The card looks identical whichever slice it is about, so the
+		// slice has to be in its title.
+		title += " · " + h.Texts.Get(gameShortLabelKey(game), locale)
+	}
+	b.WriteString(bold(title))
 
 	correct := 0
 	for _, won := range insights.RecentForm {
@@ -90,12 +157,39 @@ func (h *UpdateHandler) insightsText(insights scoring.PersonalInsights, locale c
 			insights.Recent.AccuracyPercent(), insights.Recent.Predictions))
 	}
 
+	if game == "" {
+		b.WriteString(h.perGameBreakdown(locale, perGame))
+	}
+
 	if len(insights.Teams) > 0 {
 		b.WriteString("\n\n" + bold(h.Texts.Get("insights.teams_heading", locale)))
 		for i, team := range insights.Teams {
 			fmt.Fprintf(&b, "\n%s %s — <b>%d%%</b> (%d)",
 				medalFor(i+1), escapeHTML(truncate(team.TeamName, 30)), team.AccuracyPercent(), team.Predictions)
 		}
+	}
+	return b.String()
+}
+
+// perGameBreakdown lists one line per game on the combined view: which
+// records the numbers above are actually an average of. Nobody should have
+// to tap through to discover that the two halves disagree. Empty for
+// somebody who plays a single game, where the breakdown would repeat the
+// card it sits under.
+func (h *UpdateHandler) perGameBreakdown(locale common.LocaleCode, perGame []scoring.GameInsights) string {
+	if len(perGame) < 2 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n" + bold(h.Texts.Get("insights.by_game_heading", locale)))
+	for _, entry := range perGame {
+		summary := entry.Insights.Recent
+		if summary.Predictions == 0 {
+			summary = entry.Insights.Previous
+		}
+		fmt.Fprintf(&b, "\n%s — <b>%d%%</b> (%d)",
+			escapeHTML(h.Texts.Get(gameShortLabelKey(entry.Game), locale)),
+			summary.AccuracyPercent(), summary.Predictions)
 	}
 	return b.String()
 }

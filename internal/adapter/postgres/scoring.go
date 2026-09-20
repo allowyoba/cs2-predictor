@@ -408,6 +408,7 @@ func (r *ScoringRepository) UserPredictions(ctx context.Context, userID common.U
 	rows, err := executor(ctx, r.pool).Query(ctx, `
 WITH picks AS (
     SELECT COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
+           g.code AS game,
            CASE
              WHEN po.first_score > po.second_score THEN mt1.team_id
              WHEN po.second_score > po.first_score THEN mt2.team_id
@@ -420,6 +421,8 @@ WITH picks AS (
       JOIN match_poll p ON p.id = v.poll_id
       JOIN poll_option po ON po.poll_id = v.poll_id AND po.option_index = v.option_index
       JOIN esport_match m ON m.id = p.match_id
+      JOIN tournament_event e ON e.id = m.event_id
+      JOIN game g ON g.id = e.game_id
       LEFT JOIN match_team mt1 ON mt1.match_id = m.id AND mt1.position = 1
       LEFT JOIN match_team mt2 ON mt2.match_id = m.id AND mt2.position = 2
      WHERE v.user_id = $1
@@ -428,6 +431,7 @@ WITH picks AS (
        AND m.second_score IS NOT NULL
 )
 SELECT p.played_at,
+       p.game,
        p.predicted_team_id,
        COALESCE(t.name, ''),
        p.predicted_team_id = p.actual_team_id AS correct
@@ -446,7 +450,7 @@ SELECT p.played_at,
 	var out []scoring.UserPrediction
 	for rows.Next() {
 		var p scoring.UserPrediction
-		if err := rows.Scan(&p.PlayedAt, &p.TeamID.Value, &p.TeamName, &p.Correct); err != nil {
+		if err := rows.Scan(&p.PlayedAt, &p.Game, &p.TeamID.Value, &p.TeamName, &p.Correct); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

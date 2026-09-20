@@ -88,6 +88,10 @@ esac
             "APIFY_MAX_TEAMS": "",
             "EVENT_EVE_LEAD": "",
             "DATABASE_POOL_SIZE": "",
+            # Defaulted from CADDY_DOMAIN rather than left blank: the Mini
+            # App is served from the same host, and a deployment that hosts
+            # it should not have to name the address twice.
+            "MINIAPP_URL": "https://bot.example.test/app/",
         }
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],

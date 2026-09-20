@@ -460,10 +460,26 @@ type InlineButton struct {
 	Text         string  `json:"text"`
 	CallbackData *string `json:"callback_data,omitempty"`
 	URL          *string `json:"url,omitempty"`
+	// WebApp opens a Telegram Mini App inside the client instead of
+	// leaving for a browser. Telegram only accepts it on buttons in a
+	// private chat, and only over HTTPS.
+	WebApp *WebAppInfo `json:"web_app,omitempty"`
+}
+
+// WebAppInfo is Telegram's own pointer to a Mini App's page.
+type WebAppInfo struct {
+	URL string `json:"url"`
 }
 
 type InlineKeyboard struct {
 	InlineKeyboard [][]InlineButton `json:"inline_keyboard"`
+}
+
+// webAppButton opens the Mini App. Private chats only: Telegram refuses a
+// web_app button in a group, and a button that silently does nothing is
+// worse than no button.
+func webAppButton(text, url string) InlineButton {
+	return InlineButton{Text: text, WebApp: &WebAppInfo{URL: url}}
 }
 
 func button(text, callbackData string) InlineButton {
