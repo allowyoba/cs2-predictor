@@ -98,7 +98,7 @@
    * the only credential this app has — there is no token of ours to store,
    * and nothing to leak if the page is opened anywhere else.
    */
-  async function fetchJSON(path, { timeoutMs = 6000, signed = false, method = 'GET' } = {}) {
+  async function fetchJSON(path, { timeoutMs = 6000, signed = false, method = 'GET', body } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const headers = { Accept: 'application/json' };
@@ -107,8 +107,13 @@
       if (!initData) throw new UnauthenticatedError();
       headers.Authorization = `tma ${initData}`;
     }
+    const options = { method, signal: controller.signal, headers };
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(body);
+    }
     try {
-      const response = await fetch(`${API_BASE}${path}`, { method, signal: controller.signal, headers });
+      const response = await fetch(`${API_BASE}${path}`, options);
       if (response.status === 401) throw new UnauthenticatedError();
       if (response.status === 403) throw new ForbiddenError(await response.json().catch(() => ({})));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -139,7 +144,9 @@
       const body = await fetchJSON(`/api/miniapp/v1/teams?game=${encodeURIComponent(game)}&logos=${logoSource}`);
       const byName = logos.get(game);
       for (const team of body.teams || []) {
-        if (team.name && team.logo) byName.set(team.name.toLowerCase(), team.logo);
+        if (!team.name || !team.logo) continue;
+        byName.set(team.name.toLowerCase(), team.logo);
+        if (team.chip) chips.set(team.name.toLowerCase(), team.chip);
       }
     } catch (error) {
       console.warn('team crests unavailable, falling back to initials', error);
@@ -187,20 +194,40 @@
   }
 
   /** teamMark renders one team's crest with an initials fallback. */
+  /**
+   * teamMark draws a team's crest, or its initials when there is no crest
+   * to draw.
+   *
+   * One or the other, never both. The initials sit behind the image as a
+   * fallback, so until the image has actually painted they must stay
+   * visible — and the moment it has, they must not: a crest is rarely a
+   * filled square, and letters showing around its edges and through its
+   * transparent parts read as a rendering fault.
+   */
   function teamMark(game, name) {
     const wrap = el('span', 'team-logo');
     const initials = el('b', null, initialsOf(name));
     const url = logoFor(game, name);
     if (url) {
       const img = el('img');
-      img.src = url;
       img.alt = '';
       img.loading = 'lazy';
       img.decoding = 'async';
+      const settle = (loaded) => wrap.classList.toggle('has-crest', loaded);
+      img.addEventListener('load', () => settle(true));
       // A crest that fails to load leaves the initials in place rather
       // than a broken-image glyph.
-      img.addEventListener('error', () => img.remove());
+      img.addEventListener('error', () => {
+        img.remove();
+        settle(false);
+      });
+      const chip = chips.get(name?.toLowerCase?.() || '');
+      if (chip) wrap.classList.add('chip-' + chip);
       wrap.append(img);
+      // Set last: a cached image can fire load before the handler exists.
+      img.src = url;
+      // Cached images may have completed before any of this ran.
+      if (img.complete && img.naturalWidth > 0) settle(true);
     }
     wrap.append(initials);
     return wrap;
@@ -911,6 +938,7 @@
       void loadHistory();
       void loadActive();
       void loadChats();
+      void loadSettings();
       const notice = document.querySelector('#accessNotice');
       if (notice) notice.hidden = true;
     } catch (error) {
@@ -951,12 +979,194 @@
     await loadDashboard();
   }
 
+
+  // --- settings ---------------------------------------------------------
+  //
+  // The same settings the bot offers in a private conversation. Two
+  // owners, never mixed: what a person sets for themselves, and what a
+  // manager sets for one chat. Each control writes immediately — a
+  // settings screen with a Save button is a screen you can leave in a
+  // state you did not save — and rolls back visibly if the write fails.
+
+  const NOTIFY_LABELS = {
+    recaps: 'Итоги матчей',
+    event_recaps: 'Итоги турниров',
+    reminders: 'Напоминания о голосовании',
+    new_events: 'Новые турниры',
+    event_eve: 'Турнир стартует завтра',
+    event_finished: 'Итоги турнира',
+    digests: 'Итоги месяца и года',
+    streams: 'Ссылка на трансляцию',
+  };
+
+  const GAME_TOGGLE_LABELS = { CS2: 'CS2', DOTA2: 'Dota 2' };
+
+  let settings = null;
+
+  async function loadSettings() {
+    const root = document.querySelector('#personalSettings');
+    if (!root) return;
+    try {
+      settings = await fetchJSON('/api/miniapp/v1/me/settings', { signed: true });
+      renderSettings(settings);
+    } catch (error) {
+      if (error instanceof ForbiddenError) showAccessNotice('forbidden');
+      else if (error instanceof UnauthenticatedError) showAccessNotice('unauthenticated');
+      root.replaceChildren(emptyLine('Не удалось загрузить настройки.'));
+    }
+  }
+
+  function renderSettings(data) {
+    const personal = document.querySelector('#personalSettings');
+    if (personal) {
+      personal.replaceChildren(
+        choiceRow('Язык', data.personal.locale === 'EN' ? 'English' : 'Русский',
+          () => patchPersonal({ locale: data.personal.locale === 'EN' ? 'RU' : 'EN' })),
+        choiceRow('Логотипы команд', data.personal.logo_source === 'hltv' ? 'HLTV' : 'провайдер',
+          () => patchPersonal({ logo_source: data.personal.logo_source === 'hltv' ? 'provider' : 'hltv' })),
+        choiceRow('Часовой пояс', data.personal.timezone || 'как в чате', null,
+          'Меняется в боте: /timezone Area/City'),
+        choiceRow('Имя в списках', data.personal.nickname || 'из Telegram', null,
+          'Меняется в боте: Настройки → Моё имя в списках'),
+        ...data.personal.notify.map((entry) => switchRow(entry, (on) =>
+          patchPersonal({ notify: { kind: entry.kind, on } }))),
+      );
+    }
+
+    const block = document.querySelector('#chatSettingsBlock');
+    const chats = document.querySelector('#chatSettings');
+    if (!block || !chats) return;
+    // Nothing to manage is not an empty section: it is a section that does
+    // not belong on this person's screen at all.
+    if (!data.chats.length) {
+      block.hidden = true;
+      return;
+    }
+    block.hidden = false;
+    chats.replaceChildren(...data.chats.map(chatSettingsCard));
+  }
+
+  function chatSettingsCard(chat) {
+    const card = el('article', 'settings-card');
+    card.append(el('h3', null, chat.title || 'Без названия'));
+
+    const patch = (body) => patchChat(chat.id, body);
+    card.append(
+      choiceRow('Язык', chat.locale === 'EN' ? 'English' : 'Русский',
+        () => patch({ locale: chat.locale === 'EN' ? 'RU' : 'EN' })),
+      choiceRow('Язык трансляций', chat.stream_language === 'EN' ? 'English' : 'Русский',
+        () => patch({ stream_language: chat.stream_language === 'EN' ? 'RU' : 'EN' })),
+      choiceRow('Флаги команд', chat.prefer_hltv_flags ? 'HLTV' : 'провайдер',
+        () => patch({ prefer_hltv_flags: !chat.prefer_hltv_flags })),
+      choiceRow('Турниры по умолчанию', chat.top_tier_only ? 'только топ' : 'все',
+        () => patch({ top_tier_only: !chat.top_tier_only })),
+      choiceRow('Тихие часы', quietText(chat), null, 'Меняются в боте: Настройки → Тихие часы'),
+      choiceRow('Часовой пояс', chat.timezone, null, 'Меняется в боте: Настройки → Часовой пояс'),
+    );
+
+    for (const game of chat.games) {
+      const label = GAME_TOGGLE_LABELS[game.game] || game.game;
+      card.append(switchRow({ kind: game.game, on: game.enabled }, (on) =>
+        patch({ game: { game: game.game, enabled: on } }), label));
+      // Auto-subscribing to a game the chat does not follow is a setting
+      // with nothing to act on, so it only appears once the game is on.
+      if (game.enabled) {
+        card.append(switchRow({ kind: game.game + ':auto', on: game.auto_subscribe }, (on) =>
+          patch({ game: { game: game.game, auto_subscribe: on } }), label + ': добавлять топ-турниры сразу'));
+      }
+    }
+    for (const entry of chat.notify) {
+      card.append(switchRow(entry, (on) => patch({ notify: { kind: entry.kind, on } })));
+    }
+    return card;
+  }
+
+  function quietText(chat) {
+    if (chat.quiet_from < 0 || chat.quiet_to < 0) return 'не заданы';
+    const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+    return hhmm(chat.quiet_from) + ' — ' + hhmm(chat.quiet_to);
+  }
+
+  /** choiceRow is a setting with a value. Without onTap it is read-only and
+   * says where it is changed instead of looking broken. */
+  function choiceRow(label, value, onTap, hint) {
+    const row = el(onTap ? 'button' : 'div', 'setting-row' + (onTap ? '' : ' is-static'));
+    const copy = el('div');
+    copy.append(el('strong', null, label));
+    if (hint) copy.append(el('small', null, hint));
+    row.append(copy, el('span', 'setting-value', value));
+    if (onTap) {
+      row.addEventListener('click', () => {
+        haptic();
+        void onTap();
+      });
+    }
+    return row;
+  }
+
+  /** switchRow is a boolean. It flips on screen at once and flips back if
+   * the write fails: a control that lies about what was saved is worse
+   * than a slow one. */
+  function switchRow(entry, write, labelOverride) {
+    const row = el('button', 'setting-row setting-toggle' + (entry.on ? ' is-on' : ''));
+    row.setAttribute('aria-pressed', String(entry.on));
+    row.append(el('strong', null, labelOverride || NOTIFY_LABELS[entry.kind] || entry.kind));
+    row.append(el('i', 'setting-switch'));
+    row.addEventListener('click', async () => {
+      const next = !row.classList.contains('is-on');
+      row.classList.toggle('is-on', next);
+      row.setAttribute('aria-pressed', String(next));
+      haptic();
+      try {
+        await write(next);
+      } catch (_) {
+        row.classList.toggle('is-on', !next);
+        row.setAttribute('aria-pressed', String(!next));
+      }
+    });
+    return row;
+  }
+
+  async function patchPersonal(body) {
+    settings = await fetchJSON('/api/miniapp/v1/me/settings', { signed: true, method: 'PATCH', body });
+    renderSettings(settings);
+    // The crest source is one of these, and it decides which pictures the
+    // rest of the app asks for.
+    if (settings.personal.logo_source && settings.personal.logo_source !== logoSource) {
+      logoSource = settings.personal.logo_source;
+      logos.clear();
+      await refresh();
+    }
+  }
+
+  async function patchChat(chatID, body) {
+    const updated = await fetchJSON(`/api/miniapp/v1/chats/${chatID}/settings`, { signed: true, method: 'PATCH', body });
+    settings.chats = settings.chats.map((c) => (c.id === chatID ? updated : c));
+    renderSettings(settings);
+  }
+
   // --- navigation -----------------------------------------------------
 
   const screens = [...document.querySelectorAll('.screen')];
   const navButtons = [...document.querySelectorAll('.bottom-nav button')];
 
-  function showScreen(name) {
+  /**
+   * screenStack remembers how somebody got here, one step at a time.
+   *
+   * Telegram's back button used to go straight to the overview from
+   * anywhere, so Profile → Settings → Back skipped the screen it was
+   * opened from. A back button that lands somewhere you were not is worse
+   * than none: it teaches people not to trust it.
+   *
+   * Only the tabs reset it — tapping a tab is starting somewhere, not
+   * going deeper.
+   */
+  const screenStack = [];
+
+  function showScreen(name, { deeper = false } = {}) {
+    const current = screens.find((screen) => screen.classList.contains('is-active'))?.dataset.screen;
+    if (deeper && current && current !== name) screenStack.push(current);
+    else if (!deeper) screenStack.length = 0;
     for (const screen of screens) screen.classList.toggle('is-active', screen.dataset.screen === name);
     for (const button of navButtons) {
       const active = button.dataset.target === name;
@@ -979,7 +1189,7 @@
     const back = tg?.BackButton;
     if (!back) return;
     try {
-      if (name === 'dashboard') back.hide();
+      if (name === 'dashboard' && screenStack.length === 0) back.hide();
       else back.show();
     } catch (_) {
       /* older clients have no BackButton */
@@ -1041,14 +1251,16 @@
       /* nothing to sync on a plain browser */
     }
     try {
-      tg?.BackButton?.onClick?.(() => showScreen('dashboard'));
+      // One step back, to wherever this screen was opened from.
+      tg?.BackButton?.onClick?.(() => showScreen(screenStack.pop() || 'dashboard'));
     } catch (_) {
       /* older clients have no BackButton */
     }
 
     for (const button of navButtons) button.addEventListener('click', () => showScreen(button.dataset.target));
+    // A link into another screen goes deeper; a tab does not.
     for (const button of document.querySelectorAll('[data-go]')) {
-      button.addEventListener('click', () => showScreen(button.dataset.go));
+      button.addEventListener('click', () => showScreen(button.dataset.go, { deeper: true }));
     }
     initFilters();
     initSheet();

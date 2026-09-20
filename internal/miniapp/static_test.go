@@ -58,3 +58,22 @@ func readStatic(t *testing.T, name string) string {
 	}
 	return string(data)
 }
+
+// The initials behind a crest are a fallback, not a backdrop. A crest is
+// rarely a filled square, so letters showing around its edges — and
+// through the transparent parts of a PNG — read as a rendering fault. The
+// page must hide them once an image has actually painted, and bring them
+// back if it fails.
+func TestCrestAndInitialsAreNeverDrawnTogether(t *testing.T) {
+	style := readStatic(t, "static/styles.css")
+	script := readStatic(t, "static/app.js")
+
+	if !strings.Contains(style, ".team-logo.has-crest b{display:none}") {
+		t.Error("nothing hides the initials once a crest is on screen")
+	}
+	for _, needed := range []string{`img.addEventListener('load'`, `img.addEventListener('error'`, "img.complete"} {
+		if !strings.Contains(script, needed) {
+			t.Errorf("teamMark does not handle %s — the fallback is then either always or never shown", needed)
+		}
+	}
+}

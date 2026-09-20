@@ -64,6 +64,13 @@ of its own. It is **closed by default for everybody**: a person asks for access 
 it, because the app reads somebody's entire prediction history and a surface like that opens to nobody until
 somebody decides otherwise. Launches are verified against Telegram's own signature — see `docs/miniapp/SECURITY.md`.
 
+**Settings live in both places.** Everything the bot offers in a private conversation is in the app as well, split the
+same way it is there: what you set for yourself, and what you set for each chat you manage — never mixed on one screen.
+Every control writes immediately and rolls back visibly if the write fails, because a settings screen with a Save
+button is one you can leave in a state you did not save. The right to change a chat is re-checked on every write rather
+than carried over from what the list said when the screen opened. Appointing a moderator and the change log stay in the
+bot: the first is done by replying to somebody's message, and the second is a record rather than a setting.
+
 **A personal stats breakdown** — current streak, best streak ever, your form over the last 10 predictions, accuracy
 broken down per team, and how the last 30 days compare to the 30 before that.
 

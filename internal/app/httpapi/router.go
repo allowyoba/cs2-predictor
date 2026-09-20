@@ -10,6 +10,7 @@ import (
 	"cs2predictor/internal/app"
 	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/miniapp"
+	"cs2predictor/internal/platform/common"
 )
 
 // Package httpapi is the bot's HTTP surface: the Telegram webhook route
@@ -64,6 +65,12 @@ type RouterDeps struct {
 	// Logos serves the mirrored crests; nil leaves the app drawing
 	// initials, which is its fallback for a team with no picture anyway.
 	Logos MiniAppLogos
+	// MiniAppSettings, Switches and MiniAppAuthz back the settings screens:
+	// the same settings the bot offers in a private chat, offered in the
+	// app as well. Any of them missing turns those endpoints off.
+	MiniAppSettings MiniAppSettings
+	Switches        common.NotifySwitchboard
+	MiniAppAuthz    MiniAppAuthorizer
 
 	// Version/Commit/BuildTime are reported by GET /version — set via
 	// -ldflags at build time (see Makefile and docker/Dockerfile),
@@ -106,6 +113,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("GET /api/miniapp/v1/me/active", instrument("miniapp_active", activeHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/chats", instrument("miniapp_chats", chatsHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/history", instrument("miniapp_history", historyHandler(deps.MiniApp, deps.MiniAppHistory)))
+	mux.Handle("GET /api/miniapp/v1/me/settings", instrument("miniapp_settings", settingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
+	mux.Handle("PATCH /api/miniapp/v1/me/settings", instrument("miniapp_settings_patch", patchSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
+	mux.Handle("PATCH /api/miniapp/v1/chats/{id}/settings", instrument("miniapp_chat_settings_patch", patchChatSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches, deps.MiniAppAuthz)))
 	mux.Handle("GET /api/miniapp/v1/me/access", instrument("miniapp_access", accessHandler(deps.MiniApp)))
 	mux.Handle("POST /api/miniapp/v1/me/access", instrument("miniapp_access_request", accessHandler(deps.MiniApp)))
 	// The Mini App's own page, served from the binary. See

@@ -118,6 +118,22 @@ func sampleChats() chatsDTO {
 	}
 }
 
+func sampleSettings() settingsDTO {
+	return settingsDTO{
+		Personal: personalSettingsDTO{
+			Locale: "RU", Timezone: "Europe/Moscow", Nickname: "Аня", LogoSource: "hltv",
+			Notify: []switchDTO{{Kind: "recaps", On: true}},
+		},
+		Chats: []chatSettingsDTO{{
+			ID: -100, Title: "Прогнозы", Locale: "RU", Timezone: "Europe/Moscow",
+			StreamLanguage: "RU", TopTierOnly: true, PreferHLTVFlag: true,
+			QuietFrom: 60, QuietTo: 480, CanManage: true,
+			Games:  []gameToggleDTO{{Game: "CS2", Enabled: true, AutoSubscribe: true}},
+			Notify: []switchDTO{{Kind: "digests", On: true}},
+		}},
+	}
+}
+
 func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	script := appScript(t)
 	emitted := jsonKeys(t, sampleDashboard())
@@ -131,9 +147,12 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	for key := range jsonKeys(t, sampleChats()) {
 		emitted[key] = true
 	}
+	for key := range jsonKeys(t, sampleSettings()) {
+		emitted[key] = true
+	}
 	// The public team endpoint feeds the same page.
 	for key := range jsonKeys(t, teamsResponse{Teams: []miniappTeam{{
-		ID: "1", Name: "G2", Location: "EU", Logo: "u", LogoProvider: "u", LogoHLTV: "u",
+		ID: "1", Name: "G2", Location: "EU", Logo: "u", LogoProvider: "u", LogoHLTV: "u", Chip: "dark",
 	}}}) {
 		emitted[key] = true
 	}

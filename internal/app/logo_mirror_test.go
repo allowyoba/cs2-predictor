@@ -47,6 +47,10 @@ func (f *fakeLogoCache) LogoDigests(context.Context) (map[common.TeamID]map[enri
 	return nil, nil
 }
 
+func (f *fakeLogoCache) LogoChips(context.Context) (map[common.TeamID]map[enrichment.Source]bool, error) {
+	return nil, nil
+}
+
 func newMirror(cache *fakeLogoCache) *LogoMirror {
 	return &LogoMirror{
 		Cache: cache, Client: http.DefaultClient, Clock: common.SystemUTCClock(),

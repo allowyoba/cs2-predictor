@@ -62,15 +62,16 @@ func (r *EnrichmentRepository) PendingLogos(ctx context.Context, limit int) ([]e
 
 func (r *EnrichmentRepository) SaveLogo(ctx context.Context, logo enrichment.TeamLogo) error {
 	_, err := executor(ctx, r.pool).Exec(ctx, `
-		INSERT INTO team_logo_cache (team_id, source, source_url, content_type, bytes, digest, etag, last_modified, fetched_at, checked_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $9)
+		INSERT INTO team_logo_cache (team_id, source, source_url, content_type, bytes, digest, etag, last_modified, is_light, fetched_at, checked_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10, $10)
 		ON CONFLICT (team_id, source) DO UPDATE SET
 		  source_url = excluded.source_url, content_type = excluded.content_type,
 		  bytes = excluded.bytes, digest = excluded.digest,
 		  etag = excluded.etag, last_modified = excluded.last_modified,
+		  is_light = excluded.is_light,
 		  fetched_at = excluded.fetched_at, checked_at = excluded.checked_at`,
 		logo.TeamID.Value, string(logo.Source), logo.SourceURL, logo.ContentType,
-		logo.Bytes, logo.Digest, logo.ETag, logo.LastModified, logo.FetchedAt)
+		logo.Bytes, logo.Digest, logo.ETag, logo.LastModified, logo.IsLight, logo.FetchedAt)
 	return err
 }
 
@@ -127,10 +128,10 @@ func (r *EnrichmentRepository) FindLogo(ctx context.Context, teamID common.TeamI
 	var logo enrichment.TeamLogo
 	logo.TeamID, logo.Source = teamID, source
 	err := executor(ctx, r.pool).QueryRow(ctx,
-		`SELECT source_url, content_type, bytes, digest, fetched_at
+		`SELECT source_url, content_type, bytes, digest, is_light, fetched_at
 		   FROM team_logo_cache WHERE team_id = $1 AND source = $2`,
 		teamID.Value, string(source)).
-		Scan(&logo.SourceURL, &logo.ContentType, &logo.Bytes, &logo.Digest, &logo.FetchedAt)
+		Scan(&logo.SourceURL, &logo.ContentType, &logo.Bytes, &logo.Digest, &logo.IsLight, &logo.FetchedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -138,6 +139,33 @@ func (r *EnrichmentRepository) FindLogo(ctx context.Context, teamID common.TeamI
 		return nil, err
 	}
 	return &logo, nil
+}
+
+// LogoChips reports which marks are light, for the chip behind them. Only
+// the measured ones appear: an absent entry means "not measured", which
+// the app renders as it always did rather than as a guess.
+func (r *EnrichmentRepository) LogoChips(ctx context.Context) (map[common.TeamID]map[enrichment.Source]bool, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT team_id, source, is_light FROM team_logo_cache WHERE is_light IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[common.TeamID]map[enrichment.Source]bool{}
+	for rows.Next() {
+		var teamID common.TeamID
+		var source string
+		var light bool
+		if err := rows.Scan(&teamID.Value, &source, &light); err != nil {
+			return nil, err
+		}
+		if out[teamID] == nil {
+			out[teamID] = map[enrichment.Source]bool{}
+		}
+		out[teamID][enrichment.Source(source)] = light
+	}
+	return out, rows.Err()
 }
 
 // LogoDigests reads every digest without the bytes behind them: the teams

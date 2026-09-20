@@ -35,7 +35,12 @@ type TeamLogo struct {
 	// image.
 	ETag         string
 	LastModified string
-	FetchedAt    time.Time
+	// IsLight says whether the mark itself is light or dark, so the app
+	// can put the opposite chip behind it. Nil when the format could not
+	// be measured — an SVG, say — and the app then falls back rather than
+	// guessing, since a wrong chip is what this is here to avoid.
+	IsLight   *bool
+	FetchedAt time.Time
 }
 
 // TeamLogoNeed is one crest the mirror has not got, or has got from a
@@ -65,6 +70,10 @@ type TeamLogoCache interface {
 	// LogoDigests returns the digest of every cached crest, so the API can
 	// build immutable URLs without reading the bytes it is not serving.
 	LogoDigests(ctx context.Context) (map[common.TeamID]map[Source]string, error)
+	// LogoChips reports, per team and source, whether the mark is light.
+	// Read alongside the digests so the teams endpoint can tell the app
+	// which chip to draw without loading a single image.
+	LogoChips(ctx context.Context) (map[common.TeamID]map[Source]bool, error)
 	// StaleLogos lists crests worth re-checking: teams with a match about
 	// to be played whose picture has not been checked since notBefore.
 	//
