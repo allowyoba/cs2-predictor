@@ -274,7 +274,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	case data == "pstats:insights":
 		err = h.renderPersonalInsights(ctx, target, userID, locale)
 	case data == "pstats:help":
-		err = h.helpView(ctx, target, locale, "pstats:menu")
+		err = h.helpView(ctx, target, locale, "pstats:menu", true)
 	case data == "pstats:rename":
 		err = h.renameMenu(ctx, target, userID, locale)
 	case data == "idea:menu":

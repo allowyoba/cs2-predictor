@@ -110,12 +110,21 @@ var callbackRoutes = []callbackRoute{
 		return false, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 	}},
 	{match: exact("menu:upcoming"), handle: simple((*UpdateHandler).upcoming)},
-	{match: exact("menu:rules"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-		kb := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}}
+	{match: prefixed("menu:rules"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		// The rules are reachable from more than one place now (the menu,
+		// and the help screen in either surface), so the screen carries
+		// where it came from rather than always returning to the group
+		// menu — which, from a private chat, is a menu the reader was
+		// never on.
+		back := strings.TrimPrefix(strings.TrimPrefix(data, "menu:rules"), ":")
+		if back == "" {
+			back = "menu:main"
+		}
+		kb := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, back)}}}
 		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("rules.text", settings.Locale)), kb)
 	}},
 	{match: exact("menu:help"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-		return false, h.helpView(ctx, target, settings.Locale, "menu:main")
+		return false, h.helpView(ctx, target, settings.Locale, "menu:main", cb.Message.Chat.Type == "private")
 	}},
 	{match: prefixed("stats:p:"), handle: routeStatsPage},
 	{match: exact("stats:all"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {

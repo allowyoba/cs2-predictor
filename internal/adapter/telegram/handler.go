@@ -474,7 +474,7 @@ func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 		case strings.HasPrefix(text, "/moderator remove"):
 			cmdErr = h.changeModerator(ctx, msg, settings, false)
 		case strings.HasPrefix(text, "/help"):
-			cmdErr = h.helpView(ctx, sendTarget(chatID, msg.MessageThreadID), settings.Locale, "menu:main")
+			cmdErr = h.helpView(ctx, sendTarget(chatID, msg.MessageThreadID), settings.Locale, "menu:main", false)
 		}
 	}
 	return h.handleCommandError(ctx, settings, msg.MessageThreadID, text, cmdErr)
@@ -524,7 +524,7 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 	case strings.HasPrefix(text, "/provider_status"):
 		return h.providerStatusView(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/help"):
-		return h.helpView(ctx, sendTarget(chatID, nil), locale, "pstats:menu")
+		return h.helpView(ctx, sendTarget(chatID, nil), locale, "pstats:menu", true)
 	case !strings.HasPrefix(text, "/") && h.isSuggestion(msg, locale):
 		// Same reasoning as the rename reply below: user-scoped, so it
 		// must work in every DM rather than only with a managed-chat
