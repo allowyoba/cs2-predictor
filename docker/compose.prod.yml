@@ -50,6 +50,9 @@ services:
       # app.Config.TeamMatchOperatorChatIDs). Empty is a valid, supported
       # value (the feature simply has no root operators configured).
       DEPLOY_NOTIFY_CHAT_IDS: ${DEPLOY_NOTIFY_CHAT_IDS:-}
+      # Where the Mini App is served from (Caddy serves /app/ from disk).
+      # Empty hides its button; Telegram only accepts an https:// address.
+      MINIAPP_URL: ${MINIAPP_URL:-}
       # Optional team-data enrichment. Every one of these is safe to leave
       # unset: an empty ${VAR:-} substitution reaches the bot as an empty
       # string, and internal/app/config.go's env* helpers treat "" as
@@ -91,6 +94,9 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The Mini App's static files, installed next to the compose file by
+      # the deploy. Read-only: Caddy serves them and never writes here.
+      - ../miniapp:/srv/miniapp:ro
       # Certificates live here. Removing this volume means re-requesting
       # them from Let's Encrypt, which is rate limited.
       - caddy-data:/data

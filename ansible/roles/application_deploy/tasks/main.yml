@@ -150,6 +150,7 @@
           APIFY_MAX_TEAMS={{ lookup('env', 'APIFY_MAX_TEAMS') | default('') }}
           EVENT_EVE_LEAD={{ lookup('env', 'EVENT_EVE_LEAD') | default('') }}
           DATABASE_POOL_SIZE={{ lookup('env', 'DATABASE_POOL_SIZE') | default('') }}
+          MINIAPP_URL={{ lookup('env', 'MINIAPP_URL') | default('https://' ~ lookup('env', 'CADDY_DOMAIN') ~ '/app/', true) }}
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
         mode: '0600'
@@ -206,6 +207,32 @@
             group: "{{ app_user }}"
             mode: '0640'
           loop: [compose.prod.yml, Caddyfile]
+          register: application_deploy_config
+
+        - name: Look for the Mini App in the selected release
+          # A rollback to a release from before the Mini App existed has
+          # no such directory, and that must not fail the deploy — the
+          # whole point of a rollback is that it works.
+          ansible.builtin.stat:
+            path: "{{ release_dir }}/miniapp-prototype"
+          delegate_to: localhost
+          become: false
+          register: application_deploy_miniapp_source
+
+        - name: Install the Mini App's static files
+          # Caddy serves these straight from disk (see docker/Caddyfile):
+          # a Telegram Mini App is a web page Telegram opens in its own
+          # WebView, so it needs a real HTTPS address before it can be
+          # attached to the bot at all.
+          when: application_deploy_miniapp_source.stat.exists
+          ansible.builtin.copy:
+            src: "{{ release_dir }}/miniapp-prototype/"
+            dest: "{{ app_dir }}/miniapp/"
+            owner: "{{ app_user }}"
+            group: "{{ app_user }}"
+            mode: '0640'
+            directory_mode: '0750'
+          register: application_deploy_miniapp
 
         - name: Validate production configuration without printing secrets
           ansible.builtin.command:
@@ -221,6 +248,32 @@
           ansible.builtin.command:
             argv: "{{ compose_argv + ['up', '-d', '--pull', 'missing', '--remove-orphans', '--wait', '--wait-timeout', compose_wait_timeout | string] }}"
           changed_when: true
+
+        # The Caddyfile is a bind mount, not part of any image, so Compose
+        # has nothing to notice when its contents change: "up -d" leaves
+        # the running container exactly as it was, still serving the old
+        # routes. A release that adds a path therefore deploys green and
+        # answers 404 — which is how the Mini App endpoint shipped and was
+        # unreachable from outside.
+        - name: Reload the reverse proxy when its configuration changed
+          when: application_deploy_config is changed or (application_deploy_miniapp is defined and application_deploy_miniapp is changed)
+          block:
+            - name: Ask Caddy to reload its own configuration
+              ansible.builtin.command:
+                argv: "{{ compose_argv + ['exec', '-T', 'caddy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'] }}"
+              register: application_deploy_caddy_reload
+              changed_when: true
+              failed_when: false
+
+            - name: Restart the reverse proxy when it could not reload
+              # A reload failure is not fatal in itself — a restart picks
+              # the configuration up too, at the cost of a moment of
+              # refused connections, which is better than serving stale
+              # routes until somebody notices.
+              when: application_deploy_caddy_reload.rc != 0
+              ansible.builtin.command:
+                argv: "{{ compose_argv + ['restart', 'caddy'] }}"
+              changed_when: true
 
         - name: Record the successfully installed release
           ansible.builtin.template:

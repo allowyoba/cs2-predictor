@@ -122,6 +122,9 @@ jobs:
           DB_BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.DB_BACKUP_S3_SECRET_ACCESS_KEY }}
           EVENT_EVE_LEAD: ${{ vars.EVENT_EVE_LEAD }}
           DATABASE_POOL_SIZE: ${{ vars.DATABASE_POOL_SIZE }}
+          # Optional: defaults to https://<CADDY_DOMAIN>/app/, where the
+          # deploy installs the Mini App's own files.
+          MINIAPP_URL: ${{ vars.MINIAPP_URL }}
           ANSIBLE_HOST_KEY_CHECKING: 'True'
         run: make deploy
 

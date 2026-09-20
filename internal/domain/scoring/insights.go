@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -25,6 +26,47 @@ type UserPrediction struct {
 	TeamID   common.TeamID
 	TeamName string
 	Correct  bool
+	// Game is which discipline this prediction was made in. Somebody who
+	// follows two games is keeping two separate records — being good at
+	// reading Dota 2 says nothing about reading Counter-Strike — and one
+	// merged number hides both.
+	Game competition.GameCode
+}
+
+// GameInsights is one game's slice of a person's form, with the game it
+// belongs to attached so a screen can label it.
+type GameInsights struct {
+	Game     competition.GameCode
+	Insights PersonalInsights
+}
+
+// SplitByGame buckets predictions per game and builds each bucket's own
+// insights, ordered by how much somebody actually plays each one — a game
+// with four predictions does not belong above the one with four hundred.
+//
+// Games with too little history to say anything are still returned: the
+// screen decides whether to show "not enough yet", which is a friendlier
+// answer than a game silently missing from a list.
+func SplitByGame(predictions []UserPrediction, now time.Time) []GameInsights {
+	byGame := map[competition.GameCode][]UserPrediction{}
+	for _, p := range predictions {
+		if p.Game == "" {
+			continue
+		}
+		byGame[p.Game] = append(byGame[p.Game], p)
+	}
+	out := make([]GameInsights, 0, len(byGame))
+	for game, rows := range byGame {
+		out = append(out, GameInsights{Game: game, Insights: BuildPersonalInsights(rows, now)})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left, right := len(byGame[out[i].Game]), len(byGame[out[j].Game])
+		if left != right {
+			return left > right
+		}
+		return out[i].Game < out[j].Game
+	})
+	return out
 }
 
 // TeamAccuracy is how well someone reads one particular team.

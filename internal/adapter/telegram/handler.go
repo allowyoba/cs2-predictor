@@ -145,6 +145,11 @@ type UpdateHandler struct {
 	// Feedback backs the Ideas screen (see suggestions.go). Nil turns the
 	// channel off: the button says so rather than failing on use.
 	Feedback *app.FeedbackService
+
+	// MiniAppURL is where the Mini App is served from. Empty hides its
+	// button entirely — a deployment that does not host the page must not
+	// offer a button that opens nothing.
+	MiniAppURL string
 }
 
 // requireManager wraps chat.AuthorizationService.RequireManager: on success

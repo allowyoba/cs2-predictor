@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -84,6 +85,24 @@ func navigationScreens() []screenUnderTest {
 			},
 		},
 		{
+			name: "personal form", back: "pstats:menu", private: true,
+			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
+				h.Scoring = stubScoringWithInsights{}
+				return h.renderPersonalInsights(context.Background(), target, common.UserID{Value: 7}, s.Locale, "")
+			},
+		},
+		{
+			// Opened from the system panel, so it returns there — this one
+			// used to drop the reader into the personal dashboard, a
+			// section they were never in.
+			name: "team match review", back: "hub:system", private: true,
+			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
+				h.TeamMatchOperatorChatIDs = []int64{7}
+				h.TeamMatches = emptyTeamMatches{}
+				return h.teamMatchQueueMenu(context.Background(), target, common.UserID{Value: 7}, s.Locale, 0)
+			},
+		},
+		{
 			name: "ideas", back: "pstats:settings", private: true,
 			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
 				return h.suggestionMenu(context.Background(), target, s.Locale)
@@ -139,4 +158,13 @@ func TestNavigation_EveryScreenEndsWithOneBackButtonOneLevelUp(t *testing.T) {
 			}
 		})
 	}
+}
+
+// emptyTeamMatches is a review queue with nothing in it — enough for the
+// navigation contract, which is about the way out of a screen rather than
+// what it lists.
+type emptyTeamMatches struct{ enrichment.TeamMatchRepository }
+
+func (emptyTeamMatches) ListPending(context.Context, int) ([]enrichment.TeamMatchRequest, error) {
+	return nil, nil
 }
