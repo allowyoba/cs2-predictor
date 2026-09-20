@@ -192,20 +192,38 @@
   }
 
   /** teamMark renders one team's crest with an initials fallback. */
+  /**
+   * teamMark draws a team's crest, or its initials when there is no crest
+   * to draw.
+   *
+   * One or the other, never both. The initials sit behind the image as a
+   * fallback, so until the image has actually painted they must stay
+   * visible — and the moment it has, they must not: a crest is rarely a
+   * filled square, and letters showing around its edges and through its
+   * transparent parts read as a rendering fault.
+   */
   function teamMark(game, name) {
     const wrap = el('span', 'team-logo');
     const initials = el('b', null, initialsOf(name));
     const url = logoFor(game, name);
     if (url) {
       const img = el('img');
-      img.src = url;
       img.alt = '';
       img.loading = 'lazy';
       img.decoding = 'async';
+      const settle = (loaded) => wrap.classList.toggle('has-crest', loaded);
+      img.addEventListener('load', () => settle(true));
       // A crest that fails to load leaves the initials in place rather
       // than a broken-image glyph.
-      img.addEventListener('error', () => img.remove());
+      img.addEventListener('error', () => {
+        img.remove();
+        settle(false);
+      });
       wrap.append(img);
+      // Set last: a cached image can fire load before the handler exists.
+      img.src = url;
+      // Cached images may have completed before any of this ran.
+      if (img.complete && img.naturalWidth > 0) settle(true);
     }
     wrap.append(initials);
     return wrap;
