@@ -3476,6 +3476,9 @@ func TestOutbox_DeferHoldsWithoutSpendingAnAttempt(t *testing.T) {
 	}
 	if attempts != 0 {
 		t.Fatalf("attempts = %d, want the hold to have cost none", attempts)
+	}
+}
+
 // The game filter has to reach the SQL, and it has to compose with a date
 // range rather than fight it for placeholders — hand-numbered $2/$3 is
 // exactly what would break there.

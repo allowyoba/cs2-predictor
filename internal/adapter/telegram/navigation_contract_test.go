@@ -60,6 +60,18 @@ func navigationScreens() []screenUnderTest {
 			},
 		},
 		{
+			name: "quiet hours", back: "menu:settings",
+			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
+				return h.quietHoursView(context.Background(), target, s)
+			},
+		},
+		{
+			name: "personal timezone", back: "pstats:settings", private: true,
+			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
+				return h.userTimezoneView(context.Background(), target, common.UserID{Value: 7}, s.Locale)
+			},
+		},
+		{
 			name: "tournaments", back: "menu:main",
 			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
 				return h.eventMenu(context.Background(), target, s)
