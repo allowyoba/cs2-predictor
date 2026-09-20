@@ -79,6 +79,11 @@ type TeamIdentity struct {
 	// which makes it the best CS2 source there is: the same feed that
 	// decides the ranking also decides what the team looks like.
 	LogoURL string
+	// Country is the country the ranking feed names for this team, in the
+	// feed's own words ("Russia", "Denmark") rather than as a code. HLTV
+	// publishes one for every team it ranks; resolve it with CountryCode
+	// before showing a flag.
+	Country string
 }
 
 // RankedTeam is one row of a provider's ranking feed, still in the

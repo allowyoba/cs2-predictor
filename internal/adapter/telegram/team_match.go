@@ -105,7 +105,7 @@ func (h *UpdateHandler) handleTeamMatchAdminCommand(ctx context.Context, chatID 
 // authenticated).
 func (h *UpdateHandler) listTeamMatchOperators(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode) error {
 	if !h.isRootTeamMatchOperator(actor) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	operators, err := h.TeamMatchOperators.ListOperators(ctx)
 	if err != nil {
@@ -148,7 +148,7 @@ func operatorLabel(id common.UserID, profiles map[common.UserID]chat.UserProfile
 // themselves have passed a manager check in.
 func (h *UpdateHandler) teamMatchAdminAddMenu(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode) error {
 	if !h.isRootTeamMatchOperator(actor) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	chats, err := h.Chats.ManagedChats(ctx, actor)
 	if err != nil {
@@ -177,7 +177,7 @@ const teamMatchParticipantWindow = 90 * 24 * time.Hour
 // candidate — the same N+1 this package avoids elsewhere.
 func (h *UpdateHandler) teamMatchAdminPickUserMenu(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode, chatID common.ChatID) error {
 	if !h.isRootTeamMatchOperator(actor) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	participants, err := h.Predictions.ChatParticipants(ctx, chatID, h.Clock.Now().Add(-teamMatchParticipantWindow))
 	if err != nil {
@@ -209,7 +209,7 @@ func (h *UpdateHandler) teamMatchAdminPickUserMenu(ctx context.Context, target r
 // just reached via chat/participant taps instead of a typed numeric id.
 func (h *UpdateHandler) appointTeamMatchOperator(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode, appointee common.UserID) error {
 	if !h.isRootTeamMatchOperator(actor) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	if h.TeamMatchOperators == nil {
 		return newValidationError("team match operators are not configured")
@@ -226,7 +226,7 @@ func (h *UpdateHandler) appointTeamMatchOperator(ctx context.Context, target rep
 // toggles (an operator can always be re-appointed the same way).
 func (h *UpdateHandler) removeTeamMatchOperator(ctx context.Context, target replyTarget, actor common.UserID, locale common.LocaleCode, operatorID common.UserID) error {
 	if !h.isRootTeamMatchOperator(actor) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	if h.TeamMatchOperators == nil {
 		return newValidationError("team match operators are not configured")
@@ -244,7 +244,7 @@ func (h *UpdateHandler) removeTeamMatchOperator(ctx context.Context, target repl
 // list.
 func (h *UpdateHandler) teamMatchQueueMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode, page int) error {
 	if !h.isTeamMatchOperator(ctx, userID) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	if h.TeamMatches == nil {
 		return newValidationError("team match review is not configured")
@@ -294,7 +294,7 @@ func (h *UpdateHandler) teamMatchQueueMenu(ctx context.Context, target replyTarg
 // automatic tiers already handle anything less ambiguous).
 func (h *UpdateHandler) teamMatchCardMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode, reqID common.RequestID) error {
 	if !h.isTeamMatchOperator(ctx, userID) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	req, candidates, err := h.TeamMatches.FindRequest(ctx, reqID)
 	if err != nil {

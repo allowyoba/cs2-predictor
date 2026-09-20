@@ -41,6 +41,13 @@ type enrichmentBuild struct {
 	Sources          []enrichment.Source
 	TeamMatchSources []enrichment.Source
 	Jobs             []backgroundJob
+	// Intervals is how often each source is supposed to run. The status
+	// screen needs it to say anything useful about a timestamp: "last
+	// success three hours ago" is an outage for a feed polled every
+	// fifteen minutes and perfectly normal for one fetched weekly, and a
+	// screen that shows the timestamp without the expectation leaves that
+	// judgement to whoever happens to remember the configuration.
+	Intervals map[enrichment.Source]time.Duration
 }
 
 // buildEnrichment wires every optional, independently-toggleable
@@ -57,7 +64,7 @@ func buildEnrichment(
 	catalog competition.Catalog, subscriptions subscription.Repository,
 	httpClient *http.Client, clock common.Clock, lock common.ClusterLock, log *slog.Logger,
 ) enrichmentBuild {
-	var b enrichmentBuild
+	b := enrichmentBuild{Intervals: map[enrichment.Source]time.Duration{}}
 
 	if cfg.ValveVRSEnabled {
 		sync := &app.RankingSync{
@@ -114,10 +121,18 @@ func buildEnrichment(
 	if cfg.ValveVRSEnabled || cfg.HLTVEnabled {
 		b.Sources = append(b.Sources, enrichment.SourceValveVRS)
 		b.TeamMatchSources = append(b.TeamMatchSources, enrichment.SourceValveVRS)
+		// Whichever of the two actually runs; when both do, the free feed
+		// is the faster one and is what the freshness should be read
+		// against.
+		b.Intervals[enrichment.SourceValveVRS] = cfg.ValveVRSSyncInterval
+		if !cfg.ValveVRSEnabled {
+			b.Intervals[enrichment.SourceValveVRS] = cfg.ApifyRankingCheckInterval
+		}
 	}
 	if cfg.HLTVEnabled {
 		b.Sources = append(b.Sources, enrichment.SourceHLTV)
 		b.TeamMatchSources = append(b.TeamMatchSources, enrichment.SourceHLTV)
+		b.Intervals[enrichment.SourceHLTV] = cfg.ApifyRankingCheckInterval
 	}
 
 	if cfg.GRIDEnabled {
@@ -129,6 +144,7 @@ func buildEnrichment(
 		}
 		b.Jobs = append(b.Jobs, backgroundJob{"grid", cfg.GRIDSyncInterval, sync.Dispatch})
 		b.Sources = append(b.Sources, enrichment.SourceGRID)
+		b.Intervals[enrichment.SourceGRID] = cfg.GRIDSyncInterval
 	}
 
 	if cfg.LiquipediaEnabled {
@@ -139,6 +155,7 @@ func buildEnrichment(
 		}
 		b.Jobs = append(b.Jobs, backgroundJob{"liquipedia", cfg.LiquipediaSyncInterval, sync.Dispatch})
 		b.Sources = append(b.Sources, enrichment.SourceLiquipedia)
+		b.Intervals[enrichment.SourceLiquipedia] = cfg.LiquipediaSyncInterval
 	}
 
 	return b

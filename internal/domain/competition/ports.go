@@ -56,6 +56,17 @@ type Catalog interface {
 	// several events in a single round trip, for the same N+1-avoidance
 	// reason as FindEvents.
 	FindUnstartedMatchesForEvents(ctx context.Context, eventIDs []common.EventID) ([]Match, error)
+	// FindPlayableMatchesForEvents is the same batch widened by one status:
+	// matches already under way as well as ones still to come.
+	//
+	// A match does not stop existing when it kicks off. It is at its most
+	// interesting between the poll closing and the result landing, and a
+	// screen called "what's on" that drops it at exactly that moment is
+	// answering a different question than the one being asked. Separate
+	// from FindUnstartedMatchesForEvents because the poll pipeline must
+	// keep its narrower meaning: a poll on a match already in play is a
+	// poll nobody can answer.
+	FindPlayableMatchesForEvents(ctx context.Context, eventIDs []common.EventID) ([]Match, error)
 	FindMatches(ctx context.Context, eventID common.EventID) ([]Match, error)
 	SaveEvent(ctx context.Context, event Event) (Event, error)
 	SaveMatch(ctx context.Context, match Match) (Match, error)

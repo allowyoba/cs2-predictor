@@ -229,6 +229,7 @@ var callbackRoutes = []callbackRoute{
 		return h.setQuietHours(ctx, cb, target, settings, strings.TrimPrefix(data, "settings:quiet:"))
 	}},
 	{match: exact("settings:logos"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsLogos},
+	{match: exact("settings:flags"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsFlags},
 	{match: exact("settings:notify"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsNotify},
 	{match: prefixed("settings:notify:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsNotifyToggle},
 	{match: exact("settings:stream_language"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamLanguage},
@@ -771,6 +772,24 @@ func routeSettingsLogos(h *UpdateHandler, ctx context.Context, cb *CallbackQuery
 		state, toastKey = "hltv", "settings.logos_hltv"
 	}
 	h.logAdminAction(ctx, settings.ChatID, &cb.From, "logo_source", state)
+	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
+		return false, err
+	}
+	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
+}
+
+// routeSettingsFlags switches the country flag beside a Counter-Strike
+// team between the match provider's answer and HLTV's.
+func routeSettingsFlags(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	settings.PreferHLTVFlags = !settings.PreferHLTVFlags
+	if _, err := h.Chats.Save(ctx, settings); err != nil {
+		return false, err
+	}
+	state, toastKey := "provider", "settings.logos_provider"
+	if settings.PreferHLTVFlags {
+		state, toastKey = "hltv", "settings.logos_hltv"
+	}
+	h.logAdminAction(ctx, settings.ChatID, &cb.From, "flag_source", state)
 	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
 		return false, err
 	}

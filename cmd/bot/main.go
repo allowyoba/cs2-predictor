@@ -232,6 +232,7 @@ func run() error {
 		ProviderGateway:          gateway,
 		EnrichmentState:          enrichmentRepo,
 		EnrichmentSources:        enrichmentSources,
+		EnrichmentIntervals:      enrichmentBuilt.Intervals,
 		DeadLetters:              outbox,
 		Feedback:                 feedbackService,
 		MiniAppURL:               cfg.MiniAppURL,

@@ -150,13 +150,13 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	// chat id the deployment lists as an operator contact.
 	case data == "hub:alerts":
 		if !h.isRootTeamMatchOperator(userID) {
-			err = h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+			err = h.refuse(ctx, target, locale, "hub:system")
 			break
 		}
 		err = h.alertsMenu(ctx, target, common.ChatID{Value: cb.Message.Chat.ID}, locale)
 	case strings.HasPrefix(data, "alerts:toggle:"):
 		if !h.isRootTeamMatchOperator(userID) {
-			err = h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+			err = h.refuse(ctx, target, locale, "hub:system")
 			break
 		}
 		err = h.toggleAlert(ctx, target, common.ChatID{Value: cb.Message.Chat.ID}, locale,

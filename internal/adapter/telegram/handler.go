@@ -138,6 +138,10 @@ type UpdateHandler struct {
 	// exposes, just human-readable inside a DM. Nil/empty omits them.
 	EnrichmentState   enrichment.SyncStateRepository
 	EnrichmentSources []enrichment.Source
+	// EnrichmentIntervals is how often each source is expected to run, so
+	// the status screen can say whether a timestamp is late rather than
+	// just old — see providerStatusView.
+	EnrichmentIntervals map[enrichment.Source]time.Duration
 	// DeadLetters backs the undelivered-messages panel next to it. Nil
 	// omits the panel, exactly like the sections above.
 	DeadLetters common.DeadLetterStore

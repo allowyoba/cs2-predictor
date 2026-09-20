@@ -571,3 +571,9 @@ func TestDiscoverEvents_SkipsChatsThatHaveNotEnabledTheEventsGame(t *testing.T) 
 		t.Fatalf("expected the CS2-enabled chat's notification, got %+v", outbox.enqueued[0])
 	}
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; the
+// tests here only ever seed unstarted matches, so it answers the same way.
+func (f *fakeSyncCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return f.FindUnstartedMatchesForEvents(ctx, ids)
+}

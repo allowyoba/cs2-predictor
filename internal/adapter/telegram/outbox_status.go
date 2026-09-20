@@ -60,10 +60,11 @@ func (h *UpdateHandler) outboxStatusView(ctx context.Context, target replyTarget
 // again — populated with the same messages a few minutes later.
 func (h *UpdateHandler) replayDeadLetters(ctx context.Context, cb *CallbackQuery, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
 	if !h.isRootTeamMatchOperator(userID) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:system")
 	}
 	if h.DeadLetters == nil {
-		return h.respond(ctx, target, h.Texts.Get("outbox.unavailable", locale), nil)
+		back := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "hub:system")}}}
+		return h.respond(ctx, target, h.Texts.Get("outbox.unavailable", locale), back)
 	}
 	released, err := h.DeadLetters.ReplayDeadLetters(ctx)
 	if err != nil {

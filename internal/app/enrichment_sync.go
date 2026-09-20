@@ -142,12 +142,17 @@ func (s *RankingSync) apply(ctx context.Context, ranked []enrichment.RankedTeam,
 		if err := s.Rankings.SaveRanking(ctx, enrichment.NewTeamRanking(teamID, rt)); err != nil {
 			s.Log.Error("ranking save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
 		}
-		// Best effort: a missing crest is a cosmetic loss in one surface,
-		// and failing the ranking sync over it would cost the rankings
-		// themselves.
-		if s.TeamLogos != nil && rt.Identity.LogoURL != "" {
-			if err := s.TeamLogos.SetRankingLogo(ctx, teamID, s.Source, rt.Identity.LogoURL); err != nil {
-				s.Log.Warn("team logo save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
+		// Best effort: a missing crest or flag is a cosmetic loss in one
+		// surface, and failing the ranking sync over it would cost the
+		// rankings themselves.
+		//
+		// The country arrives as a name and leaves as a code; a country
+		// nothing recognises resolves to empty, which stores nothing and
+		// leaves the provider's own answer in place.
+		country := enrichment.CountryCode(rt.Identity.Country)
+		if s.TeamLogos != nil && (rt.Identity.LogoURL != "" || country != "") {
+			if err := s.TeamLogos.SetRankingAppearance(ctx, teamID, s.Source, rt.Identity.LogoURL, country); err != nil {
+				s.Log.Warn("team appearance save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
 			}
 		}
 	}

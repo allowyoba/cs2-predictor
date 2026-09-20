@@ -199,6 +199,11 @@ type rankingItem struct {
 		// Logo is HLTV's own crest URL for this team — the feed carries it
 		// next to the name, and it is the canonical Counter-Strike source.
 		Logo string `json:"logo"`
+		// Country is HLTV's own country for this team, in words
+		// ("Russia", "Denmark"). HLTV decides it from the roster rather
+		// than from an org's registration, which is what a flag beside a
+		// team name is actually meant to say.
+		Country string `json:"country"`
 	} `json:"team"`
 	Points int `json:"points"`
 	// Players is HLTV's reported roster for this team at scrape time — a
@@ -461,7 +466,10 @@ func (p *Provider) readRunOutput(ctx context.Context, run runInfo) ([]enrichment
 		}
 		rank, points := item.Place, item.Points
 		out = append(out, enrichment.RankedTeam{
-			Identity:    enrichment.TeamIdentity{Name: item.Team.Name, Roster: item.Players, LogoURL: item.Team.Logo},
+			Identity: enrichment.TeamIdentity{
+				Name: item.Team.Name, Roster: item.Players,
+				LogoURL: item.Team.Logo, Country: item.Team.Country,
+			},
 			GlobalRank:  &rank,
 			Points:      &points,
 			PublishedAt: publishedAt,

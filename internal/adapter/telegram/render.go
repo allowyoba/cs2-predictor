@@ -197,3 +197,18 @@ func (h *UpdateHandler) alert(ctx context.Context, callbackID, text string) erro
 func (h *UpdateHandler) backButton(locale common.LocaleCode, data string) InlineButton {
 	return button(h.Texts.Get("nav.back", locale), data)
 }
+
+// refuse says no and leaves a way out.
+//
+// A refusal used to be posted with no keyboard at all. Because a callback
+// edits the message it was tapped on, that replaced whatever screen the
+// person was looking at with a dead end: no buttons, nothing to go back
+// to, and the only escape a command typed from memory. Saying no is not a
+// reason to strand somebody.
+func (h *UpdateHandler) refuse(ctx context.Context, target replyTarget, locale common.LocaleCode, backData string) error {
+	if backData == "" {
+		backData = "hub:root"
+	}
+	kb := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, backData)}}}
+	return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), kb)
+}

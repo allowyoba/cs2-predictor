@@ -51,7 +51,10 @@ func (h *UpdateHandler) sendProgressionChart(ctx context.Context, target replyTa
 
 	img, err := buildProgressionChart(points, title, h.Texts.Get("chart.x_label", settings.Locale), h.Texts.Get("chart.y_label", settings.Locale), subject)
 	if err != nil {
-		return h.respond(ctx, target, h.Texts.Get("chart.empty", settings.Locale), nil)
+		// Back to the board this chart was opened from: a screen that says
+		// "nothing to draw" and offers nothing to do is a dead end.
+		back := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:stats")}}}
+		return h.respond(ctx, target, h.Texts.Get("chart.empty", settings.Locale), back)
 	}
 	return h.Client.SendPhoto(ctx, target.chatID.Value, "chart.png", img, "", target.topicID)
 }
@@ -103,7 +106,10 @@ func (h *UpdateHandler) sendRankChart(ctx context.Context, target replyTarget, s
 
 	img, err := buildRankChart(points, title, h.Texts.Get("chart.x_label", settings.Locale), h.Texts.Get("chart.rank_y_label", settings.Locale), subject)
 	if err != nil {
-		return h.respond(ctx, target, h.Texts.Get("chart.empty", settings.Locale), nil)
+		// Back to the board this chart was opened from: a screen that says
+		// "nothing to draw" and offers nothing to do is a dead end.
+		back := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:stats")}}}
+		return h.respond(ctx, target, h.Texts.Get("chart.empty", settings.Locale), back)
 	}
 	return h.Client.SendPhoto(ctx, target.chatID.Value, "chart.png", img, "", target.topicID)
 }

@@ -245,6 +245,11 @@ func TestSearchEvents_ChatDefaultAppliesUnlessExplicitlyOverridden(t *testing.T)
 // and record the topTierOnly flag it was called with — everything else
 // (FindEvent, SaveMatch, ...) is unused by /events and stays the fakeCatalog
 // no-op.
+// FindPlayableMatchesForEvents: same fixture, one status wider.
+func (c *searchCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return c.FindUnstartedMatchesForEvents(ctx, ids)
+}
+
 type searchCatalog struct {
 	fakeCatalog
 	results        []competition.Event

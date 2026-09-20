@@ -170,9 +170,11 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	}
 
 	locale, zoneName := common.LocaleRU, chat.DefaultTimezone
+	preferHLTV := false
 	if settings != nil {
 		locale = settings.Locale
 		zoneName = settings.Timezone
+		preferHLTV = settings.PreferHLTVFlags
 	}
 	loc := chat.ZoneOrDefault(zoneName)
 
@@ -190,8 +192,8 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 		dateWhen = local.Format("02.01")
 		timeWhen = local.Format("15:04 MST")
 	}
-	firstName := teamNameWithFlag(match.FirstTeam, formatTeamCompact(match.FirstTeam))
-	secondName := teamNameWithFlag(match.SecondTeam, formatTeamCompact(match.SecondTeam))
+	firstName := teamNameWithFlag(match.FirstTeam, formatTeamCompact(match.FirstTeam), preferHLTV)
+	secondName := teamNameWithFlag(match.SecondTeam, formatTeamCompact(match.SecondTeam), preferHLTV)
 
 	// The question is just "Team (record) · Team (record)" — short, single
 	// line, no parse_mode (question_parse_mode only honors custom-emoji

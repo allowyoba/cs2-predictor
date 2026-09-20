@@ -231,3 +231,9 @@ func TestTeamStatsSync_RecordsFailureWhenCatalogLookupErrors(t *testing.T) {
 		t.Fatalf("state = %+v, want ConsecutiveFailures=1 LastError=\"db down\"", st)
 	}
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; the
+// tests here only ever seed unstarted matches, so it answers the same way.
+func (f *fakeTeamStatsCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return f.FindUnstartedMatchesForEvents(ctx, ids)
+}

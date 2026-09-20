@@ -97,12 +97,13 @@ func countryFlag(alpha2 string) string {
 
 // teamNameWithFlag prefixes a team's name with its country flag when the
 // country is known, and changes nothing when it is not — a missing flag
-// must not turn into a placeholder box or a stray space.
-func teamNameWithFlag(team *competition.Team, name string) string {
+// must not turn into a placeholder box or a stray space. preferHLTV picks
+// which source's country to believe; see Team.LocationFor.
+func teamNameWithFlag(team *competition.Team, name string, preferHLTV bool) string {
 	if team == nil {
 		return name
 	}
-	flag := countryFlag(team.Location)
+	flag := countryFlag(team.LocationFor(preferHLTV))
 	if flag == "" {
 		return name
 	}
