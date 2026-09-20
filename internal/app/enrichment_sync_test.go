@@ -485,6 +485,54 @@ func TestRankingSync_RefreshFromCacheSkipsDataAlreadyHeld(t *testing.T) {
 	}
 }
 
+// A ranking is a snapshot; a team's crest and country are not. Skipping a
+// snapshot we already hold is right, and it used to skip the appearance
+// with it — which is why the flag column stayed empty for a week after
+// shipping, on a feed that had already published every flag.
+func TestRankingSync_RefreshFromCacheBackfillsAppearanceFromDataAlreadyHeld(t *testing.T) {
+	teamID := common.NewTeamID()
+	store := newFakeEnrichmentStore()
+	if err := store.RecordSuccess(context.Background(), enrichment.SourceHLTV); err != nil {
+		t.Fatal(err)
+	}
+	appearance := &recordingAppearance{}
+	provider := &cachedProvider{cached: []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Spirit", LogoURL: "https://img-cdn.hltv.org/s.png", Country: "Russia"},
+			GlobalRank: intPtr(1), PublishedAt: time.Now().Add(-48 * time.Hour), Source: enrichment.SourceHLTV},
+	}}
+	sync := newCachedSync(store, provider, teamID)
+	sync.TeamLogos = appearance
+
+	sync.RefreshFromCache(context.Background())
+
+	// The ranking itself is still not rewritten: that part of the guard was
+	// right and stays.
+	if got, _ := store.FindRanking(context.Background(), teamID, enrichment.SourceHLTV); got != nil {
+		t.Fatalf("the held snapshot was re-applied after all: %+v", got)
+	}
+	if len(appearance.calls) != 1 {
+		t.Fatalf("expected the crest and country to be backfilled, got %d writes", len(appearance.calls))
+	}
+	got := appearance.calls[0]
+	if got.logo != "https://img-cdn.hltv.org/s.png" || got.country != "RU" {
+		t.Fatalf("backfilled %+v, want the feed's crest and its country as a code", got)
+	}
+}
+
+type appearanceCall struct {
+	teamID  common.TeamID
+	source  enrichment.Source
+	logo    string
+	country string
+}
+
+type recordingAppearance struct{ calls []appearanceCall }
+
+func (r *recordingAppearance) SetRankingAppearance(_ context.Context, teamID common.TeamID, source enrichment.Source, logo, country string) error {
+	r.calls = append(r.calls, appearanceCall{teamID, source, logo, country})
+	return nil
+}
+
 // A provider that cannot answer right now must not turn a startup into a
 // failure, nor mark the source as broken: its scheduled run is still ahead
 // of it.

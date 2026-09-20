@@ -142,25 +142,61 @@ func (s *RankingSync) apply(ctx context.Context, ranked []enrichment.RankedTeam,
 		if err := s.Rankings.SaveRanking(ctx, enrichment.NewTeamRanking(teamID, rt)); err != nil {
 			s.Log.Error("ranking save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
 		}
-		// Best effort: a missing crest or flag is a cosmetic loss in one
-		// surface, and failing the ranking sync over it would cost the
-		// rankings themselves.
-		//
-		// The country arrives as a name and leaves as a code; a country
-		// nothing recognises resolves to empty, which stores nothing and
-		// leaves the provider's own answer in place.
-		country := enrichment.CountryCode(rt.Identity.Country)
-		if s.TeamLogos != nil && (rt.Identity.LogoURL != "" || country != "") {
-			if err := s.TeamLogos.SetRankingAppearance(ctx, teamID, s.Source, rt.Identity.LogoURL, country); err != nil {
-				s.Log.Warn("team appearance save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
-			}
-		}
+		s.saveAppearance(ctx, teamID, rt)
 	}
 
 	if err := s.State.RecordSuccess(ctx, s.Source); err != nil {
 		s.Log.Error("ranking sync state record-success failed", "source", s.Source, "error", err)
 	}
 	s.Log.Info(logMessage, "source", s.Source, "fetched", len(ranked), "matched", matched, "unmatched", unmatched)
+}
+
+// saveAppearance stores the crest and the country this feed published for
+// a team.
+//
+// Best effort: a missing crest or flag is a cosmetic loss in one surface,
+// and failing the ranking sync over it would cost the rankings themselves.
+//
+// The country arrives as a name and leaves as a code; a country nothing
+// recognises resolves to empty, which stores nothing and leaves the
+// provider's own answer in place.
+func (s *RankingSync) saveAppearance(ctx context.Context, teamID common.TeamID, rt enrichment.RankedTeam) {
+	country := enrichment.CountryCode(rt.Identity.Country)
+	if s.TeamLogos == nil || (rt.Identity.LogoURL == "" && country == "") {
+		return
+	}
+	if err := s.TeamLogos.SetRankingAppearance(ctx, teamID, s.Source, rt.Identity.LogoURL, country); err != nil {
+		s.Log.Warn("team appearance save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
+	}
+}
+
+// backfillAppearance writes the crests and countries out of a feed this
+// source has already recorded, without touching the rankings themselves.
+//
+// It exists because a ranking is a snapshot and a team's appearance is
+// not. Re-applying a snapshot we already hold is write traffic for
+// nothing, so the startup catch-up skips it — correct, until the day the
+// same feed started carrying something new. Then the guard blocks a
+// backfill it was never meant to block, and the new column stays empty
+// until the remote schedule comes round again, which for a weekly feed is
+// most of a week.
+//
+// One idempotent UPDATE per team, at most MaxTeams of them, once per
+// process start; a stored value that already matches is not rewritten.
+func (s *RankingSync) backfillAppearance(ctx context.Context, ranked []enrichment.RankedTeam) {
+	if s.TeamLogos == nil {
+		return
+	}
+	candidates, err := s.buildCandidates(ctx)
+	if err != nil {
+		s.Log.Warn("appearance backfill skipped", "source", s.Source, "error", err)
+		return
+	}
+	for _, rt := range ranked {
+		if teamID, ok := s.resolveTeam(ctx, candidates, rt.Identity); ok {
+			s.saveAppearance(ctx, teamID, rt)
+		}
+	}
 }
 
 // RefreshFromCache adopts a result the provider already holds, if it is
@@ -194,10 +230,16 @@ func (s *RankingSync) RefreshFromCache(ctx context.Context) {
 	}
 	_, err = s.Lock.Execute(ctx, s.lockKey()+":startup-refresh", func(ctx context.Context) error {
 		fresher, err := s.newerThanRecorded(ctx, ranked)
-		if err != nil || !fresher {
+		if err != nil {
 			return err
 		}
-		s.apply(ctx, ranked, "rankings refreshed from the provider's last finished run")
+		if fresher {
+			s.apply(ctx, ranked, "rankings refreshed from the provider's last finished run")
+			return nil
+		}
+		// Same snapshot, but not necessarily the same columns filled from
+		// it — see backfillAppearance.
+		s.backfillAppearance(ctx, ranked)
 		return nil
 	})
 	if err != nil {
