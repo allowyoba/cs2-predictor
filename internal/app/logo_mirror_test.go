@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"image/color"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +14,13 @@ import (
 )
 
 type fakeLogoCache struct {
-	pending  []enrichment.TeamLogoNeed
-	stale    []enrichment.TeamLogoNeed
-	saved    []enrichment.TeamLogo
-	touched  []common.TeamID
-	askedFor time.Duration
+	pending    []enrichment.TeamLogoNeed
+	stale      []enrichment.TeamLogoNeed
+	saved      []enrichment.TeamLogo
+	touched    []common.TeamID
+	askedFor   time.Duration
+	unmeasured []enrichment.TeamLogo
+	lightness  map[common.TeamID]bool
 }
 
 func (f *fakeLogoCache) PendingLogos(context.Context, int) ([]enrichment.TeamLogoNeed, error) {
@@ -49,6 +52,18 @@ func (f *fakeLogoCache) LogoDigests(context.Context) (map[common.TeamID]map[enri
 
 func (f *fakeLogoCache) LogoChips(context.Context) (map[common.TeamID]map[enrichment.Source]bool, error) {
 	return nil, nil
+}
+
+func (f *fakeLogoCache) UnmeasuredLogos(context.Context, int) ([]enrichment.TeamLogo, error) {
+	return f.unmeasured, nil
+}
+
+func (f *fakeLogoCache) SetLogoLightness(_ context.Context, teamID common.TeamID, _ enrichment.Source, light bool) error {
+	if f.lightness == nil {
+		f.lightness = map[common.TeamID]bool{}
+	}
+	f.lightness[teamID] = light
+	return nil
 }
 
 func newMirror(cache *fakeLogoCache) *LogoMirror {
@@ -177,6 +192,41 @@ func TestLogoMirror_RefusesAnythingThatIsNotASmallImage(t *testing.T) {
 				t.Fatalf("stored %+v, want it refused", cache.saved)
 			}
 		})
+	}
+}
+
+// Measuring happens when a crest is fetched, and a crest is only fetched
+// when it is missing or has moved — so every image mirrored before the
+// measurement existed would never be measured at all. It is decided from
+// the bytes already held, with no request to anybody: re-downloading an
+// image to look at it is exactly the traffic this mirror exists to avoid.
+func TestLogoMirror_MeasuresCrestsItAlreadyHasWithoutFetchingThem(t *testing.T) {
+	var requests int
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+
+	white := common.NewTeamID()
+	cache := &fakeLogoCache{unmeasured: []enrichment.TeamLogo{
+		{TeamID: white, Source: enrichment.SourceHLTV, ContentType: "image/png",
+			Bytes: crestPNG(t, color.NRGBA{R: 255, G: 255, B: 255, A: 255})},
+		// An SVG cannot be decoded, so it stays unrecorded rather than
+		// being guessed at.
+		{TeamID: common.NewTeamID(), Source: enrichment.SourceHLTV, ContentType: "image/svg+xml",
+			Bytes: []byte("<svg xmlns='http://www.w3.org/2000/svg'/>")},
+	}}
+	mirror := newMirror(cache)
+	mirror.Client = server.Client()
+
+	mirror.Dispatch(context.Background())
+
+	if requests != 0 {
+		t.Fatalf("made %d requests to measure images it already had", requests)
+	}
+	if len(cache.lightness) != 1 {
+		t.Fatalf("recorded %d measurements, want the one it could actually make", len(cache.lightness))
+	}
+	if !cache.lightness[white] {
+		t.Fatal("a white mark must be recorded as light, so a dark chip goes behind it")
 	}
 }
 
