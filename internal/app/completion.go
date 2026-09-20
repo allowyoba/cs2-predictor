@@ -27,6 +27,9 @@ type EventCompletionService struct {
 	// deployment without it still gets standings, just no awards.
 	specials scoring.EventSpecialsRepository
 	outbox   common.Outbox
+	// audience filters the personal recaps by who asked for them; nil
+	// turns that half of the feature off entirely.
+	audience common.NotificationAudience
 	clock    common.Clock
 	runTx    TxRunner
 	log      *slog.Logger
@@ -39,6 +42,14 @@ func NewEventCompletionService(catalog competition.Catalog, subscriptions subscr
 		catalog: catalog, subscriptions: subscriptions, chats: chats,
 		scoringRepo: scoringRepo, specials: specials, outbox: outbox, clock: clock, runTx: runTx, log: log,
 	}
+}
+
+// WithPersonalRecaps enables the DM half of the tournament recap, mirroring
+// ResultSettlementService.WithRecaps: the audience port decides who asked
+// for it, and without one the chat recap is all that goes out.
+func (s *EventCompletionService) WithPersonalRecaps(audience common.NotificationAudience) *EventCompletionService {
+	s.audience = audience
+	return s
 }
 
 var terminalMatchStatuses = map[competition.MatchStatus]bool{
@@ -149,9 +160,10 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 				ExactPredictions: st.ExactPredictions, CorrectPredictions: st.CorrectPredictions, Predictions: st.Predictions,
 			}
 		}
+		awards := s.awards(txCtx, chatID, event.ID, standings)
 		notification := common.EventFinishedNotification{
 			ChatID: chatID.Value, TopicID: topicID, EventName: event.Name,
-			Standings: notificationStandings, Awards: s.awards(txCtx, chatID, event.ID, standings),
+			Standings: notificationStandings, Awards: awards,
 		}
 		payload, err := json.Marshal(notification)
 		if err != nil {
@@ -160,9 +172,93 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 		if _, err := s.outbox.Enqueue(txCtx, "EVENT", event.ID.Value.String(), "telegram.event-finished", string(payload)); err != nil {
 			return err
 		}
+		s.fanOutPersonalRecaps(txCtx, event, chatID, standings, awards)
 
 		return s.scoringRepo.MarkEventCompleted(txCtx, chatID, event.ID, hash, s.clock.Now())
 	})
+}
+
+// fanOutPersonalRecaps DMs each participant their own half of the recap:
+// where they finished, out of how many, and what they got right. The chat
+// gets a leaderboard, which is everyone's result and nobody's in
+// particular.
+//
+// Opt-in through the same preference as the per-match recap — a second
+// switch meaning "results in my DMs, but the other kind" is exactly the
+// settings screen nobody reads. Best effort throughout: the tournament is
+// already closed and the chat already told, and failing that over a
+// personal note would undo both.
+func (s *EventCompletionService) fanOutPersonalRecaps(ctx context.Context, event competition.Event, chatID common.ChatID,
+	standings []scoring.UserStanding, awards []common.EventAwardNotification) {
+	if s.audience == nil || len(standings) == 0 {
+		return
+	}
+	players := participantsAmong(standings)
+	if len(players) == 0 {
+		return
+	}
+	recipients, err := s.audience.Recipients(ctx, common.NotifyResultRecaps, players)
+	if err != nil {
+		s.log.Error("personal recap audience lookup failed", "chatId", chatID.Value, "eventId", event.ID.Value, "error", err)
+		return
+	}
+	if len(recipients) == 0 {
+		return
+	}
+	wants := make(map[common.UserID]bool, len(recipients))
+	for _, id := range recipients {
+		wants[id] = true
+	}
+	// A nomination is the part of a recap people screenshot, so it travels
+	// with the person who won it.
+	awardByName := make(map[string]string, len(awards))
+	for _, a := range awards {
+		awardByName[a.DisplayName] = a.Kind
+	}
+	chatTitle := ""
+	if settings, err := s.chats.Find(ctx, chatID); err == nil && settings != nil {
+		chatTitle = settings.Title
+	}
+
+	for _, st := range standings {
+		if st.Predictions == 0 || !wants[st.UserID] {
+			continue
+		}
+		s.enqueuePersonalRecap(ctx, event, common.EventRecapNotification{
+			UserID: st.UserID.Value, ChatTitle: chatTitle, EventName: event.Name,
+			Rank: st.Rank, Participants: len(players), Points: st.Points,
+			Predictions: st.Predictions, ExactPredictions: st.ExactPredictions,
+			CorrectPredictions: st.CorrectPredictions, Award: awardByName[st.DisplayName],
+		})
+	}
+}
+
+// participantsAmong lists everybody who actually predicted something —
+// the people a personal recap can be about, and the "out of how many" a
+// placing is measured against.
+func participantsAmong(standings []scoring.UserStanding) []common.UserID {
+	players := make([]common.UserID, 0, len(standings))
+	for _, st := range standings {
+		if st.Predictions > 0 {
+			players = append(players, st.UserID)
+		}
+	}
+	return players
+}
+
+// enqueuePersonalRecap queues one person's note. Best effort: the
+// tournament is already closed and the chat already told, and failing that
+// over a personal message would undo both.
+func (s *EventCompletionService) enqueuePersonalRecap(ctx context.Context, event competition.Event, n common.EventRecapNotification) {
+	payload, err := json.Marshal(n)
+	if err != nil {
+		s.log.Error("personal recap marshal failed", "userId", n.UserID, "error", err)
+		return
+	}
+	aggregateID := event.ID.Value.String() + ":" + common.UserID{Value: n.UserID}.String()
+	if _, err := s.outbox.Enqueue(ctx, "EVENT", aggregateID, "telegram.event-recap-personal", string(payload)); err != nil {
+		s.log.Error("personal recap enqueue failed", "userId", n.UserID, "error", err)
+	}
 }
 
 // awards picks this tournament's nominations. Best effort: a recap without

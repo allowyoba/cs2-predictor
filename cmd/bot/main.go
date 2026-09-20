@@ -189,7 +189,8 @@ func run() error {
 	}
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
 		WithRecaps(chats, chatTitle, log)
-	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log)
+	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
+		WithPersonalRecaps(chats)
 
 	// teamMatch resolves a team with no cached ranking against whichever
 	// ranking feeds (teamMatchSources) are actually enabled — pointless
@@ -278,6 +279,9 @@ func run() error {
 			// chat receives; see telegram/quiet_hours.go for what is
 			// deliberately left out of that list.
 			telegram.WithQuietHours(telegram.NewEventFinishedPublisher(telegramClient, chats, texts), chats, clock),
+			// The personal half of that recap is a DM, and quiet hours are
+			// a chat's setting — somebody's own inbox is not the room.
+			telegram.NewEventRecapPublisher(telegramClient, chats, texts, metrics),
 			telegram.WithQuietHours(telegram.NewMonthlyDigestPublisher(telegramClient, chats, texts), chats, clock),
 			telegram.WithQuietHours(telegram.NewAnnualDigestPublisher(telegramClient, chats, texts), chats, clock),
 			telegram.WithQuietHours(telegram.NewBigEventPublisher(telegramClient, chats, texts), chats, clock),
