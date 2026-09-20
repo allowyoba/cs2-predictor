@@ -119,9 +119,12 @@ func (r *ScoringRepository) ReplaceAwards(ctx context.Context, pollID common.Pol
 	}
 	for _, a := range awards {
 		if _, err := ex.Exec(ctx,
-			`INSERT INTO score_award(id, chat_id, event_id, match_id, poll_id, user_id, points, kind, match_started_at, awarded_at)
-			 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			a.ChatID.Value, a.EventID.Value, a.MatchID.Value, a.PollID.Value, a.UserID.Value, a.Points, a.Kind, a.MatchStartedAt, a.AwardedAt); err != nil {
+			// The chat, the event, the match and when it started all hang
+			// off the poll — see migration 0049 for why they are no longer
+			// written here as well.
+			`INSERT INTO score_award(poll_id, user_id, points, kind, awarded_at)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			a.PollID.Value, a.UserID.Value, a.Points, a.Kind, a.AwardedAt); err != nil {
 			return err
 		}
 	}
@@ -197,8 +200,8 @@ func gameClause(game competition.GameCode, next func(any) string) string {
 const scoringAggregateSelect = `
 	SELECT u.id, COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
 	       COALESCE(SUM(a.points), 0) AS points,
-	       COUNT(a.id) FILTER (WHERE a.kind = 'EXACT_SCORE') AS exact_count,
-	       COUNT(a.id) AS correct_count,
+	       COUNT(a.poll_id) FILTER (WHERE a.kind = 'EXACT_SCORE') AS exact_count,
+	       COUNT(a.poll_id) AS correct_count,
 	       COUNT(DISTINCT v.poll_id) AS prediction_count,
 	       COUNT(DISTINCT m.event_id) AS tournament_count`
 
@@ -368,7 +371,7 @@ func (r *ScoringRepository) UserChatStats(ctx context.Context, userID common.Use
 	rows, err := executor(ctx, r.pool).Query(ctx, `
 		SELECT c.id, c.title,
 		       COALESCE(SUM(a.points), 0) AS points,
-		       COUNT(a.id) AS correct_count,
+		       COUNT(a.poll_id) AS correct_count,
 		       COUNT(DISTINCT v.poll_id) AS prediction_count,
 		       COUNT(DISTINCT m.event_id) AS tournament_count
 		  FROM prediction_vote v
@@ -806,7 +809,7 @@ WITH vote_results AS (
            COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
            p.id AS poll_id,
            COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
-           (a.id IS NOT NULL) AS correct
+           (a.poll_id IS NOT NULL) AS correct
       FROM prediction_vote v
       JOIN match_poll p ON p.id = v.poll_id
       JOIN esport_match m ON m.id = p.match_id
@@ -913,7 +916,7 @@ WITH event_votes AS (
            COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
            p.id AS poll_id,
            COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
-           (a.id IS NOT NULL) AS correct,
+           (a.poll_id IS NOT NULL) AS correct,
            -- Which side this vote backed, derived from the option's own
            -- scoreline: the higher number is the predicted winner.
            CASE WHEN o.first_score > o.second_score THEN 1 ELSE 2 END AS picked_side

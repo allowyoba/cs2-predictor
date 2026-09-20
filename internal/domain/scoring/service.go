@@ -62,15 +62,8 @@ func (s *Service) Settle(ctx context.Context, event competition.Event, match com
 			continue
 		}
 		awards = append(awards, Award{
-			ChatID:         poll.ChatID,
-			EventID:        event.ID,
-			MatchID:        match.ID,
-			PollID:         poll.ID,
-			UserID:         vote.UserID,
-			Points:         points,
-			Kind:           kind,
-			MatchStartedAt: *startedAt,
-			AwardedAt:      now,
+			PollID: poll.ID, UserID: vote.UserID,
+			Points: points, Kind: kind, AwardedAt: now,
 		})
 	}
 

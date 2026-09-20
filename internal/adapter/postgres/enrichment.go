@@ -97,19 +97,46 @@ func (r *EnrichmentRepository) SaveRanking(ctx context.Context, ranking enrichme
 	if err != nil {
 		return err
 	}
-	_, err = executor(ctx, r.pool).Exec(ctx, `
-		INSERT INTO team_ranking(team_id, source, global_rank, regional_rank, region, points, roster, published_at, fetched_at, raw_payload)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, now(), $9)
+	ex := executor(ctx, r.pool)
+	if _, err := ex.Exec(ctx, `
+		INSERT INTO team_ranking(team_id, source, global_rank, regional_rank, region, points, published_at, fetched_at, raw_payload)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, now(), $8)
 		ON CONFLICT (team_id, source) DO UPDATE SET
 		  global_rank = excluded.global_rank, regional_rank = excluded.regional_rank, region = excluded.region,
-		  points = excluded.points, roster = excluded.roster, published_at = excluded.published_at,
+		  points = excluded.points, published_at = excluded.published_at,
 		  fetched_at = now(), raw_payload = excluded.raw_payload`,
 		ranking.TeamID.Value, string(ranking.Source), ranking.GlobalRank, ranking.RegionalRank, ranking.Region,
-		ranking.Points, ranking.Roster, ranking.PublishedAt, raw)
-	return err
+		ranking.Points, ranking.PublishedAt, raw); err != nil {
+		return err
+	}
+
+	// Replace-the-set: a player who left the roster is not on it any more,
+	// and a row nothing overwrote is not the same as a row that is true.
+	if _, err := ex.Exec(ctx, `DELETE FROM team_ranking_player WHERE team_id = $1 AND source = $2`,
+		ranking.TeamID.Value, string(ranking.Source)); err != nil {
+		return err
+	}
+	for position, player := range ranking.Roster {
+		if player == "" {
+			continue
+		}
+		if _, err := ex.Exec(ctx,
+			`INSERT INTO team_ranking_player(team_id, source, position, player) VALUES ($1, $2, $3, $4)
+			 ON CONFLICT (team_id, source, position) DO UPDATE SET player = excluded.player`,
+			ranking.TeamID.Value, string(ranking.Source), position+1, player); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-const rankingSelect = `SELECT team_id, global_rank, regional_rank, COALESCE(region, ''), points, roster, published_at FROM team_ranking`
+// The roster is stored as rows (team_ranking_player) and gathered back
+// here, so listing rankings still costs one query — see migration 0049.
+const rankingSelect = `SELECT team_id, global_rank, regional_rank, COALESCE(region, ''), points,
+       COALESCE((SELECT array_agg(p.player ORDER BY p.position)
+                   FROM team_ranking_player p
+                  WHERE p.team_id = team_ranking.team_id AND p.source = team_ranking.source), '{}'),
+       published_at FROM team_ranking`
 
 func scanRanking(row interface {
 	Scan(dest ...any) error
