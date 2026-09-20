@@ -62,7 +62,7 @@ func buildEnrichment(
 	if cfg.ValveVRSEnabled {
 		sync := &app.RankingSync{
 			Source: enrichment.SourceValveVRS, Provider: valvevrs.NewProvider(valvevrs.DefaultConfig(), httpClient),
-			Teams: repo, Rankings: repo, Identity: repo, State: state, Snapshots: repo,
+			Teams: repo, Rankings: repo, Identity: repo, State: state, Snapshots: repo, TeamLogos: repo,
 			Lock: lock, Log: log,
 		}
 		b.Jobs = append(b.Jobs, backgroundJob{"valve-vrs", cfg.ValveVRSSyncInterval, sync.Dispatch})
@@ -89,7 +89,7 @@ func buildEnrichment(
 			// whose week is already done.
 			return &app.RankingSync{
 				Source: source, Provider: apifyhltv.NewProvider(providerConfig, httpClient, repo, clock),
-				Teams: repo, Rankings: repo, Identity: repo, State: state, Snapshots: repo,
+				Teams: repo, Rankings: repo, Identity: repo, State: state, Snapshots: repo, TeamLogos: repo,
 				Gate:    &app.ApifyRankingGate{Runs: repo, Key: providerConfig.RankingType, Clock: clock},
 				LockKey: lockKey, Lock: lock, Log: log,
 			}

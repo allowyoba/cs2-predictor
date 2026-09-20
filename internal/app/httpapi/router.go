@@ -42,6 +42,11 @@ type RouterDeps struct {
 	// disables the limiter (see withRateLimit).
 	WebhookRateLimit app.WebhookRateLimitConfig
 
+	// Teams backs the Mini App's team/crest endpoint. Nil leaves the route
+	// registered but answering 503, which is a clearer signal to a client
+	// than a 404 on a path that does exist in other deployments.
+	Teams TeamCatalog
+
 	// Version/Commit/BuildTime are reported by GET /version — set via
 	// -ldflags at build time (see Makefile and docker/Dockerfile),
 	// "dev"/"unknown" for
@@ -67,5 +72,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("GET /healthz/ready", readinessHandler(deps.Gateway, deps.Pool, deps.EnrichmentState, deps.EnrichmentSources))
 	mux.Handle("GET /metrics", promhttp.HandlerFor(deps.Registry, promhttp.HandlerOpts{}))
 	mux.Handle("GET /version", versionHandler(deps.Version, deps.Commit, deps.BuildTime))
+	// The Mini App's own surface. Versioned in the path from its first
+	// endpoint: a Mini App is a shipped client that keeps running against
+	// whatever it was built for, so breaking changes need somewhere to go.
+	miniappTeams := teamsHandler(deps.Teams)
+	if deps.Metrics != nil && deps.Log != nil {
+		miniappTeams = withObservability("miniapp_teams", miniappTeams, deps.Metrics, deps.Log)
+	}
+	mux.Handle("GET /api/miniapp/v1/teams", miniappTeams)
 	return mux
 }

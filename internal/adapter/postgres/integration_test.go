@@ -3572,3 +3572,81 @@ func TestScoringRepository_LeaderboardNarrowsToOneGame(t *testing.T) {
 		t.Fatalf("this year's Dota 2 board = %d points, want 5", got)
 	}
 }
+
+// Crests come from two places and are kept in two columns: the match
+// provider's (every game, arriving with the ordinary sync) and HLTV's
+// ranking (Counter-Strike, ranked teams only). Which one is shown is a
+// preference, so neither write may clobber the other.
+func TestCompetitionRepository_TeamCrestsFromBothSources(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+	enrich := pg.NewEnrichmentRepository(pool)
+
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Crest Cup",
+		ExternalID: "crest-event", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	ranked := competition.Team{ID: common.NewTeamID(), Name: "Vitality", ExternalID: "crest-vit",
+		LogoURL: "https://cdn-api.pandascore.co/vitality.png"}
+	unranked := competition.Team{ID: common.NewTeamID(), Name: "Qualifier Five", ExternalID: "crest-five",
+		LogoURL: "https://cdn-api.pandascore.co/five.png"}
+	if _, err := catalog.SaveMatch(ctx, competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "crest-match",
+		Status: competition.MatchNotStarted, Format: format, FirstTeam: &ranked, SecondTeam: &unranked,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// HLTV's ranking then adds its own picture for the ranked team.
+	if err := enrich.SetRankingLogo(ctx, ranked.ID, enrichment.SourceHLTV, "https://img-cdn.hltv.org/vitality.png"); err != nil {
+		t.Fatal(err)
+	}
+	// A source that publishes no crest must not write into HLTV's column.
+	if err := enrich.SetRankingLogo(ctx, unranked.ID, enrichment.SourceValveVRS, "https://example.invalid/vrs.png"); err != nil {
+		t.Fatal(err)
+	}
+
+	teams, err := catalog.TeamsForGame(ctx, competition.GameCS2, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]competition.Team{}
+	for _, team := range teams {
+		byName[team.Name] = team
+	}
+	vit, five := byName["Vitality"], byName["Qualifier Five"]
+	if vit.LogoURL != "https://cdn-api.pandascore.co/vitality.png" || vit.HLTVLogoURL != "https://img-cdn.hltv.org/vitality.png" {
+		t.Fatalf("expected both crests side by side, got %+v", vit)
+	}
+	if five.HLTVLogoURL != "" {
+		t.Fatalf("Valve's feed publishes no crest and must not write one, got %q", five.HLTVLogoURL)
+	}
+	// The preference picks, and falls back for the teams HLTV never ranked.
+	if vit.LogoFor(true) != vit.HLTVLogoURL || vit.LogoFor(false) != vit.LogoURL {
+		t.Fatalf("LogoFor ignored the preference: %+v", vit)
+	}
+	if five.LogoFor(true) != five.LogoURL {
+		t.Fatalf("an unranked team must keep the provider's crest, got %q", five.LogoFor(true))
+	}
+
+	// A later match sync that carries no crest must not erase the stored one.
+	if _, err := catalog.SaveMatch(ctx, competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "crest-match-2",
+		Status: competition.MatchNotStarted, Format: format,
+		FirstTeam:  &competition.Team{ID: ranked.ID, Name: ranked.Name, ExternalID: ranked.ExternalID},
+		SecondTeam: &unranked,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := catalog.TeamsForGame(ctx, competition.GameCS2, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, team := range after {
+		if team.ID == ranked.ID && (team.LogoURL == "" || team.HLTVLogoURL == "") {
+			t.Fatalf("a sync without crests erased the stored ones: %+v", team)
+		}
+	}
+}
