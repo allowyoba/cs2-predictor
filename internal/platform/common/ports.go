@@ -307,6 +307,31 @@ type SuggestionNotification struct {
 	Text         string `json:"text"`
 }
 
+// EventRecapNotification is the payload for the
+// "telegram.event-recap-personal" outbox event type: one person's own
+// result in a tournament that just finished, sent to their DM.
+//
+// The chat gets a leaderboard; this is the half of it that is about the
+// reader — where they finished, out of how many, and what they got right.
+// It rides on the same opt-in as the per-match recap rather than
+// introducing a second switch that means almost the same thing.
+type EventRecapNotification struct {
+	UserID    int64  `json:"userId"`
+	ChatTitle string `json:"chatTitle"`
+	EventName string `json:"eventName"`
+	Rank      int    `json:"rank"`
+	// Participants is how many people predicted in this tournament, so a
+	// placing reads as "3rd of 12" rather than a bare number.
+	Participants       int `json:"participants"`
+	Points             int `json:"points"`
+	Predictions        int `json:"predictions"`
+	ExactPredictions   int `json:"exactPredictions"`
+	CorrectPredictions int `json:"correctPredictions"`
+	// Award is the nomination this person won, if any (see
+	// scoring.PickEventAwards) — the part of a recap people screenshot.
+	Award string `json:"award,omitempty"`
+}
+
 // ReleaseAnnouncementStore records which releases have already been
 // announced, so a restart, a second instance or a rollback-and-forward
 // cannot repeat the same announcement. Claim returns true only for the

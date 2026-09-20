@@ -189,7 +189,8 @@ func run() error {
 	}
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
 		WithRecaps(chats, chatTitle, log)
-	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log)
+	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
+		WithPersonalRecaps(chats)
 
 	// teamMatch resolves a team with no cached ranking against whichever
 	// ranking feeds (teamMatchSources) are actually enabled — pointless
@@ -275,6 +276,7 @@ func run() error {
 		Publishers: []common.OutboxPublisher{
 			telegram.NewMatchResultPublisher(telegramClient, chats, texts, *botUser.Username),
 			telegram.NewEventFinishedPublisher(telegramClient, chats, texts),
+			telegram.NewEventRecapPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewMonthlyDigestPublisher(telegramClient, chats, texts),
 			telegram.NewAnnualDigestPublisher(telegramClient, chats, texts),
 			telegram.NewBigEventPublisher(telegramClient, chats, texts),

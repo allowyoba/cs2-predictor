@@ -287,3 +287,96 @@ func (fakeChatsForCompletion) Nickname(context.Context, common.UserID) (*string,
 	return nil, nil
 }
 func (fakeChatsForCompletion) SetNickname(context.Context, common.UserID, string) error { return nil }
+
+// fakeRecapAudience answers which of the candidates asked for recaps.
+type fakeRecapAudience struct {
+	optedIn map[int64]bool
+	asked   []common.NotificationKind
+}
+
+func (a *fakeRecapAudience) Recipients(_ context.Context, kind common.NotificationKind, candidates []common.UserID) ([]common.UserID, error) {
+	a.asked = append(a.asked, kind)
+	var out []common.UserID
+	for _, c := range candidates {
+		if a.optedIn[c.Value] {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// The chat's recap is everyone's result and nobody's in particular. This
+// is the other half: where the reader finished, out of how many, and what
+// they got right — and only for the people who asked for DMs at all.
+func TestEventCompletion_DMsEachParticipantTheirOwnResult(t *testing.T) {
+	eventID := common.NewEventID()
+	catalog := &fakeCatalogForCompletion{matches: map[common.EventID][]competition.Match{
+		eventID: {newMatch(competition.MatchFinished)},
+	}}
+	chatID := common.ChatID{Value: -1}
+	subs := &fakeSubsForCompletion{chats: []common.ChatID{chatID}}
+	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{
+		{UserID: common.UserID{Value: 1}, DisplayName: "Opted in", Rank: 1, Points: 20, Predictions: 8, ExactPredictions: 3, CorrectPredictions: 6},
+		{UserID: common.UserID{Value: 2}, DisplayName: "Opted out", Rank: 2, Points: 12, Predictions: 7, ExactPredictions: 1, CorrectPredictions: 4},
+		{UserID: common.UserID{Value: 3}, DisplayName: "Never voted", Rank: 3},
+	}}
+	outbox := newTestOutboxForCompletion()
+	audience := &fakeRecapAudience{optedIn: map[int64]bool{1: true, 3: true}}
+
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox,
+		common.SystemUTCClock(), identityTx, slog.Default()).WithPersonalRecaps(audience)
+	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Major"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var personal int
+	for _, eventType := range outbox.enqueued {
+		if eventType == "telegram.event-recap-personal" {
+			personal++
+		}
+	}
+	if personal != 1 {
+		t.Fatalf("expected one personal recap — the opted-in participant — got %d of %v", personal, outbox.enqueued)
+	}
+	// Reusing the per-match opt-in rather than inventing a second switch
+	// that means almost the same thing.
+	if len(audience.asked) != 1 || audience.asked[0] != common.NotifyResultRecaps {
+		t.Fatalf("asked about %v, want the existing recap preference", audience.asked)
+	}
+	// The chat's own recap still goes out regardless.
+	var chatRecap bool
+	for _, eventType := range outbox.enqueued {
+		if eventType == "telegram.event-finished" {
+			chatRecap = true
+		}
+	}
+	if !chatRecap {
+		t.Fatal("the chat recap must be unaffected by the personal one")
+	}
+}
+
+// Without an audience wired the personal half is simply off, and the chat
+// recap behaves exactly as it did before.
+func TestEventCompletion_SendsNoPersonalRecapsWithoutAnAudience(t *testing.T) {
+	eventID := common.NewEventID()
+	catalog := &fakeCatalogForCompletion{matches: map[common.EventID][]competition.Match{
+		eventID: {newMatch(competition.MatchFinished)},
+	}}
+	subs := &fakeSubsForCompletion{chats: []common.ChatID{{Value: -1}}}
+	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{
+		{UserID: common.UserID{Value: 1}, DisplayName: "A", Rank: 1, Points: 5, Predictions: 3},
+	}}
+	outbox := newTestOutboxForCompletion()
+
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox,
+		common.SystemUTCClock(), identityTx, slog.Default())
+	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Major"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, eventType := range outbox.enqueued {
+		if eventType == "telegram.event-recap-personal" {
+			t.Fatal("no audience means no personal recaps")
+		}
+	}
+}
