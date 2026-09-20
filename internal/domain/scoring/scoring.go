@@ -18,16 +18,18 @@ const (
 	AwardOutcome    AwardKind = "OUTCOME"
 )
 
+// Award is one person's points for one poll.
+//
+// The chat, the tournament, the match and when it started used to ride
+// along here as well. All four hang off the poll, so carrying them made
+// the same fact exist in two places with nothing keeping them agreed —
+// and nothing ever read them back. See migration 0049.
 type Award struct {
-	ChatID         common.ChatID
-	EventID        common.EventID
-	MatchID        common.MatchID
-	PollID         common.PollID
-	UserID         common.UserID
-	Points         int
-	Kind           AwardKind
-	MatchStartedAt time.Time
-	AwardedAt      time.Time
+	PollID    common.PollID
+	UserID    common.UserID
+	Points    int
+	Kind      AwardKind
+	AwardedAt time.Time
 }
 
 // StatsPeriod selects the leaderboard time window. Exactly one field

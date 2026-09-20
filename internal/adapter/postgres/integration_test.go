@@ -126,8 +126,8 @@ func TestPredictionIsPersistedScoredAndRankedWithinItsChat(t *testing.T) {
 	}
 
 	if err := scoringRepo.ReplaceAwards(ctx, poll.ID, []scoring.Award{{
-		ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: poll.ID, UserID: voter,
-		Points: 2, Kind: scoring.AwardExactScore, MatchStartedAt: now, AwardedAt: now.Add(time.Minute),
+		PollID: poll.ID, UserID: voter,
+		Points: 2, Kind: scoring.AwardExactScore, AwardedAt: now.Add(time.Minute),
 	}}); err != nil {
 		t.Fatalf("replace awards: %v", err)
 	}
@@ -167,8 +167,8 @@ func TestPredictionIsPersistedScoredAndRankedWithinItsChat(t *testing.T) {
 		t.Fatalf("save other-chat vote: %v", err)
 	}
 	if err := scoringRepo.ReplaceAwards(ctx, otherPoll.ID, []scoring.Award{{
-		ChatID: otherChatID, EventID: event.ID, MatchID: match.ID, PollID: otherPoll.ID, UserID: voter,
-		Points: 2, Kind: scoring.AwardExactScore, MatchStartedAt: now, AwardedAt: now.Add(time.Minute),
+		PollID: otherPoll.ID, UserID: voter,
+		Points: 2, Kind: scoring.AwardExactScore, AwardedAt: now.Add(time.Minute),
 	}}); err != nil {
 		t.Fatalf("replace other-chat awards: %v", err)
 	}
@@ -1120,8 +1120,8 @@ func TestScoringRepository_EventSpecialsCountsCrowdRelativeAchievements(t *testi
 		var awards []scoring.Award
 		for _, user := range p.correct {
 			awards = append(awards, scoring.Award{
-				ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: user,
-				Points: 1, Kind: scoring.AwardOutcome, MatchStartedAt: playedAt, AwardedAt: started,
+				PollID: saved.ID, UserID: user,
+				Points: 1, Kind: scoring.AwardOutcome, AwardedAt: started,
 			})
 		}
 		if err := scoringRepo.ReplaceAwards(ctx, saved.ID, awards); err != nil {
@@ -1154,8 +1154,8 @@ func TestScoringRepository_EventSpecialsCountsCrowdRelativeAchievements(t *testi
 		t.Fatal(err)
 	}
 	if err := scoringRepo.ReplaceAwards(ctx, soloPoll.ID, []scoring.Award{{
-		ChatID: chatID, EventID: event.ID, MatchID: soloMatch.ID, PollID: soloPoll.ID, UserID: quiet,
-		Points: 1, Kind: scoring.AwardOutcome, MatchStartedAt: soloPlayedAt, AwardedAt: started,
+		PollID: soloPoll.ID, UserID: quiet,
+		Points: 1, Kind: scoring.AwardOutcome, AwardedAt: started,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -2157,8 +2157,8 @@ func TestScoringRepository_UserBetsReportsScorelinesAndFiltersByChat(t *testing.
 		}
 		if points > 0 {
 			if err := scoringRepo.ReplaceAwards(ctx, saved.ID, []scoring.Award{{
-				ChatID: c, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: voter,
-				Points: points, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt,
+				PollID: saved.ID, UserID: voter,
+				Points: points, Kind: scoring.AwardExactScore, AwardedAt: playedAt,
 			}}); err != nil {
 				t.Fatal(err)
 			}
@@ -2351,10 +2351,10 @@ func TestScoringRepository_PointsProgressionOrdersEventsAndSumsPerUser(t *testin
 		}
 		var awards []scoring.Award
 		if alexPoints > 0 {
-			awards = append(awards, scoring.Award{ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: alex, Points: alexPoints, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt})
+			awards = append(awards, scoring.Award{PollID: saved.ID, UserID: alex, Points: alexPoints, Kind: scoring.AwardExactScore, AwardedAt: playedAt})
 		}
 		if samPoints > 0 {
-			awards = append(awards, scoring.Award{ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: sam, Points: samPoints, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt})
+			awards = append(awards, scoring.Award{PollID: saved.ID, UserID: sam, Points: samPoints, Kind: scoring.AwardExactScore, AwardedAt: playedAt})
 		}
 		if len(awards) > 0 {
 			if err := scoringRepo.ReplaceAwards(ctx, saved.ID, awards); err != nil {
@@ -2881,8 +2881,8 @@ func TestScoringRepository_LeaderboardPrefersTheChosenNickname(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := scoringRepo.ReplaceAwards(ctx, poll.ID, []scoring.Award{{
-		ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: poll.ID, UserID: voter,
-		Points: 2, Kind: scoring.AwardExactScore, MatchStartedAt: now, AwardedAt: now.Add(time.Minute),
+		PollID: poll.ID, UserID: voter,
+		Points: 2, Kind: scoring.AwardExactScore, AwardedAt: now.Add(time.Minute),
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -3551,8 +3551,8 @@ func TestScoringRepository_LeaderboardNarrowsToOneGame(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := scoringRepo.ReplaceAwards(ctx, saved.ID, []scoring.Award{{
-			ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: player,
-			Points: points, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt,
+			PollID: saved.ID, UserID: player,
+			Points: points, Kind: scoring.AwardExactScore, AwardedAt: playedAt,
 		}}); err != nil {
 			t.Fatal(err)
 		}

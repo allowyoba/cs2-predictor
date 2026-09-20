@@ -26,7 +26,10 @@ func (r *ScoringRepository) ActivePredictions(ctx context.Context, userID common
 		       m.scheduled_at, p.closes_at,
 		       COALESCE(t1.name, ''), COALESCE(t2.name, ''),
 		       po.first_score, po.second_score,
-		       m.streams
+		       (SELECT jsonb_agg(jsonb_build_object('url', ms.url, 'language', ms.language,
+		                                            'main', ms.main, 'official', ms.official)
+		                         ORDER BY ms.official DESC, ms.main DESC, ms.url)
+		          FROM match_stream ms WHERE ms.match_id = m.id)
 		  FROM prediction_vote v
 		  JOIN match_poll p ON p.id = v.poll_id
 		  JOIN telegram_chat c ON c.id = p.chat_id

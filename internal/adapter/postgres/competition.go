@@ -316,7 +316,15 @@ func (r *CompetitionRepository) SaveEvent(ctx context.Context, e competition.Eve
 // LEFT JOINs, so listing N matches costs one query rather than N.
 const matchSelect = `
 	SELECT m.id, m.event_id, m.external_id, m.status, m.series_kind, m.series_size,
-	       m.scheduled_at, m.actual_started_at, m.first_score, m.second_score, m.streams,
+	       m.scheduled_at, m.actual_started_at, m.first_score, m.second_score,
+	       -- Stored as rows (match_stream); assembled back into one value
+	       -- here so listing N matches still costs one round trip. The
+	       -- shape on the wire is a transport detail — what matters is that
+	       -- a broadcast is a row you can index, join and count.
+	       (SELECT jsonb_agg(jsonb_build_object('url', ms.url, 'language', ms.language,
+	                                            'main', ms.main, 'official', ms.official)
+	                         ORDER BY ms.official DESC, ms.main DESC, ms.url)
+	          FROM match_stream ms WHERE ms.match_id = m.id) AS streams,
 	       es.name, es.external_id,
 	       t1.id, t1.name, t1.external_id, t1.location, t1.logo_url, t1.hltv_logo_url,
 	       t2.id, t2.name, t2.external_id, t2.location, t2.logo_url, t2.hltv_logo_url
@@ -539,27 +547,37 @@ func (r *CompetitionRepository) SaveMatch(ctx context.Context, m competition.Mat
 			firstScore = &m.Score.First
 			secondScore = &m.Score.Second
 		}
-		var streamsRaw []byte
-		if len(m.Streams) > 0 {
-			var err error
-			streamsRaw, err = json.Marshal(m.Streams)
-			if err != nil {
-				return err
-			}
-		}
-
 		if _, err := ex.Exec(ctx,
 			`INSERT INTO esport_match(id, event_id, stage_id, provider_id, external_id, status, series_kind, series_size,
-			    scheduled_at, actual_started_at, first_score, second_score, streams, version, created_at, updated_at)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now(), now())
+			    scheduled_at, actual_started_at, first_score, second_score, version, created_at, updated_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), now())
 			 ON CONFLICT (id) DO UPDATE SET event_id=excluded.event_id, stage_id=excluded.stage_id,
 			   provider_id=excluded.provider_id, external_id=excluded.external_id, status=excluded.status,
 			   series_kind=excluded.series_kind, series_size=excluded.series_size, scheduled_at=excluded.scheduled_at,
 			   actual_started_at=excluded.actual_started_at, first_score=excluded.first_score, second_score=excluded.second_score,
-			   streams=excluded.streams, version=excluded.version, updated_at=now()`,
+			   version=excluded.version, updated_at=now()`,
 			m.ID.Value, m.EventID.Value, stageUUID, providerID, m.ExternalID, m.Status, m.Format.Kind, m.Format.Size,
-			m.ScheduledAt, m.ActualStartedAt, firstScore, secondScore, streamsRaw, version); err != nil {
+			m.ScheduledAt, m.ActualStartedAt, firstScore, secondScore, version); err != nil {
 			return err
+		}
+
+		// Replace-the-set, like match_team just below: a provider that
+		// drops a broadcast means the broadcast is gone, not that it
+		// should linger because nothing overwrote it.
+		if _, err := ex.Exec(ctx, `DELETE FROM match_stream WHERE match_id = $1`, m.ID.Value); err != nil {
+			return err
+		}
+		for _, stream := range m.Streams {
+			if stream.URL == "" {
+				continue
+			}
+			if _, err := ex.Exec(ctx,
+				`INSERT INTO match_stream(match_id, url, language, main, official) VALUES ($1,$2,$3,$4,$5)
+				 ON CONFLICT (match_id, url) DO UPDATE SET
+				   language = excluded.language, main = excluded.main, official = excluded.official`,
+				m.ID.Value, stream.URL, stream.Language, stream.Main, stream.Official); err != nil {
+				return err
+			}
 		}
 
 		if _, err := ex.Exec(ctx, `DELETE FROM match_team WHERE match_id = $1`, m.ID.Value); err != nil {
