@@ -203,6 +203,12 @@ type Repository interface {
 	// independent setting on Settings).
 	UserLocale(ctx context.Context, userID common.UserID) (*common.LocaleCode, error)
 	SetUserLocale(ctx context.Context, userID common.UserID, locale common.LocaleCode) error
+	// UserTimezone returns the person's own timezone for everything shown
+	// in their private chat, or nil when they have never chosen one — in
+	// which case the caller falls back to the chat's zone, which is what
+	// every private screen used before this existed.
+	UserTimezone(ctx context.Context, userID common.UserID) (*string, error)
+	SetUserTimezone(ctx context.Context, userID common.UserID, timezone string) error
 
 	// SetDMReachable records whether the bot may message this user
 	// privately. Telegram forbids a bot's first message to someone who has

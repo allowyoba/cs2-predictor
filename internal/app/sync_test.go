@@ -125,6 +125,11 @@ func (f *fakeSyncChats) Find(_ context.Context, chatID common.ChatID) (*chat.Set
 func (f *fakeSyncChats) Save(_ context.Context, s chat.Settings) (chat.Settings, error) {
 	return s, nil
 }
+func (f *fakeSyncChats) UserTimezone(context.Context, common.UserID) (*string, error) {
+	return nil, nil
+}
+func (f *fakeSyncChats) SetUserTimezone(context.Context, common.UserID, string) error { return nil }
+
 func (f *fakeSyncChats) SetAutoSubscribeGame(context.Context, common.ChatID, competition.GameCode, bool) error {
 	return nil
 }

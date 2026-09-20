@@ -263,6 +263,23 @@ func (h *UpdateHandler) userLocale(ctx context.Context, userID common.UserID) co
 	return *locale
 }
 
+// userZone is the timezone for everything rendered in a private chat: the
+// person's own stored choice, else the product default. Deliberately
+// separate from any group's zone, for the same reason userLocale is —
+// somebody can live in Berlin and manage a chat set to Moscow, and neither
+// setting should quietly become the other.
+func (h *UpdateHandler) userZone(ctx context.Context, userID common.UserID) *time.Location {
+	zone, err := h.Chats.UserTimezone(ctx, userID)
+	if err != nil {
+		loggerFrom(ctx, h.Log).Warn("user timezone lookup failed, falling back to default", "userId", userID.Value, "error", err)
+		return chat.ZoneOrDefault(chat.DefaultTimezone)
+	}
+	if zone == nil {
+		return chat.ZoneOrDefault(chat.DefaultTimezone)
+	}
+	return chat.ZoneOrDefault(*zone)
+}
+
 // resolveUserLocale is userLocale plus first-contact seeding: a user who has
 // never chosen a language gets one derived from their Telegram client's own
 // language_code, persisted so it survives and so the toggle has something to

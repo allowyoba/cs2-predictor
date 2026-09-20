@@ -20,8 +20,11 @@ type fakeRepo struct {
 	permissions []Permission
 }
 
-func (f fakeRepo) Find(context.Context, common.ChatID) (*Settings, error) { return nil, nil }
-func (f fakeRepo) Save(_ context.Context, s Settings) (Settings, error)   { return s, nil }
+func (f fakeRepo) Find(context.Context, common.ChatID) (*Settings, error)       { return nil, nil }
+func (f fakeRepo) Save(_ context.Context, s Settings) (Settings, error)         { return s, nil }
+func (f fakeRepo) UserTimezone(context.Context, common.UserID) (*string, error) { return nil, nil }
+func (f fakeRepo) SetUserTimezone(context.Context, common.UserID, string) error { return nil }
+
 func (f fakeRepo) SetAutoSubscribeGame(context.Context, common.ChatID, competition.GameCode, bool) error {
 	return nil
 }

@@ -413,6 +413,31 @@ func (r *ChatRepository) UserLocale(ctx context.Context, userID common.UserID) (
 	return &locale, nil
 }
 
+// UserTimezone and SetUserTimezone persist the person's own zone for
+// private-chat screens — NULL means they never chose one.
+func (r *ChatRepository) UserTimezone(ctx context.Context, userID common.UserID) (*string, error) {
+	var zone *string
+	err := executor(ctx, r.pool).QueryRow(ctx,
+		`SELECT timezone FROM telegram_user WHERE id = $1`, userID.Value).Scan(&zone)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return zone, err
+}
+
+func (r *ChatRepository) SetUserTimezone(ctx context.Context, userID common.UserID, timezone string) error {
+	if err := r.ensureUser(ctx, userID); err != nil {
+		return err
+	}
+	var value *string
+	if timezone != "" {
+		value = &timezone
+	}
+	_, err := executor(ctx, r.pool).Exec(ctx,
+		`UPDATE telegram_user SET timezone = $2, updated_at = now() WHERE id = $1`, userID.Value, value)
+	return err
+}
+
 func (r *ChatRepository) SetDMReachable(ctx context.Context, userID common.UserID, reachable bool) error {
 	if err := r.ensureUser(ctx, userID); err != nil {
 		return err

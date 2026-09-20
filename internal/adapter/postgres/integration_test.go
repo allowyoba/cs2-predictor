@@ -3391,3 +3391,42 @@ func TestEnrichmentRepository_ListTeamsFiltersByGame(t *testing.T) {
 		t.Fatalf("an unscoped listing still returns every team, got %d vs %d", len(all), len(cs2Teams))
 	}
 }
+
+// The reader's own timezone: absent until they choose one, and then
+// exactly what they chose.
+func TestChatRepository_UserTimezoneRoundTrips(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	userID := common.UserID{Value: 5150}
+
+	zone, err := chats.UserTimezone(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zone != nil {
+		t.Fatalf("a person who never chose has no zone of their own, got %v", *zone)
+	}
+
+	if err := chats.SetUserTimezone(ctx, userID, "Europe/Berlin"); err != nil {
+		t.Fatal(err)
+	}
+	zone, err = chats.UserTimezone(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zone == nil || *zone != "Europe/Berlin" {
+		t.Fatalf("zone = %v, want Europe/Berlin", zone)
+	}
+
+	// Clearing it puts them back on the chat's zone rather than on UTC.
+	if err := chats.SetUserTimezone(ctx, userID, ""); err != nil {
+		t.Fatal(err)
+	}
+	zone, err = chats.UserTimezone(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zone != nil {
+		t.Fatalf("expected the choice to be cleared, got %v", *zone)
+	}
+}
