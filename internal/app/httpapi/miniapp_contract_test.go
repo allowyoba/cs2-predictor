@@ -152,7 +152,7 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	}
 	// The public team endpoint feeds the same page.
 	for key := range jsonKeys(t, teamsResponse{Teams: []miniappTeam{{
-		ID: "1", Name: "G2", Location: "EU", Logo: "u", LogoProvider: "u", LogoHLTV: "u",
+		ID: "1", Name: "G2", Location: "EU", Logo: "u", LogoProvider: "u", LogoHLTV: "u", Chip: "dark",
 	}}}) {
 		emitted[key] = true
 	}

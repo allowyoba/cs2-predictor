@@ -18,6 +18,7 @@ import (
 type MiniAppLogos interface {
 	FindLogo(ctx context.Context, teamID common.TeamID, source enrichment.Source) (*enrichment.TeamLogo, error)
 	LogoDigests(ctx context.Context) (map[common.TeamID]map[enrichment.Source]string, error)
+	LogoChips(ctx context.Context) (map[common.TeamID]map[enrichment.Source]bool, error)
 }
 
 // logoHandler serves GET /api/miniapp/v1/teams/{id}/logo?src=<hltv|provider>.

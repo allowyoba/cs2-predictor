@@ -45,6 +45,11 @@ type miniappTeam struct {
 	Logo         string `json:"logo,omitempty"`
 	LogoProvider string `json:"logo_provider,omitempty"`
 	LogoHLTV     string `json:"logo_hltv,omitempty"`
+	// Chip is the background to draw behind this crest: "dark" for a light
+	// mark, "light" for a dark one, empty when it could not be measured.
+	// No single colour shows a white wordmark and a black one equally
+	// well, so the answer is per team rather than per app.
+	Chip string `json:"chip,omitempty"`
 }
 
 // teamsResponse is the endpoint's envelope. Counts are included because a
@@ -63,6 +68,40 @@ type teamsResponse struct {
 const miniappTeamsLimit = 100
 
 // teamsHandler serves GET /api/miniapp/v1/teams?game=<code>&logos=hltv.
+// teamRow renders one team: which crest to draw, both sources behind it,
+// and which chip belongs behind the chosen one.
+func teamRow(t competition.Team, preferHLTV bool, digests map[enrichment.Source]string, chips map[enrichment.Source]bool) miniappTeam {
+	provider := logoURL(t.ID, "PANDASCORE", digests["PANDASCORE"])
+	hltv := logoURL(t.ID, enrichment.SourceHLTV, digests[enrichment.SourceHLTV])
+
+	chosen, source := provider, enrichment.Source("PANDASCORE")
+	if preferHLTV && hltv != "" {
+		chosen, source = hltv, enrichment.SourceHLTV
+	} else if chosen == "" && hltv != "" {
+		chosen, source = hltv, enrichment.SourceHLTV
+	}
+
+	// "dark" means a dark chip behind a light mark. A crest nothing could
+	// measure gets no answer at all rather than a guessed one.
+	chip := ""
+	if light, measured := chips[source]; measured && chosen != "" {
+		chip = ternaryString(light, "dark", "light")
+	}
+	return miniappTeam{
+		ID: t.ID.Value.String(), Name: t.Name, Location: t.LocationFor(preferHLTV),
+		Logo: chosen, LogoProvider: provider, LogoHLTV: hltv, Chip: chip,
+	}
+}
+
+// ternaryString keeps a two-way choice on one line where writing it out
+// would be four lines saying less.
+func ternaryString(cond bool, ifTrue, ifFalse string) string {
+	if cond {
+		return ifTrue
+	}
+	return ifFalse
+}
+
 func teamsHandler(catalog TeamCatalog, logos MiniAppLogos) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if catalog == nil {
@@ -98,24 +137,20 @@ func teamsHandler(catalog TeamCatalog, logos MiniAppLogos) http.Handler {
 		// it came from: the bot fetched these once so that nobody's
 		// browser has to — see enrichment.TeamLogoCache.
 		digests := map[common.TeamID]map[enrichment.Source]string{}
+		// chips say whether each mark is light, so the app can put the
+		// opposite background behind it — there is no one colour that
+		// shows a white wordmark and a black one equally well.
+		chips := map[common.TeamID]map[enrichment.Source]bool{}
 		if logos != nil {
 			if found, err := logos.LogoDigests(r.Context()); err == nil {
 				digests = found
 			}
+			if found, err := logos.LogoChips(r.Context()); err == nil {
+				chips = found
+			}
 		}
 		for _, t := range teams {
-			provider := logoURL(t.ID, "PANDASCORE", digests[t.ID]["PANDASCORE"])
-			hltv := logoURL(t.ID, enrichment.SourceHLTV, digests[t.ID][enrichment.SourceHLTV])
-			chosen := provider
-			if preferHLTV && hltv != "" {
-				chosen = hltv
-			} else if chosen == "" {
-				chosen = hltv
-			}
-			body.Teams = append(body.Teams, miniappTeam{
-				ID: t.ID.Value.String(), Name: t.Name, Location: t.LocationFor(preferHLTV),
-				Logo: chosen, LogoProvider: provider, LogoHLTV: hltv,
-			})
+			body.Teams = append(body.Teams, teamRow(t, preferHLTV, digests[t.ID], chips[t.ID]))
 		}
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")

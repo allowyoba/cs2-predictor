@@ -231,10 +231,16 @@ func (m *LogoMirror) fetch(ctx context.Context, need enrichment.TeamLogoNeed) (*
 	}
 
 	sum := sha256.Sum256(body)
+	// Measured here, once, while the bytes are in hand — see
+	// logoIsLight. An unmeasurable format leaves it unrecorded.
+	var isLight *bool
+	if light, ok := logoIsLight(body); ok {
+		isLight = &light
+	}
 	return &enrichment.TeamLogo{
 		TeamID: need.TeamID, Source: need.Source, SourceURL: need.SourceURL,
 		ContentType: contentType, Bytes: body,
-		ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"),
+		ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), IsLight: isLight,
 		Digest: hex.EncodeToString(sum[:])[:16], FetchedAt: m.Clock.Now().UTC(),
 	}, nil
 }

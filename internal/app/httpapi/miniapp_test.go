@@ -46,6 +46,11 @@ func decodeTeams(t *testing.T, body []byte) teamsResponse {
 // endpoint builds URLs, it does not serve bytes.
 type stubLogos struct {
 	digests map[common.TeamID]map[enrichment.Source]string
+	chips   map[common.TeamID]map[enrichment.Source]bool
+}
+
+func (s *stubLogos) LogoChips(context.Context) (map[common.TeamID]map[enrichment.Source]bool, error) {
+	return s.chips, nil
 }
 
 func (s *stubLogos) FindLogo(context.Context, common.TeamID, enrichment.Source) (*enrichment.TeamLogo, error) {
@@ -69,10 +74,17 @@ func TestMiniappTeams_ServesCrestsFromThisOriginNeverTheProvidersCDN(t *testing.
 		// A team HLTV's ranking has never listed — most of them.
 		{ID: qualifier, Name: "Qualifier Five", LogoURL: "https://cdn-api.pandascore.co/five.png"},
 	}}
-	logos := &stubLogos{digests: map[common.TeamID]map[enrichment.Source]string{
-		vitality:  {"PANDASCORE": "aaaa1111", enrichment.SourceHLTV: "bbbb2222"},
-		qualifier: {"PANDASCORE": "cccc3333"},
-	}}
+	logos := &stubLogos{
+		digests: map[common.TeamID]map[enrichment.Source]string{
+			vitality:  {"PANDASCORE": "aaaa1111", enrichment.SourceHLTV: "bbbb2222"},
+			qualifier: {"PANDASCORE": "cccc3333"},
+		},
+		// A light mark needs a dark chip behind it; the unmeasured one
+		// gets no answer rather than a guessed one.
+		chips: map[common.TeamID]map[enrichment.Source]bool{
+			vitality: {"PANDASCORE": true},
+		},
+	}
 	handler := teamsHandler(teams, logos)
 
 	recorder := httptest.NewRecorder()
@@ -121,6 +133,36 @@ func TestMiniappTeams_ServesCrestsFromThisOriginNeverTheProvidersCDN(t *testing.
 	// switch without asking again — as our URLs, not theirs.
 	if body.Teams[0].LogoProvider == "" || body.Teams[0].LogoHLTV == "" {
 		t.Fatalf("expected both sources on the row, got %+v", body.Teams[0])
+	}
+}
+
+// No one background shows a white wordmark and a black one equally well,
+// so the chip is decided per crest — and left undecided rather than
+// guessed when the picture could not be measured.
+func TestMiniappTeams_TellsTheAppWhichChipToDrawBehindEachCrest(t *testing.T) {
+	light := common.NewTeamID()
+	unmeasured := common.NewTeamID()
+	teams := &stubTeams{teams: []competition.Team{
+		{ID: light, Name: "Vitality", LogoURL: "https://cdn-api.pandascore.co/v.png"},
+		{ID: unmeasured, Name: "Svg Team", LogoURL: "https://cdn-api.pandascore.co/s.svg"},
+	}}
+	logos := &stubLogos{
+		digests: map[common.TeamID]map[enrichment.Source]string{
+			light:      {"PANDASCORE": "aaaa1111"},
+			unmeasured: {"PANDASCORE": "bbbb2222"},
+		},
+		chips: map[common.TeamID]map[enrichment.Source]bool{light: {"PANDASCORE": true}},
+	}
+
+	recorder := httptest.NewRecorder()
+	teamsHandler(teams, logos).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2", nil))
+
+	body := decodeTeams(t, recorder.Body.Bytes())
+	if body.Teams[0].Chip != "dark" {
+		t.Fatalf("chip = %q, want a dark chip behind a light mark", body.Teams[0].Chip)
+	}
+	if body.Teams[1].Chip != "" {
+		t.Fatalf("chip = %q, want no answer for a crest nothing could measure", body.Teams[1].Chip)
 	}
 }
 

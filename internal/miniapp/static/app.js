@@ -144,7 +144,9 @@
       const body = await fetchJSON(`/api/miniapp/v1/teams?game=${encodeURIComponent(game)}&logos=${logoSource}`);
       const byName = logos.get(game);
       for (const team of body.teams || []) {
-        if (team.name && team.logo) byName.set(team.name.toLowerCase(), team.logo);
+        if (!team.name || !team.logo) continue;
+        byName.set(team.name.toLowerCase(), team.logo);
+        if (team.chip) chips.set(team.name.toLowerCase(), team.chip);
       }
     } catch (error) {
       console.warn('team crests unavailable, falling back to initials', error);
@@ -219,6 +221,8 @@
         img.remove();
         settle(false);
       });
+      const chip = chips.get(name?.toLowerCase?.() || '');
+      if (chip) wrap.classList.add('chip-' + chip);
       wrap.append(img);
       // Set last: a cached image can fire load before the handler exists.
       img.src = url;
