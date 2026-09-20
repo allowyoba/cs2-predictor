@@ -57,7 +57,7 @@ func TestSubscribedEvents_GroupContextDefersActionsUntilTournamentIsSelected(t *
 	defer server.Close()
 	handler, _ := newTestHandler(t, server)
 	eventID := common.NewEventID()
-	catalog := &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}}
+	catalog := &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}}}
 	handler.Catalog = catalog
 	handler.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{ChatID: common.ChatID{Value: -1}, EventID: eventID}}}
 	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU}
@@ -94,7 +94,7 @@ func TestSubscribedEvents_DMContextDefersUnsubscribeUntilTournamentIsSelected(t 
 	defer server.Close()
 	handler, _ := newTestHandler(t, server)
 	eventID := common.NewEventID()
-	catalog := &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}}
+	catalog := &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}}}
 	handler.Catalog = catalog
 	handler.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{ChatID: common.ChatID{Value: -1}, EventID: eventID}}}
 	settings := chat.Settings{ChatID: common.ChatID{Value: -1}, Locale: common.LocaleRU}
@@ -226,7 +226,7 @@ func TestTopicsCommand_RendersTournamentPickerBeforeBindAction(t *testing.T) {
 	handler, chats := newTestHandler(t, server)
 	handler.Authorization = chat.NewAuthorizationService(chats, fakeMembership{role: chat.RoleAdministrator})
 	eventID := common.NewEventID()
-	handler.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}}
+	handler.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}}}
 	handler.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{ChatID: common.ChatID{Value: -1}, EventID: eventID}}}
 
 	msg := &Message{Chat: Chat{ID: -1, Type: "group"}, From: &User{ID: 1}, Text: strPtr("/topics"), MessageThreadID: int64Ptr(555)}

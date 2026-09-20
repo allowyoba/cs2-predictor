@@ -111,7 +111,7 @@ func setupUnsubscribeTest(t *testing.T, admins []common.UserID, unreachable map[
 	server, calls := newSelectiveServer(t, unreachable)
 	handler, chats := newTestHandler(t, server)
 	handler.Authorization = chat.NewAuthorizationService(chats, &fakeAdminMembership{admins: admins})
-	handler.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}}
+	handler.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}}}
 	handler.Subscriptions = &dataSubs{subs: []subscription.EventSubscription{{ChatID: chatID, EventID: eventID}}}
 	pending := newFakePendingApprovals()
 	handler.PendingApprovals = pending

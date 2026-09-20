@@ -11,6 +11,7 @@ package enrichment
 import (
 	"time"
 
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -31,6 +32,41 @@ const (
 	// cache row).
 	SourceHLTV Source = "HLTV"
 )
+
+// RanksGame reports whether this source's team ranking applies to game at
+// all.
+//
+// Valve's VRS and HLTV's world ranking rank Counter-Strike teams and
+// nothing else. The organisations behind them are not confined to one
+// game — BetBoom, Spirit, Falcons and many others field a CS2 roster and a
+// Dota 2 roster under the same name — but a ranking earned by one of those
+// rosters says nothing whatsoever about the other. Matching a ranking feed
+// against team names alone therefore has to be told which game it is
+// allowed to touch, or it will confidently attach a Counter-Strike
+// ranking to a Dota 2 team that merely shares its organisation's name.
+func RanksGame(source Source, game competition.GameCode) bool {
+	switch source {
+	case SourceValveVRS, SourceHLTV:
+		return game == competition.GameCS2
+	default:
+		// No other source produces team rankings today; a new one has to
+		// answer this question for itself rather than inherit a default
+		// that happens to be permissive.
+		return false
+	}
+}
+
+// RankedGames lists the games a ranking source covers — the filter its
+// sync applies when loading the teams it may match against.
+func RankedGames(source Source) []competition.GameCode {
+	var games []competition.GameCode
+	for _, game := range competition.Games {
+		if RanksGame(source, game) {
+			games = append(games, game)
+		}
+	}
+	return games
+}
 
 // TeamIdentity is how a provider refers to a team before it has been
 // resolved to our own common.TeamID: a reported name plus whatever
