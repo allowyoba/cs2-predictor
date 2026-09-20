@@ -44,8 +44,13 @@ subscribed, unsubscribed, or got made a moderator, and when. `Settings → Recen
 confirmation screen that names exactly which chats it'll touch. Permissions get re-checked per chat at the moment it
 actually applies, not cached from when you opened the screen.
 
-**Personal notifications**, off by default and entirely opt-in: a nudge if you haven't voted yet and the poll is about
-to close, and a short recap of how your own prediction landed once the match finishes.
+**Every notification is off by default**, and every one of them has a switch. Nothing the bot sends on its own
+initiative — a nudge before a poll closes, a recap of how your prediction landed, a tournament's closing standings, the
+monthly and annual reports, the offer to follow a newly announced event, the broadcast link, the operational alerts an
+administrator gets — goes out until somebody has asked for it. A chat's managers set what lands in the room, each person
+sets what lands in their own DM, and an operator sets which alerts are worth being woken by. What is not switchable is
+the bot answering something you just did: a poll's result, the confirmation of an unsubscribe. Those are replies, and a
+reply nobody receives is a broken command rather than a quiet one.
 
 **A personal stats breakdown** — current streak, best streak ever, your form over the last 10 predictions, accuracy
 broken down per team, and how the last 30 days compare to the 30 before that.

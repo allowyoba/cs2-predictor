@@ -33,16 +33,11 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 	topTierLabel := h.Texts.Get("settings.tournaments_label", settings.Locale, tournamentMode)
 	autoSubscribeLabel := h.Texts.Get("settings.auto_subscribe_label", settings.Locale, h.autoSubscribeState(settings))
 	streamLanguageLabel := h.Texts.Get("settings.stream_language_label", settings.Locale, h.localeName(settings.StreamLocale(), settings.Locale))
-	streamAnnounceState := h.Texts.Get("settings.stream_announce_off", settings.Locale)
-	if settings.StreamAnnouncements {
-		streamAnnounceState = h.Texts.Get("settings.stream_announce_on", settings.Locale)
-	}
-	streamAnnounceLabel := h.Texts.Get("settings.stream_announce_label", settings.Locale, streamAnnounceState)
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
 		{button(languageLabel, "settings:locale")},
 		{button(timezoneLabel, "settings:timezone")},
 		{button(streamLanguageLabel, "settings:stream_language")},
-		{button(streamAnnounceLabel, "settings:stream_announce")},
+		{button(h.Texts.Get("settings.notifications", settings.Locale), "settings:notify")},
 		{button(h.quietHoursLabel(settings), "settings:quiet")},
 		{button(h.logoSourceLabel(settings), "settings:logos")},
 		{button(topTierLabel, "settings:top_tier")},
@@ -173,7 +168,11 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // adding its kind here fails that test.
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
-	"top_tier", "auto_subscribe", "stream_language", "stream_announce", "quiet_hours", "logo_source", "games", "event_topic", "moderator_added", "moderator_removed",
+	"top_tier", "auto_subscribe", "stream_language", "notify", "quiet_hours", "logo_source", "games", "event_topic", "moderator_added", "moderator_removed",
+	// stream_announce is retired as a call site — the switch moved into
+	// the notifications screen — but rows written under it are still in
+	// the history, and a label they no longer have would read as a bug.
+	"stream_announce",
 	"moderator_permissions_changed", "invitation_created", "invitation_revoked", "invitation_accepted",
 }
 

@@ -197,7 +197,8 @@ func newTestSync(t *testing.T, provider *fixedProvider, catalog *fakeSyncCatalog
 		t.Fatal(err)
 	}
 	return &CompetitionSynchronization{
-		Gateway: gw, Catalog: catalog, Subscriptions: subs, Chats: chats, ActiveChats: chats, Outbox: outbox,
+		Switches: allNotificationsOn{},
+		Gateway:  gw, Catalog: catalog, Subscriptions: subs, Chats: chats, ActiveChats: chats, Outbox: outbox,
 		Lock: fakeClusterLock{}, Clock: common.SystemUTCClock(), Metrics: newTestMetrics(), Log: slog.Default(),
 	}
 }

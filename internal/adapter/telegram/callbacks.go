@@ -146,6 +146,21 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.outboxStatusView(ctx, target, userID, locale)
 	case data == "hub:outbox:replay":
 		err = h.replayDeadLetters(ctx, cb, target, userID, locale)
+	// Alerts are configured for the chat they arrive in, which is the same
+	// chat id the deployment lists as an operator contact.
+	case data == "hub:alerts":
+		if !h.isRootTeamMatchOperator(userID) {
+			err = h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+			break
+		}
+		err = h.alertsMenu(ctx, target, common.ChatID{Value: cb.Message.Chat.ID}, locale)
+	case strings.HasPrefix(data, "alerts:toggle:"):
+		if !h.isRootTeamMatchOperator(userID) {
+			err = h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+			break
+		}
+		err = h.toggleAlert(ctx, target, common.ChatID{Value: cb.Message.Chat.ID}, locale,
+			strings.TrimPrefix(data, "alerts:toggle:"))
 	case data == "hub:team_match_operators":
 		err = h.listTeamMatchOperators(ctx, target, userID, locale)
 	case data == "tmatch_admin:add":

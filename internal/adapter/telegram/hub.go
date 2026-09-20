@@ -62,6 +62,7 @@ func (h *UpdateHandler) systemToolsMenu(ctx context.Context, target replyTarget,
 		rows = append(rows,
 			[]InlineButton{button(h.Texts.Get("hub.provider_status", locale), "hub:provider_status")},
 			[]InlineButton{button(h.Texts.Get("hub.outbox", locale), "hub:outbox")},
+			[]InlineButton{button(h.Texts.Get("notify.alert.title", locale), "hub:alerts")},
 			[]InlineButton{button(h.Texts.Get("hub.team_match_operators", locale), "hub:team_match_operators")},
 		)
 	}

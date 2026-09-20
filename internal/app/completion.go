@@ -30,9 +30,11 @@ type EventCompletionService struct {
 	// audience filters the personal recaps by who asked for them; nil
 	// turns that half of the feature off entirely.
 	audience common.NotificationAudience
-	clock    common.Clock
-	runTx    TxRunner
-	log      *slog.Logger
+	// gate answers whether the chat asked for tournament recaps at all.
+	gate  NotifyGate
+	clock common.Clock
+	runTx TxRunner
+	log   *slog.Logger
 }
 
 func NewEventCompletionService(catalog competition.Catalog, subscriptions subscription.Repository, chats chat.Repository,
@@ -42,6 +44,14 @@ func NewEventCompletionService(catalog competition.Catalog, subscriptions subscr
 		catalog: catalog, subscriptions: subscriptions, chats: chats,
 		scoringRepo: scoringRepo, specials: specials, outbox: outbox, clock: clock, runTx: runTx, log: log,
 	}
+}
+
+// WithSwitches supplies the preference store every proactive message is
+// checked against. Without one nothing goes out, which is the default
+// rather than a failure mode.
+func (s *EventCompletionService) WithSwitches(switches common.NotifySwitchboard) *EventCompletionService {
+	s.gate = NotifyGate{Switches: switches}
+	return s
 }
 
 // WithPersonalRecaps enables the DM half of the tournament recap, mirroring
@@ -169,7 +179,7 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 		if err != nil {
 			return err
 		}
-		if _, err := s.outbox.Enqueue(txCtx, "EVENT", event.ID.Value.String(), "telegram.event-finished", string(payload)); err != nil {
+		if err := s.enqueueChatRecap(txCtx, event, chatID, payload); err != nil {
 			return err
 		}
 		s.fanOutPersonalRecaps(txCtx, event, chatID, standings, awards)
@@ -178,14 +188,28 @@ func (s *EventCompletionService) completeForChat(ctx context.Context, event comp
 	})
 }
 
+// enqueueChatRecap posts the tournament's leaderboard to the room, if the
+// room asked for it. Opt-in like everything else the bot posts unprompted;
+// the personal notes are a separate decision, made by each person for
+// their own DM.
+func (s *EventCompletionService) enqueueChatRecap(ctx context.Context, event competition.Event, chatID common.ChatID, payload []byte) error {
+	wanted, err := s.gate.ChatWants(ctx, chatID, common.ChatNotifyEventFinished)
+	if err != nil || !wanted {
+		return err
+	}
+	_, err = s.outbox.Enqueue(ctx, "EVENT", event.ID.Value.String(), "telegram.event-finished", string(payload))
+	return err
+}
+
 // fanOutPersonalRecaps DMs each participant their own half of the recap:
 // where they finished, out of how many, and what they got right. The chat
 // gets a leaderboard, which is everyone's result and nobody's in
 // particular.
 //
-// Opt-in through the same preference as the per-match recap — a second
-// switch meaning "results in my DMs, but the other kind" is exactly the
-// settings screen nobody reads. Best effort throughout: the tournament is
+// It has its own opt-in, separate from the per-match recap: one arrives
+// when a match you predicted is settled, the other once a whole tournament
+// closes, and someone who wants the second every few weeks may well not
+// want the first several times a day. Best effort throughout: the tournament is
 // already closed and the chat already told, and failing that over a
 // personal note would undo both.
 func (s *EventCompletionService) fanOutPersonalRecaps(ctx context.Context, event competition.Event, chatID common.ChatID,
@@ -197,7 +221,7 @@ func (s *EventCompletionService) fanOutPersonalRecaps(ctx context.Context, event
 	if len(players) == 0 {
 		return
 	}
-	recipients, err := s.audience.Recipients(ctx, common.NotifyResultRecaps, players)
+	recipients, err := s.audience.Recipients(ctx, common.NotifyEventRecaps, players)
 	if err != nil {
 		s.log.Error("personal recap audience lookup failed", "chatId", chatID.Value, "eventId", event.ID.Value, "error", err)
 		return

@@ -178,7 +178,7 @@ func newEveFixture(t *testing.T, now time.Time, startsIn time.Duration, matches 
 				matches: map[common.EventID][]competition.Match{eventID: matches},
 			},
 			Scoring: &eveScoring{standings: map[common.EventID][]scoring.UserStanding{}},
-			Store:   store, Outbox: outbox, Lock: fakeClusterLock{},
+			Store:   store, Outbox: outbox, Switches: allNotificationsOn{}, Lock: fakeClusterLock{},
 			Clock: fixedClock{now: now}, Log: slog.Default(),
 		},
 	}

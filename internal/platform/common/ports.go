@@ -436,7 +436,28 @@ const (
 	// NotifyPollReminders DMs the person shortly before a poll closes in a
 	// chat they play in, if they haven't voted yet.
 	NotifyPollReminders NotificationKind = "reminders"
+	// NotifyEventRecaps DMs the person how their own tournament went once
+	// it closes — where they placed, and what they were nominated for.
+	NotifyEventRecaps NotificationKind = "event_recaps"
 )
+
+// PersonalNotificationKinds is the catalogue, in the order the DM settings
+// screen shows it.
+var PersonalNotificationKinds = []NotificationKind{
+	NotifyResultRecaps,
+	NotifyEventRecaps,
+	NotifyPollReminders,
+}
+
+// KnownNotificationKind reports whether kind is one of the catalogue's.
+func KnownNotificationKind(kind NotificationKind) bool {
+	for _, known := range PersonalNotificationKinds {
+		if known == kind {
+			return true
+		}
+	}
+	return false
+}
 
 // NotificationAudience narrows a candidate list to the people who actually
 // asked to hear about something privately. Both nudges are opt-in and both
