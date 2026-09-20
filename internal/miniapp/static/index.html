@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-game="cs2">
+<html lang="ru" data-game="all">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
@@ -16,81 +16,82 @@
         <div class="brand-copy"><strong>Predictor</strong><small>ANALYST HUB</small></div>
       </div>
       <div class="header-actions">
-        <button class="icon-button" aria-label="Уведомления"><span class="notification-dot"></span><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
-        <button class="profile-pill" data-go="profile" aria-label="Открыть профиль"><span>A</span></button>
+        <button class="profile-pill" data-go="profile" aria-label="Открыть профиль"><span id="profilePill">—</span></button>
       </div>
     </header>
 
-    <div class="game-rail-wrap" aria-label="Выбор дисциплины">
-      <div class="game-rail" id="gameRail">
-        <button class="game-chip active" data-game="cs2" aria-pressed="true"><i class="game-dot"></i><span>CS2</span><small>75%</small></button>
-        <button class="game-chip" data-game="dota2" aria-pressed="false"><i class="game-dot"></i><span>Dota 2</span><small>68%</small></button>
-        <button class="game-chip" data-game="valorant" aria-pressed="false"><i class="game-dot"></i><span>Valorant</span><small>72%</small></button>
-        <button class="game-chip" data-game="lol" aria-pressed="false"><i class="game-dot"></i><span>LoL</span><small>64%</small></button>
-      </div>
+    <!--
+      Пустой: дисциплины приходят из ответа API — те, в которых у человека
+      действительно есть прогнозы. Захардкоженный список показывал игры,
+      в которые человек не играл, с процентами, которых не существует.
+    -->
+    <div class="game-rail-wrap" aria-label="Выбор дисциплины" id="gameRailWrap" hidden>
+      <div class="game-rail" id="gameRail"></div>
     </div>
 
     <p class="access-notice" id="accessNotice" role="status" hidden></p>
 
     <main>
+      <!--
+        Обзор отвечает на один вопрос: как я выступаю сейчас. Разбор по
+        играм и командам живёт в «Аналитике», полный список — в «Истории»,
+        всё за всё время — в «Профиле». Здесь на них ведут ссылки, а не
+        копии: каждая цифра в приложении должна существовать в одном месте.
+      -->
       <section class="screen is-active" data-screen="dashboard" aria-labelledby="dashboard-title">
         <div class="section-heading hero-heading">
-          <div><div class="eyebrow" id="gameEyebrow">CS2 · ПОСЛЕДНИЕ 30 ДНЕЙ</div><h1 id="dashboard-title">Форма аналитика</h1></div>
-          <button class="period-chip" type="button">30 дней <span>⌄</span></button>
+          <div><div class="eyebrow">ТЕКУЩАЯ ФОРМА</div><h1 id="dashboard-title">Форма аналитика</h1></div>
         </div>
 
         <article class="performance-card">
           <div class="performance-top">
             <div class="metric-block">
               <span class="metric-label">Точность</span>
-              <div class="metric-value"><span id="accuracyValue">75</span><small>%</small></div>
-              <p id="accuracySub">63 верных из 84 прогнозов</p>
+              <div class="metric-value"><span id="accuracyValue">—</span><small>%</small></div>
+              <p id="accuracySub">нет завершённых прогнозов</p>
             </div>
-            <div class="rank-orbit" aria-label="Форма за период">
-              <div class="rank-orbit-inner"><small>FORM</small><strong id="formScore">82</strong></div>
+            <div class="rank-orbit" id="formOrbit" aria-label="Форма за последние прогнозы" style="--form-fill:0%">
+              <div class="rank-orbit-inner"><small>FORM</small><strong id="formScore">—</strong></div>
             </div>
           </div>
           <div class="delta-row">
-            <span class="delta positive" id="trendValue">↗ +8 п.п.</span>
-            <span class="muted">к предыдущему периоду</span>
+            <span class="delta" id="trendValue">—</span>
+            <span class="muted">к предыдущему окну</span>
           </div>
-          <div class="spark-bars" aria-hidden="true"><i style="height:34%"></i><i style="height:48%"></i><i style="height:42%"></i><i style="height:63%"></i><i style="height:58%"></i><i style="height:78%"></i><i style="height:72%"></i><i style="height:90%"></i><i style="height:82%"></i><i style="height:100%"></i></div>
+          <div class="form-strip" id="formStrip" aria-label="Последние результаты"></div>
         </article>
 
         <div class="quick-metrics" aria-label="Ключевые показатели">
-          <article><span>Серия</span><strong id="streakValue">4</strong><small>верных подряд</small></article>
-          <article><span>Выборка</span><strong id="sampleValue">84</strong><small>за 30 дней</small></article>
-          <article><span>Лучший сегмент</span><strong id="bestSegment">BO3</strong><small id="bestSegmentSub">78% · n=86</small></article>
+          <article><span>Серия</span><strong id="streakValue">—</strong><small>верных подряд</small></article>
+          <article><span>Лучшая серия</span><strong id="bestStreakValue">—</strong><small>за всё время</small></article>
+          <article><span>Прогнозов</span><strong id="sampleValue">—</strong><small>всего</small></article>
         </div>
 
         <section class="section-block">
-          <div class="section-title-row"><div><div class="eyebrow">MULTI‑GAME</div><h2>Портфель дисциплин</h2></div><button class="text-action" data-go="analytics">Сравнить</button></div>
-          <div class="portfolio-grid">
-            <article class="portfolio-card is-cs2"><div class="portfolio-head"><span class="game-symbol">C2</span><span class="delta positive">+8 п.п.</span></div><strong>75%</strong><p>CS2 · 84 прогноза</p><div class="meter"><i style="width:75%"></i></div></article>
-            <article class="portfolio-card is-dota"><div class="portfolio-head"><span class="game-symbol">D2</span><span class="delta">+2 п.п.</span></div><strong>68%</strong><p>Dota 2 · 51 прогноз</p><div class="meter"><i style="width:68%"></i></div></article>
-            <article class="portfolio-card is-val"><div class="portfolio-head"><span class="game-symbol">V</span><span class="delta positive">+5 п.п.</span></div><strong>72%</strong><p>Valorant · 39 прогнозов</p><div class="meter"><i style="width:72%"></i></div></article>
-            <article class="portfolio-card is-lol"><div class="portfolio-head"><span class="game-symbol">L</span><span class="delta negative">−3 п.п.</span></div><strong>64%</strong><p>LoL · 28 прогнозов</p><div class="meter"><i style="width:64%"></i></div></article>
-          </div>
+          <div class="section-title-row"><div><div class="eyebrow">СЕЙЧАС</div><h2>Активные прогнозы</h2></div><span class="sample-chip" id="activeCount"></span></div>
+          <div class="match-list" id="activeList"></div>
         </section>
-
-        <article class="coach-card">
-          <div class="coach-icon">AI</div>
-          <div class="coach-copy"><div class="eyebrow">COACH · ДОСТАТОЧНАЯ ВЫБОРКА</div><h2 id="coachTitle">BO1 остаётся вашей слабой зоной</h2><p id="coachText">52% на 21 прогнозе — на 19 п.п. ниже вашей общей точности в CS2.</p><button class="text-action" data-go="analytics">Разобрать паттерн <span>→</span></button></div>
-        </article>
 
         <section class="section-block">
-          <div class="section-title-row"><div><div class="eyebrow">ПОСЛЕДНИЕ</div><h2>Прогнозы</h2></div><button class="text-action" data-go="history">Вся история</button></div>
+          <div class="section-title-row"><div><div class="eyebrow">ПОСЛЕДНИЕ</div><h2>Завершённые</h2></div><button class="text-action" data-go="history">Вся история</button></div>
           <div class="match-list" id="recentMatches"></div>
         </section>
+
+        <button class="wide-link" data-go="analytics">Разбор по играм и командам <span>→</span></button>
       </section>
 
       <section class="screen" data-screen="analytics" aria-labelledby="analytics-title">
         <div class="section-heading"><div><div class="eyebrow">АНАЛИТИКА · <span id="analyticsGameLabel">—</span></div><h1 id="analytics-title">Паттерны и сегменты</h1></div></div>
 
+        <!--
+          Не повторяет «Обзор»: точность, серия и тренд живут там. Здесь —
+          то, чего на «Обзоре» нет: из чего эта цифра складывается и где
+          выборка достаточна, чтобы процент что-то значил.
+        -->
         <div class="analytics-overview">
-          <article><span>Точность</span><strong id="analyticsAccuracy">—</strong><small id="analyticsSample">нет данных</small></article>
-          <article><span>Тренд</span><strong id="analyticsTrend">—</strong><small id="analyticsTrendNote">нужно два окна</small></article>
-          <article><span>Серия</span><strong id="analyticsStreak">—</strong><small id="analyticsBestStreak">лучшая —</small></article>
+          <article><span>Дисциплин</span><strong id="analyticsGameCount">—</strong><small id="analyticsCoverage">нет данных</small></article>
+          <article><span>Сильнее всего</span><strong id="analyticsBest">—</strong><small id="analyticsBestNote">по вашим прогнозам</small></article>
+          <article><span>Слабее всего</span><strong id="analyticsWorst">—</strong><small id="analyticsWorstNote">есть что подтянуть</small></article>
         </div>
 
         <section class="glass-card analytics-card">
@@ -113,16 +114,30 @@
       </section>
 
       <section class="screen" data-screen="achievements" aria-labelledby="achievements-title">
-        <div class="section-heading"><div><div class="eyebrow">ПРОГРЕСС</div><h1 id="achievements-title">Достижения</h1></div></div>
-        <div class="achievement-summary" id="achievementSummary"></div>
-        <section class="achievement-group" id="achievementList"></section>
-        <p class="legal-note">Каждое достижение считается по вашим завершённым прогнозам; правило написано на карточке.</p>
+        <div class="section-heading"><div><div class="eyebrow">ПРОГРЕСС</div><h1 id="achievements-title">Награды</h1></div></div>
+
+        <!--
+          Медали принадлежат чату, а не человеку вообще: первое место среди
+          четверых друзей и среди сорока — разные достижения, и общая сумма
+          не расскажет ни про одно из них.
+        -->
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ПО ЧАТАМ</div><h2>Медали и результат</h2></div></div>
+          <div class="chat-list" id="chatStandings"></div>
+        </section>
+
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ВСЕ ДОСТИЖЕНИЯ</div><h2>Каталог и прогресс</h2></div></div>
+          <div class="achievement-summary" id="achievementSummary"></div>
+          <div class="achievement-group" id="achievementList"></div>
+          <p class="legal-note">Правило написано на карточке, прогресс считается по вашим завершённым прогнозам.</p>
+        </section>
       </section>
 
       <section class="screen" data-screen="profile" aria-labelledby="profile-title">
         <div class="profile-hero"><div class="profile-avatar" id="profileAvatar">—</div><div><div class="eyebrow">ANALYST PROFILE</div><h1 id="profile-title">—</h1><p id="profileSubtitle">—</p></div></div>
         <div class="profile-kpis" id="profileKpis"></div>
-        <section class="section-block"><div class="section-title-row"><div><div class="eyebrow">ДИСЦИПЛИНЫ</div><h2>Ваш профиль по играм</h2></div></div><div class="discipline-list" id="profileGames"></div></section>
+        <button class="wide-link" data-go="analytics">Разбор по играм и командам <span>→</span></button>
         <section class="section-block"><div class="eyebrow">ИСТОЧНИКИ</div><article class="style-card"><div class="style-orb">i</div><div><h2>Откуда цифры</h2><p>Все показатели считаются из ваших завершённых прогнозов в чатах, где работает бот. Ничего не моделируется и не достраивается: если данных не хватает, показатель не выводится.</p></div></article></section>
       </section>
 
@@ -140,9 +155,13 @@
   <div class="sheet-backdrop" id="sheetBackdrop" hidden>
     <section class="bottom-sheet" role="dialog" aria-modal="true" aria-label="Фильтры истории">
       <div class="sheet-grabber"></div><div class="sheet-head"><div><div class="eyebrow">ИСТОРИЯ</div><h2>Фильтры</h2></div><button class="icon-button small" id="closeSheet" aria-label="Закрыть">×</button></div>
-      <label>Дисциплина<select><option>Все игры</option><option>CS2</option><option>Dota 2</option><option>Valorant</option><option>League of Legends</option></select></label>
-      <label>Результат<select><option>Любой</option><option>Верно</option><option>Ошибка</option></select></label>
-      <label>Период<select><option>90 дней</option><option>30 дней</option><option>7 дней</option><option>Всё время</option></select></label>
+      <!--
+        Только те фильтры, которые API действительно умеет. Селект периода
+        выглядел рабочим и ничего не менял — контрол, который врёт, хуже
+        отсутствующего.
+      -->
+      <label>Дисциплина<select id="filterGame"><option value="">Все игры</option></select></label>
+      <label>Результат<select id="filterResult"><option value="">Любой</option><option value="correct">Верно</option><option value="wrong">Ошибка</option></select></label>
       <button class="primary-button" id="applyFilters">Показать результаты</button>
     </section>
   </div>

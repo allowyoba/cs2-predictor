@@ -49,58 +49,6 @@
 
   // --- data -----------------------------------------------------------
 
-  /**
-   * DEMO is the prototype's own figures. Clearly separated from anything
-   * fetched, so nobody mistakes a mock for a metric — the tech spec's
-   * first rule is not to show a number the backend cannot produce.
-   */
-  const DEMO = {
-    cs2: {
-      label: 'CS2', accuracy: 75, sub: '63 верных из 84 прогнозов', form: 82, trend: '↗ +8 п.п.',
-      streak: 4, sample: 84, best: 'BO3', bestSub: '78% · n=86', analyticsAccuracy: '71%',
-      coachTitle: 'BO1 остаётся вашей слабой зоной',
-      coachText: '52% на 21 прогнозе — на 19 п.п. ниже вашей общей точности в CS2.',
-      matches: [
-        { a: 'NAVI', b: 'Spirit', meta: 'ESL Pro League · BO3', score: '2:0', result: 'correct' },
-        { a: 'Vitality', b: 'G2', meta: 'BLAST Open · BO1', score: '0:1', result: 'wrong' },
-        { a: 'MOUZ', b: 'Falcons', meta: 'IEM · BO3', score: '2:1', result: 'correct' },
-      ],
-    },
-    dota2: {
-      label: 'Dota 2', accuracy: 68, sub: '35 верных из 51 прогноза', form: 74, trend: '↗ +2 п.п.',
-      streak: 3, sample: 51, best: 'BO3', bestSub: '72% · n=32', analyticsAccuracy: '68%',
-      coachTitle: 'Патч-дни дают больше ошибок',
-      coachText: 'На матчах в первые 72 часа после патча точность ниже на 11 п.п. при n=13.',
-      matches: [
-        { a: 'Spirit', b: 'Tundra', meta: 'The International · BO3', score: '2:1', result: 'correct' },
-        { a: 'BetBoom', b: 'PARIVISION', meta: 'FISSURE Universe · BO3', score: '1:2', result: 'wrong' },
-        { a: 'Liquid', b: 'Falcons', meta: 'DreamLeague · BO3', score: '2:0', result: 'correct' },
-      ],
-    },
-    valorant: {
-      label: 'Valorant', accuracy: 72, sub: '28 верных из 39 прогнозов', form: 79, trend: '↗ +5 п.п.',
-      streak: 5, sample: 39, best: 'BO3', bestSub: '76% · n=29', analyticsAccuracy: '72%',
-      coachTitle: 'Плей-офф прогнозируете сильнее групп',
-      coachText: 'В playoff точность 79% против 66% в group stage при сопоставимой выборке.',
-      matches: [
-        { a: 'Fnatic', b: 'Sentinels', meta: 'VCT Masters · BO3', score: '1:2', result: 'wrong' },
-        { a: 'G2', b: 'Paper Rex', meta: 'VCT Champions · BO3', score: '2:0', result: 'correct' },
-        { a: 'NRG', b: 'Gen.G', meta: 'VCT Masters · BO3', score: '2:1', result: 'correct' },
-      ],
-    },
-    lol: {
-      label: 'LoL', accuracy: 64, sub: '18 верных из 28 прогнозов', form: 69, trend: '↘ −3 п.п.',
-      streak: 2, sample: 28, best: 'BO3', bestSub: '69% · n=16', analyticsAccuracy: '64%',
-      coachTitle: 'Маленькая выборка — не переоценивайте тренд',
-      coachText: 'По LoL пока только 28 прогнозов; выводы по отдельным турнирам считаются низкой уверенности.',
-      matches: [
-        { a: 'T1', b: 'Gen.G', meta: 'LCK · BO3', score: '1:2', result: 'wrong' },
-        { a: 'G2', b: 'Fnatic', meta: 'LEC · BO3', score: '2:0', result: 'correct' },
-        { a: 'BLG', b: 'TES', meta: 'LPL · BO3', score: '2:1', result: 'correct' },
-      ],
-    },
-  };
-
   const RESULT_TEXT = { correct: '✓ Верно', wrong: '× Ошибка' };
 
   const params = new URLSearchParams(location.search);
@@ -159,7 +107,7 @@
    * what it does for an unranked team anyway.
    */
   async function loadLogos(game) {
-    if (logos.has(game)) return;
+    if (!game || logos.has(game)) return;
     logos.set(game, new Map());
     try {
       const body = await fetchJSON(`/api/miniapp/v1/teams?game=${encodeURIComponent(game)}&logos=${LOGO_SOURCE}`);
@@ -172,8 +120,24 @@
     }
   }
 
+  /**
+   * logoFor looks a crest up in the game's own map, then in every other
+   * loaded one.
+   *
+   * A feed mixes disciplines: the history screen shows CS2 and Dota 2 rows
+   * together, and looking only in the selected game's map is why those
+   * rows came out with initials where a crest belonged.
+   */
   function logoFor(game, teamName) {
-    return logos.get(game)?.get(teamName.toLowerCase()) || '';
+    if (!teamName) return '';
+    const key = teamName.toLowerCase();
+    const own = logos.get(game)?.get(key);
+    if (own) return own;
+    for (const byName of logos.values()) {
+      const found = byName.get(key);
+      if (found) return found;
+    }
+    return '';
   }
 
   /** initialsOf is the fallback mark: the first letters of a team's words. */
@@ -216,26 +180,23 @@
     return wrap;
   }
 
-  function matchRow(game, match) {
+  function matchRow(entry) {
     const row = el('article', 'match-row');
     const main = el('div', 'match-main');
     const teams = el('div', 'match-teams');
-    teams.append(teamMark(game, match.a), el('strong', null, match.a), el('span', 'vs', 'vs'),
-      teamMark(game, match.b), el('strong', null, match.b));
+    const game = entry.game.toLowerCase();
+    teams.append(teamMark(game, entry.first_team), el('strong', null, entry.first_team),
+      el('span', 'vs', 'vs'), teamMark(game, entry.second_team), el('strong', null, entry.second_team));
     const meta = el('div', 'match-meta');
-    meta.append(el('span', null, match.meta), el('span', null, '·'), el('span', null, 'сегодня'));
+    meta.append(el('span', null, entry.event || gameLabel(entry.game)), el('span', null, '·'),
+      el('span', null, new Date(entry.played_at).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })));
     main.append(teams, meta);
 
-    const result = el('div', `match-result ${match.result}`);
-    result.append(el('strong', null, match.score), el('span', null, RESULT_TEXT[match.result] || ''));
+    const result = el('div', `match-result ${entry.correct ? 'correct' : 'wrong'}`);
+    result.append(el('strong', null, entry.actual),
+      el('span', null, entry.correct ? RESULT_TEXT.correct : RESULT_TEXT.wrong));
     row.append(main, result);
     return row;
-  }
-
-  function renderMatches(game, data) {
-    const root = document.querySelector('#recentMatches');
-    if (!root) return;
-    root.replaceChildren(...data.matches.map((m) => matchRow(game, m)));
   }
 
   const setText = (selector, value) => {
@@ -245,15 +206,20 @@
 
   // --- the real numbers ------------------------------------------------
   //
-  // Everything above is the prototype's own demo data. What follows is the
-  // person's actual record, read from the bot's database through a signed
-  // launch. When it arrives it replaces the demo figures; when it does not
-  // — no access yet, no network — the screen says so rather than leaving
-  // mock numbers on display as if they were real.
+  // Everything on these screens is the person's own record, read from the
+  // bot's database through a signed launch. Nothing is seeded, modelled or
+  // filled in: when a figure cannot be loaded — no access yet, no network
+  // — the screen says so instead of showing a number that means nothing.
 
   let dashboard = null;
   /** currentGame is the rail's selection, used when looking up crests. */
-  let currentGame = 'cs2';
+  let currentGame = '';
+  /**
+   * analyticsGame is the rail's selection as the analytics screen reads
+   * it: empty means every discipline together, which is what the rail's
+   * own "all" chip selects.
+   */
+  let analyticsGame = '';
 
   /**
    * GAME_LABELS names a discipline the way people say it. The API answers
@@ -266,6 +232,13 @@
   /** percentText renders a share the way every screen here shows one. */
   const percentText = (value) => `${value}%`;
 
+  /**
+   * MIN_SEGMENT_SAMPLE is how many predictions a segment needs before its
+   * percentage is worth naming as best or worst. Below it the number is a
+   * coin toss with a label on it.
+   */
+  const MIN_SEGMENT_SAMPLE = 10;
+
   /** applyDashboard overwrites the headline figures with real ones. */
   function applyDashboard(data) {
     dashboard = data;
@@ -274,9 +247,19 @@
     setText('#accuracySub', `${summary.correct ?? 0} верных из ${summary.predictions ?? 0} прогнозов`);
     setText('#sampleValue', summary.predictions ?? 0);
     setText('#streakValue', data.form?.current_streak ?? 0);
+    setText('#bestStreakValue', data.form?.best_streak ?? 0);
+    renderFormStrip(data.form?.recent || []);
+    // The ring is the number: it used to be drawn at a fixed 82% whatever
+    // the figure inside it said.
+    const orbit = document.querySelector('#formOrbit');
     if (data.form?.recent?.length) {
       const wins = data.form.recent.filter(Boolean).length;
-      setText('#formScore', Math.round((wins / data.form.recent.length) * 100));
+      const share = Math.round((wins / data.form.recent.length) * 100);
+      setText('#formScore', share);
+      orbit?.style.setProperty('--form-fill', `${share}%`);
+    } else {
+      setText('#formScore', '—');
+      orbit?.style.setProperty('--form-fill', '0%');
     }
     const trend = data.trend;
     setText('#trendValue', trend
@@ -290,23 +273,40 @@
 
   // --- analytics --------------------------------------------------------
 
+  /**
+   * renderAnalytics draws the breakdown for whatever the rail has
+   * selected: one discipline, or all of them together.
+   *
+   * The rail used to change only which crests were fetched, so tapping
+   * Dota 2 left a Counter-Strike breakdown on screen — the numbers never
+   * moved, which is worse than not offering the filter at all.
+   */
   function renderAnalytics(data) {
-    const summary = data.summary || {};
-    setText('#analyticsGameLabel', 'все игры');
-    setText('#analyticsAccuracy', summary.predictions ? percentText(summary.accuracy) : '—');
-    setText('#analyticsSample', summary.predictions ? `n=${summary.predictions}` : 'нет данных');
+    const all = [...(data.games || [])].filter((g) => g.predictions > 0);
+    const selected = analyticsGame ? all.filter((g) => g.game.toLowerCase() === analyticsGame) : all;
+    const games = selected.length ? selected : all;
 
-    const trend = data.trend;
-    setText('#analyticsTrend', trend ? `${trend.delta_pp > 0 ? '+' : ''}${trend.delta_pp} п.п.` : '—');
-    setText('#analyticsTrendNote', trend
-      ? `${trend.current_sample} против ${trend.previous_sample} прогнозов`
-      : 'нужно два окна подряд');
-    setText('#analyticsStreak', data.form?.current_streak ?? '—');
-    setText('#analyticsBestStreak', `лучшая ${data.form?.best_streak ?? 0}`);
+    setText('#analyticsGameLabel', analyticsGame && selected.length
+      ? gameLabel(selected[0].game)
+      : (all.length ? 'все игры' : '—'));
+    setText('#analyticsGameCount', games.length || '—');
+    const total = games.reduce((sum, g) => sum + g.predictions, 0);
+    setText('#analyticsCoverage', total ? `${total} прогнозов` : 'нет данных');
 
-    const games = document.querySelector('#analyticsGames');
-    if (games) {
-      games.replaceChildren(...(data.games || []).map((entry) => {
+    // Best and worst are only worth naming where the sample can support
+    // the claim; below that a percentage is a coin toss with a label.
+    const ranked = games.filter((g) => g.predictions >= MIN_SEGMENT_SAMPLE)
+      .sort((a, b) => b.accuracy - a.accuracy);
+    const best = ranked[0];
+    const worst = ranked.length > 1 ? ranked[ranked.length - 1] : null;
+    setText('#analyticsBest', best ? gameLabel(best.game) : '—');
+    setText('#analyticsBestNote', best ? `${percentText(best.accuracy)} на ${best.predictions}` : `нужно ${MIN_SEGMENT_SAMPLE}+ прогнозов`);
+    setText('#analyticsWorst', worst ? gameLabel(worst.game) : '—');
+    setText('#analyticsWorstNote', worst ? `${percentText(worst.accuracy)} на ${worst.predictions}` : 'пока не с чем сравнивать');
+
+    const gamesRoot = document.querySelector('#analyticsGames');
+    if (gamesRoot) {
+      gamesRoot.replaceChildren(...games.map((entry) => {
         const row = el('div', 'segment-row' + (entry.accuracy < 50 ? ' is-warning' : ''));
         const copy = el('div', 'segment-copy');
         copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
@@ -317,7 +317,7 @@
         row.append(copy, meter, el('b', null, percentText(entry.accuracy)));
         return row;
       }));
-      if (!(data.games || []).length) games.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
+      if (!games.length) gamesRoot.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
     }
 
     const teams = document.querySelector('#analyticsTeams');
@@ -336,52 +336,220 @@
     }
   }
 
+  // --- active predictions ----------------------------------------------
+  //
+  // The half of somebody's record that has not happened yet: what they
+  // have riding right now. This is what the app is opened for on a match
+  // day, so it sits above the finished ones rather than behind a tab.
+
+  async function loadActive() {
+    const root = document.querySelector('#activeList');
+    if (!root) return;
+    try {
+      const body = await fetchJSON('/api/miniapp/v1/me/active', { signed: true });
+      renderActive(body.entries || []);
+      setText('#activeCount', body.count ? `${body.count}` : '');
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      console.warn('active predictions unavailable', error);
+      root.replaceChildren(emptyLine('Не удалось загрузить активные прогнозы.'));
+    }
+  }
+
+  function renderActive(entries) {
+    const root = document.querySelector('#activeList');
+    if (!root) return;
+    if (entries.length === 0) {
+      root.replaceChildren(emptyLine('Нет прогнозов в ожидании — они появятся, когда вы ответите на опрос.'));
+      return;
+    }
+    root.replaceChildren(...entries.map(activeRow));
+  }
+
+  function activeRow(entry) {
+    const row = el('article', 'match-row active-row');
+    const main = el('div', 'match-main');
+    const teams = el('div', 'match-teams');
+    const game = entry.game.toLowerCase();
+    teams.append(teamMark(game, entry.first_team), el('strong', null, entry.first_team),
+      el('span', 'vs', 'vs'), teamMark(game, entry.second_team), el('strong', null, entry.second_team));
+
+    const meta = el('div', 'match-meta');
+    meta.append(el('span', null, entry.event || gameLabel(entry.game)), el('span', null, '·'),
+      el('span', null, entry.live ? 'идёт сейчас' : startsAtText(entry.starts_at)));
+    main.append(teams, meta);
+
+    const side = el('div', 'match-result pending');
+    side.append(el('strong', null, entry.predicted), el('span', null, 'ваш прогноз'));
+    // The broadcast, when there is one: the single most useful thing to
+    // offer somebody looking at a match they have money on.
+    if (entry.stream) {
+      const watch = el('a', 'stream-link', 'Смотреть');
+      watch.href = entry.stream;
+      watch.target = '_blank';
+      watch.rel = 'noopener noreferrer';
+      side.append(watch);
+    }
+    row.append(main, side);
+    return row;
+  }
+
+  /** startsAtText says when, or says that nobody has published a time. */
+  function startsAtText(value) {
+    if (!value) return 'время уточняется';
+    const at = new Date(value);
+    const today = new Date();
+    const sameDay = at.toDateString() === today.toDateString();
+    const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    if (sameDay) return `сегодня ${time}`;
+    return `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })} ${time}`;
+  }
+
+  // --- chats -------------------------------------------------------------
+
+  async function loadChats() {
+    const root = document.querySelector('#chatStandings');
+    if (!root) return;
+    try {
+      const body = await fetchJSON('/api/miniapp/v1/me/chats', { signed: true });
+      renderChats(body.chats || []);
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      root.replaceChildren(emptyLine('Не удалось загрузить статистику по чатам.'));
+    }
+  }
+
+  function renderChats(chats) {
+    const root = document.querySelector('#chatStandings');
+    if (!root) return;
+    if (chats.length === 0) {
+      root.replaceChildren(emptyLine('Здесь появятся ваши чаты, как только в них завершатся прогнозы.'));
+      return;
+    }
+    chatMedalTotal = chats.reduce((sum, c) => sum + c.gold + c.silver + c.bronze, 0);
+    if (dashboard) renderAchievements(dashboard);
+    root.replaceChildren(...chats.map((chat) => {
+      const row = el('article', 'chat-row');
+      const copy = el('div', 'chat-copy');
+      copy.append(el('strong', null, chat.chat),
+        el('small', null, `${chat.predictions} прогнозов · ${percentText(chat.accuracy)} · ${chat.points} очков`));
+      row.append(copy);
+      const medals = el('div', 'medal-row');
+      // Only the medals actually won: a row of zeroes reads as a scoreboard
+      // of failures rather than as an empty cabinet.
+      for (const [icon, count] of [['🥇', chat.gold], ['🥈', chat.silver], ['🥉', chat.bronze]]) {
+        if (count > 0) medals.append(el('span', 'medal', `${icon} ${count}`));
+      }
+      if (!medals.childNodes.length) medals.append(el('span', 'medal muted', 'без медалей'));
+      row.append(medals);
+      return row;
+    }));
+  }
+
   // --- achievements -----------------------------------------------------
   //
   // Derived from the same figures, with the rule written on each card.
   // Nothing is invented: a badge is a threshold over a number the database
   // actually holds, and its progress is that number.
 
-  function achievementsFor(data) {
-    const summary = data.summary || {};
-    const form = data.form || {};
-    const strongGames = (data.games || []).filter((g) => g.predictions >= 25 && g.accuracy >= 65).length;
-    return [
-      { title: 'Сотня', rule: '100 верных прогнозов', value: summary.correct || 0, goal: 100 },
-      { title: 'Снайпер', rule: '25 точных счётов', value: summary.exact || 0, goal: 25 },
-      { title: 'Серия', rule: '5 верных подряд', value: form.best_streak || 0, goal: 5 },
-      { title: 'Мультигейм', rule: '≥65% в двух играх при n≥25', value: strongGames, goal: 2 },
-      { title: 'Турнирный стаж', rule: '10 турниров с прогнозами', value: summary.tournaments || 0, goal: 10 },
-    ];
+  /**
+   * ACHIEVEMENTS is the whole catalogue, always shown in full.
+   *
+   * A list that hides what somebody has not earned answers "what have I
+   * done" and never "what is there to do" — and the second question is the
+   * one a progress screen exists for. Each entry carries the rule it is
+   * measured by, so nothing here is a number without a reason.
+   */
+  const ACHIEVEMENTS = [
+    { title: 'Первый прогноз', rule: 'Сделать первый завершённый прогноз', goal: 1, of: (s) => s.summary.predictions },
+    { title: 'Полсотни', rule: '50 прогнозов', goal: 50, of: (s) => s.summary.predictions },
+    { title: 'Сотня верных', rule: '100 верных прогнозов', goal: 100, of: (s) => s.summary.correct },
+    { title: 'Снайпер', rule: '25 угаданных точных счётов', goal: 25, of: (s) => s.summary.exact },
+    { title: 'Серия', rule: '5 верных подряд', goal: 5, of: (s) => s.form.best_streak },
+    { title: 'Длинная серия', rule: '10 верных подряд', goal: 10, of: (s) => s.form.best_streak },
+    { title: 'Мультигейм', rule: '≥65% в двух дисциплинах при 25+ прогнозах', goal: 2, of: (s) => s.strongGames },
+    { title: 'Турнирный стаж', rule: 'Прогнозы в 10 турнирах', goal: 10, of: (s) => s.summary.tournaments },
+    { title: 'Медалист', rule: 'Призовое место в турнире чата', goal: 1, of: (s) => s.medals },
+    { title: 'Коллекция', rule: '5 призовых мест', goal: 5, of: (s) => s.medals },
+  ];
+
+  /** achievementInputs reduces everything loaded so far to the few numbers
+   * the catalogue measures against. */
+  function achievementInputs(data) {
+    return {
+      summary: data.summary || {},
+      form: data.form || {},
+      strongGames: (data.games || []).filter((g) => g.predictions >= 25 && g.accuracy >= 65).length,
+      medals: chatMedalTotal,
+    };
   }
 
-  function renderAchievements(data) {
-    const list = achievementsFor(data);
-    const earned = list.filter((a) => a.value >= a.goal).length;
+  function achievementsFor(data) {
+    const inputs = achievementInputs(data);
+    return ACHIEVEMENTS.map((item) => ({
+      title: item.title,
+      rule: item.rule,
+      goal: item.goal,
+      value: Math.max(0, item.of(inputs) || 0),
+    }));
+  }
 
-    const summary = document.querySelector('#achievementSummary');
-    if (summary) {
-      summary.replaceChildren(
-        summaryTile(String(earned), 'получено'),
-        summaryTile(String(list.length - earned), 'в прогрессе'),
-        summaryTile(String((data.games || []).length), 'дисциплины'),
-      );
-    }
+  /**
+   * RECENT_ON_DASHBOARD is how much of the feed the overview shows. The
+   * whole list lives one tap away on "История"; repeating it here would
+   * make the overview a second history screen rather than a summary.
+   */
+  const RECENT_ON_DASHBOARD = 5;
 
-    const root = document.querySelector('#achievementList');
+  /** recentEntries is the unfiltered history feed, kept for the overview. */
+  let recentEntries = [];
+
+  /** renderRecent fills the overview's "Завершённые" strip, honouring the
+   * discipline chosen in the rail. */
+  function renderRecent() {
+    const root = document.querySelector('#recentMatches');
     if (!root) return;
-    root.replaceChildren(...list.map((item) => {
+    const selected = analyticsGame
+      ? recentEntries.filter((entry) => entry.game.toLowerCase() === analyticsGame)
+      : recentEntries;
+    if (selected.length === 0) {
+      root.replaceChildren(emptyLine(analyticsGame
+        ? `Пока нет завершённых прогнозов в ${gameLabel(analyticsGame.toUpperCase())}.`
+        : 'Здесь появятся ваши прогнозы после первых завершённых матчей.'));
+      return;
+    }
+    root.replaceChildren(...selected.slice(0, RECENT_ON_DASHBOARD).map(matchRow));
+  }
+
+  /** renderAchievements shows the catalogue in full, earned or not, with
+   * the progress towards each entry's own rule. */
+  function renderAchievements(data) {
+    const list = document.querySelector('#achievementList');
+    const summary = document.querySelector('#achievementSummary');
+    if (!list || !summary) return;
+
+    const items = achievementsFor(data);
+    const earned = items.filter((item) => item.value >= item.goal).length;
+    summary.replaceChildren(
+      summaryTile(String(earned), 'получено'),
+      summaryTile(String(items.length - earned), 'в работе'),
+      summaryTile(percentText(Math.round((earned / items.length) * 100)), 'каталога'),
+    );
+
+    list.replaceChildren(...items.map((item) => {
       const done = item.value >= item.goal;
       const card = el('article', 'achievement-card' + (done ? ' earned' : ''));
-      card.append(el('div', 'achievement-medal', done ? '✓' : String(item.goal)));
+      card.append(el('div', 'achievement-medal', done ? '✓' : `${Math.min(item.value, item.goal)}`));
+
       const body = el('div');
       const head = el('div', 'achievement-head');
-      head.append(el('strong', null, item.title), el('span', null, done ? 'Получено' : 'В прогрессе'));
+      head.append(el('strong', null, item.title),
+        el('span', null, done ? 'получено' : `${Math.min(item.value, item.goal)} из ${item.goal}`));
       const bar = el('div', 'progress');
       const fill = el('i');
       fill.style.width = `${Math.min(100, Math.round((item.value / item.goal) * 100))}%`;
       bar.append(fill);
-      body.append(head, el('p', null, item.rule), bar, el('small', null, `${item.value} / ${item.goal}`));
+      body.append(head, el('p', null, item.rule), bar);
       card.append(body);
       return card;
     }));
@@ -399,7 +567,9 @@
     const user = data.user || {};
     const summary = data.summary || {};
     setText('#profile-title', user.display_name || '—');
-    setText('#profileAvatar', (user.display_name || '?').slice(0, 1).toUpperCase());
+    const initial = (user.display_name || '?').slice(0, 1).toUpperCase();
+    setText('#profileAvatar', initial);
+    setText('#profilePill', initial);
     setText('#profileSubtitle', summary.predictions
       ? `${summary.predictions} прогнозов в ${summary.tournaments} турнирах`
       : 'Здесь появится ваш профиль после первых прогнозов');
@@ -413,21 +583,6 @@
       );
     }
 
-    const games = document.querySelector('#profileGames');
-    if (!games) return;
-    games.replaceChildren(...(data.games || []).map((entry) => {
-      const row = el('article');
-      row.append(el('span', 'game-symbol', gameLabel(entry.game).slice(0, 2).toUpperCase()));
-      const copy = el('div');
-      copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
-      row.append(copy, el('b', null, percentText(entry.accuracy)));
-      if (entry.trend) {
-        row.append(el('em', entry.trend.delta_pp >= 0 ? 'positive-text' : 'negative-text',
-          `${entry.trend.delta_pp > 0 ? '+' : ''}${entry.trend.delta_pp}`));
-      }
-      return row;
-    }));
-    if (!(data.games || []).length) games.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
   }
 
   function kpiTile(label, value, note) {
@@ -443,16 +598,29 @@
 
   // --- history ----------------------------------------------------------
 
+  /** chatMedalTotal is every medal won across chats, for the catalogue. */
+  let chatMedalTotal = 0;
+
   let historyGame = '';
+  let historyResult = '';
 
   async function loadHistory() {
     const feed = document.querySelector('#historyFeed');
     if (!feed) return;
     feed.replaceChildren(emptyLine('Загружаем…'));
     try {
-      const query = historyGame ? `?game=${encodeURIComponent(historyGame)}` : '';
-      const body = await fetchJSON(`/api/miniapp/v1/me/history${query}`, { signed: true });
+      const query = new URLSearchParams();
+      if (historyGame) query.set('game', historyGame);
+      if (historyResult) query.set('result', historyResult);
+      const suffix = query.toString() ? `?${query}` : '';
+      const body = await fetchJSON(`/api/miniapp/v1/me/history${suffix}`, { signed: true });
       renderHistory(body.entries || []);
+      // The dashboard's "latest" strip is the same feed, unfiltered — so
+      // it is filled here rather than fetched a second time.
+      if (!historyGame && !historyResult) {
+        recentEntries = body.entries || [];
+        renderRecent();
+      }
     } catch (error) {
       if (error instanceof ForbiddenError) showAccessNotice('forbidden');
       else if (error instanceof UnauthenticatedError) showAccessNotice('unauthenticated');
@@ -489,23 +657,41 @@
       el('small', null, entry.points > 0 ? `+${entry.points}` : '0'),
     );
 
+    // first_team/second_team, exactly as the API names them: reading
+    // entry.first here is how this screen rendered blank team names.
     const matchup = el('div', 'matchup');
+    const game = entry.game.toLowerCase();
     const left = el('div', 'team-side');
-    left.append(teamMark(entry.game.toLowerCase(), entry.first), el('strong', null, entry.first));
+    left.append(teamMark(game, entry.first_team), el('strong', null, entry.first_team));
     const versus = el('div', 'versus');
     versus.append(el('b', null, entry.actual), el('span', null, `прогноз ${entry.predicted}`));
     const right = el('div', 'team-side right');
-    right.append(teamMark(entry.game.toLowerCase(), entry.second), el('strong', null, entry.second));
+    right.append(teamMark(game, entry.second_team), el('strong', null, entry.second_team));
     matchup.append(left, versus, right);
 
     const foot = el('div', 'history-foot');
-    foot.append(el('span', null, entry.event || ''), el('span', null, entry.chat || ''));
+    const where = entry.chats > 1 ? `${entry.chat} и ещё ${entry.chats - 1}` : entry.chat || '';
+    foot.append(el('span', null, entry.event || ''), el('span', null, where));
     card.append(status, matchup, foot);
     return card;
   }
 
-  /** renderHistoryFilters builds one chip per game the person plays. */
+  /**
+   * renderHistoryFilters builds one chip per game the person plays — and
+   * fills the sheet's own game select from the same list, so the two
+   * controls can never offer different games.
+   */
   function renderHistoryFilters(games) {
+    const select = document.querySelector('#filterGame');
+    if (select) {
+      select.replaceChildren(el('option', null, 'Все игры'),
+        ...games.map((g) => {
+          const option = el('option', null, gameLabel(g.game));
+          option.value = g.game;
+          return option;
+        }));
+      select.querySelector('option').value = '';
+    }
     const rail = document.querySelector('#historyFilters');
     if (!rail) return;
     const chips = [{ code: '', label: 'Все' }, ...games.map((g) => ({ code: g.game, label: gameLabel(g.game) }))];
@@ -514,6 +700,8 @@
       button.dataset.filterGame = chip.code;
       button.addEventListener('click', () => {
         historyGame = chip.code;
+        const select = document.querySelector('#filterGame');
+        if (select) select.value = chip.code;
         for (const other of rail.querySelectorAll('.chip')) other.classList.remove('selected');
         button.classList.add('selected');
         void loadHistory();
@@ -523,23 +711,55 @@
   }
 
   /**
+   * renderFormStrip draws the last results as a row of marks — the form
+   * guide a sports page uses, and the one place on this screen where the
+   * recent run is visible as a shape rather than a number.
+   */
+  function renderFormStrip(recent) {
+    const strip = document.querySelector('#formStrip');
+    if (!strip) return;
+    strip.replaceChildren(...recent.map((won) => {
+      const mark = el('i', won ? 'form-mark won' : 'form-mark lost');
+      mark.setAttribute('aria-label', won ? 'верно' : 'ошибка');
+      return mark;
+    }));
+  }
+
+  /**
    * renderGameRail replaces the demo rail with the games this person has
    * actually predicted in. A game nobody has played is not a filter, it is
    * a dead end with a label on it.
    */
   function renderGameRail(games) {
+    const wrap = document.querySelector('#gameRailWrap');
     const rail = document.querySelector('#gameRail');
-    if (!rail || games.length === 0) return;
-    rail.replaceChildren(...games.map((entry) => {
-      const chip = el('button', 'game-chip');
-      chip.dataset.game = entry.game.toLowerCase();
-      chip.append(el('i', 'game-dot'), el('span', null, DEMO[entry.game.toLowerCase()]?.label || entry.game),
-        el('small', null, `${entry.accuracy}%`));
-      chip.addEventListener('click', () => setGame(chip.dataset.game));
+    if (!rail || !wrap) return;
+    // One discipline is not a choice, and none is not a rail: in both
+    // cases the filter is furniture and the screens speak for themselves.
+    if (games.length < 2) {
+      wrap.hidden = true;
+      rail.replaceChildren();
+      analyticsGame = '';
+      currentGame = games[0]?.game.toLowerCase() || '';
+      if (currentGame) void loadLogos(currentGame);
+      return;
+    }
+    wrap.hidden = false;
+
+    const chips = [{ code: '', label: 'Все игры', accuracy: null },
+      ...games.map((g) => ({ code: g.game.toLowerCase(), label: gameLabel(g.game), accuracy: g.accuracy }))];
+    rail.replaceChildren(...chips.map((entry) => {
+      const chip = el('button', 'game-chip' + (entry.code === analyticsGame ? ' active' : ''));
+      chip.dataset.game = entry.code;
+      chip.setAttribute('aria-pressed', String(entry.code === analyticsGame));
+      chip.append(el('i', 'game-dot'), el('span', null, entry.label));
+      if (entry.accuracy !== null) chip.append(el('small', null, percentText(entry.accuracy)));
+      chip.addEventListener('click', () => setGame(entry.code));
       return chip;
     }));
-    const first = games[0].game.toLowerCase();
-    if (DEMO[first]) void setGame(first);
+    // Every game's crests, not just the selected one: the feeds below mix
+    // disciplines, and a row from another game would come out bare.
+    for (const game of games) void loadLogos(game.game.toLowerCase());
   }
 
   /** showAccessNotice replaces the screen with why it is empty. */
@@ -563,6 +783,8 @@
       applyDashboard(data);
       renderHistoryFilters(data.games || []);
       void loadHistory();
+      void loadActive();
+      void loadChats();
       const notice = document.querySelector('#accessNotice');
       if (notice) notice.hidden = true;
     } catch (error) {
@@ -575,37 +797,28 @@
     }
   }
 
+  /**
+   * setGame switches which discipline the screens are about. There is no
+   * data of its own to load: the dashboard already carries every game's
+   * record, and this only changes what is highlighted and which crests are
+   * fetched.
+   */
   async function setGame(game) {
-    const data = DEMO[game];
-    if (!data) return;
-    currentGame = game;
-    document.documentElement.dataset.game = game;
+    analyticsGame = game;
+    currentGame = game || currentGame;
+    document.documentElement.dataset.game = game || 'all';
     for (const chip of document.querySelectorAll('.game-chip')) {
-      const active = chip.dataset.game === game;
+      const active = (chip.dataset.game || '') === game;
       chip.classList.toggle('active', active);
       chip.setAttribute('aria-pressed', String(active));
     }
-    setText('#gameEyebrow', `${data.label.toUpperCase()} · ПОСЛЕДНИЕ 30 ДНЕЙ`);
-    setText('#accuracyValue', data.accuracy);
-    setText('#accuracySub', data.sub);
-    setText('#formScore', data.form);
-    setText('#trendValue', data.trend);
-    setText('#streakValue', data.streak);
-    setText('#sampleValue', data.sample);
-    setText('#bestSegment', data.best);
-    setText('#bestSegmentSub', data.bestSub);
-    setText('#coachTitle', data.coachTitle);
-    setText('#coachText', data.coachText);
-    setText('#analyticsGameLabel', data.label);
-    setText('#analyticsAccuracy', data.analyticsAccuracy);
-
-    renderMatches(game, data);
     haptic();
-    // Crests arrive after the first paint: the board is readable with
-    // initials, and re-rendering once they land avoids holding the screen
+    // Crests arrive after the first paint: the screens are readable with
+    // initials, and re-rendering once they land avoids holding anything
     // hostage to a network round trip.
-    await loadLogos(game);
-    renderMatches(game, data);
+    if (game) await loadLogos(game);
+    renderRecent();
+    if (dashboard) renderAnalytics(dashboard);
   }
 
   // --- navigation -----------------------------------------------------
@@ -668,7 +881,17 @@
     };
     document.querySelector('#filterButton')?.addEventListener('click', open);
     document.querySelector('#closeSheet')?.addEventListener('click', close);
-    document.querySelector('#applyFilters')?.addEventListener('click', close);
+    document.querySelector('#applyFilters')?.addEventListener('click', () => {
+      historyGame = document.querySelector('#filterGame')?.value || '';
+      historyResult = document.querySelector('#filterResult')?.value || '';
+      // The chips and the sheet are two views of one filter: whichever was
+      // touched last, both end up showing the same thing.
+      for (const chip of document.querySelectorAll('#historyFilters .chip')) {
+        chip.classList.toggle('selected', (chip.dataset.filterGame || '') === historyGame);
+      }
+      void loadHistory();
+      close();
+    });
     backdrop.addEventListener('click', (event) => {
       if (event.target === backdrop) close();
     });
@@ -709,7 +932,6 @@
     initFilters();
     initSheet();
 
-    void setGame(params.get('game') || 'cs2');
     void loadDashboard();
     const screen = params.get('screen');
     if (screen) showScreen(screen);

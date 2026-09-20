@@ -58,3 +58,35 @@ func TestMiniappPage_DoesNotEscapeItsPrefix(t *testing.T) {
 func noopHandler() http.Handler {
 	return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 }
+
+// The page ships inside the binary, which makes it easy to forget it is
+// still a client: these two properties are what keep it honest.
+func TestMiniappPage_CarriesNoFabricatedDataOrForeignAssets(t *testing.T) {
+	router := NewRouter(RouterDeps{Registry: prometheus.NewRegistry(), Webhook: noopHandler()})
+
+	read := func(path string) string {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", path, recorder.Code)
+		}
+		return recorder.Body.String()
+	}
+
+	script, markup := read("/app/app.js"), read("/app/")
+
+	// Demo figures were how the prototype started; a screen that keeps
+	// them shows somebody else's numbers as if they were theirs.
+	for _, forbidden := range []string{"GAME_DATA", "const DEMO"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("the app still carries its demo dataset (%s): every figure must come from the API", forbidden)
+		}
+	}
+	// Crests come from this bot's own API, so the page needs no third-party
+	// host at load time — the one exception being Telegram's own SDK.
+	for _, host := range []string{"img-cdn.hltv.org", "cdn-api.pandascore.co"} {
+		if strings.Contains(markup, host) {
+			t.Fatalf("markup hard-codes %s; crests are served through the API instead", host)
+		}
+	}
+}

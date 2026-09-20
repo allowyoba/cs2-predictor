@@ -28,6 +28,17 @@ type MiniAppStats interface {
 	UserPredictions(ctx context.Context, userID common.UserID, limit int) ([]scoring.UserPrediction, error)
 }
 
+// MiniAppNames resolves the name this person is known by inside the bot.
+//
+// The Mini App sits next to leaderboards that call somebody by their chosen
+// nickname; greeting them by their Telegram first name instead makes the
+// app look like it is about somebody else. Optional: without it the app
+// falls back to the name Telegram sent with the launch.
+type MiniAppNames interface {
+	Nickname(ctx context.Context, userID common.UserID) (*string, error)
+	UserProfile(ctx context.Context, userID common.UserID) (*chat.UserProfile, error)
+}
+
 // MiniAppAccessChecker answers whether this person may open the app at
 // all.
 type MiniAppAccessChecker interface {
@@ -42,6 +53,8 @@ type MiniAppDeps struct {
 	BotToken string
 	Stats    MiniAppStats
 	Access   MiniAppAccessChecker
+	// Names resolves the display name the rest of the bot uses.
+	Names MiniAppNames
 	// Operators are the root administrators (DEPLOY_NOTIFY_CHAT_IDS).
 	// They are exempt from the access grant: they are who approves it.
 	Operators []int64
@@ -133,7 +146,7 @@ func dashboardHandler(deps MiniAppDeps) http.Handler {
 		insights := scoring.BuildPersonalInsights(predictions, now)
 		var body dashboardDTO
 		body.User.ID = user.ID.Value
-		body.User.DisplayName = displayNameOf(user.Profile)
+		body.User.DisplayName = deps.displayName(r.Context(), user)
 		body.User.PhotoURL = user.Profile.PhotoURL
 		if overall != nil {
 			body.Summary = summaryDTO{
@@ -203,6 +216,23 @@ func recordOf(insights scoring.PersonalInsights) (predictions, accuracy int) {
 	predictions = insights.Recent.Predictions + insights.Previous.Predictions
 	correct := insights.Recent.Correct + insights.Previous.Correct
 	return predictions, scoring.PeriodSummary{Correct: correct, Predictions: predictions}.AccuracyPercent()
+}
+
+// displayName is the same name the leaderboards use: the nickname
+// somebody chose, then whatever the bot stored for them, and only then the
+// name Telegram sent with this launch. A person who renamed themselves in
+// the bot and is greeted by their Telegram name in the app reasonably
+// concludes the app is showing somebody else's numbers.
+func (d MiniAppDeps) displayName(ctx context.Context, user authenticatedUser) string {
+	if d.Names != nil {
+		if nickname, err := d.Names.Nickname(ctx, user.ID); err == nil && nickname != nil && *nickname != "" {
+			return *nickname
+		}
+		if profile, err := d.Names.UserProfile(ctx, user.ID); err == nil && profile != nil && profile.DisplayName != "" {
+			return profile.DisplayName
+		}
+	}
+	return displayNameOf(user.Profile)
 }
 
 func displayNameOf(profile InitDataUser) string {
