@@ -147,6 +147,9 @@ func (f *fakeSettlementOutbox) Published(context.Context, uuid.UUID, time.Time) 
 func (f *fakeSettlementOutbox) Failed(context.Context, uuid.UUID, time.Time, string) error {
 	return nil
 }
+func (f *fakeSettlementOutbox) Defer(context.Context, uuid.UUID, time.Time, time.Time) error {
+	return nil
+}
 
 func newSettlementFixture() (*fakePredictionsForSettlement, *fakeScoringForSettlement, *fakeSettlementRepo, *fakeSettlementOutbox) {
 	return &fakePredictionsForSettlement{polls: map[common.PollID]prediction.Poll{}, votes: map[common.PollID][]prediction.Vote{}},

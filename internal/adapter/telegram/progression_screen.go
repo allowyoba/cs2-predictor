@@ -57,6 +57,10 @@ func (h *UpdateHandler) sendProgressionChart(ctx context.Context, target replyTa
 }
 
 func chartCallbackData(period scoring.StatsPeriod) string {
+	return appendGame(chartCallbackBase(period), period.Game)
+}
+
+func chartCallbackBase(period scoring.StatsPeriod) string {
 	switch period.Kind {
 	case scoring.PeriodYear:
 		return fmt.Sprintf("stats:chart:y:%d", period.Year)
@@ -105,6 +109,10 @@ func (h *UpdateHandler) sendRankChart(ctx context.Context, target replyTarget, s
 }
 
 func rankChartCallbackData(period scoring.StatsPeriod) string {
+	return appendGame(rankChartCallbackBase(period), period.Game)
+}
+
+func rankChartCallbackBase(period scoring.StatsPeriod) string {
 	switch period.Kind {
 	case scoring.PeriodYear:
 		return fmt.Sprintf("stats:rankchart:y:%d", period.Year)

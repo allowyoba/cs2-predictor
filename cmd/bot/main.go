@@ -189,7 +189,8 @@ func run() error {
 	}
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
 		WithRecaps(chats, chatTitle, log)
-	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log)
+	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
+		WithPersonalRecaps(chats)
 
 	// teamMatch resolves a team with no cached ranking against whichever
 	// ranking feeds (teamMatchSources) are actually enabled — pointless
@@ -273,18 +274,24 @@ func run() error {
 	dispatcher := &app.OutboxDispatcher{
 		Outbox: outbox, Lock: clusterLock, BatchSize: cfg.OutboxBatchSize, Metrics: metrics, Log: log,
 		Publishers: []common.OutboxPublisher{
-			telegram.NewMatchResultPublisher(telegramClient, chats, texts, *botUser.Username),
-			telegram.NewEventFinishedPublisher(telegramClient, chats, texts),
-			telegram.NewMonthlyDigestPublisher(telegramClient, chats, texts),
-			telegram.NewAnnualDigestPublisher(telegramClient, chats, texts),
-			telegram.NewBigEventPublisher(telegramClient, chats, texts),
+			telegram.WithQuietHours(telegram.NewMatchResultPublisher(telegramClient, chats, texts, *botUser.Username), chats, clock),
+			// Quiet hours apply to the proactive, non-urgent messages a
+			// chat receives; see telegram/quiet_hours.go for what is
+			// deliberately left out of that list.
+			telegram.WithQuietHours(telegram.NewEventFinishedPublisher(telegramClient, chats, texts), chats, clock),
+			// The personal half of that recap is a DM, and quiet hours are
+			// a chat's setting — somebody's own inbox is not the room.
+			telegram.NewEventRecapPublisher(telegramClient, chats, texts, metrics),
+			telegram.WithQuietHours(telegram.NewMonthlyDigestPublisher(telegramClient, chats, texts), chats, clock),
+			telegram.WithQuietHours(telegram.NewAnnualDigestPublisher(telegramClient, chats, texts), chats, clock),
+			telegram.WithQuietHours(telegram.NewBigEventPublisher(telegramClient, chats, texts), chats, clock),
 			telegram.NewUnsubscribeConfirmationPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewResultRecapPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewPollReminderPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewTeamMatchAskPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
-			telegram.NewEventEvePublisher(telegramClient, chats, texts),
+			telegram.WithQuietHours(telegram.NewEventEvePublisher(telegramClient, chats, texts), chats, clock),
 			telegram.NewSuggestionPublisher(telegramClient, chats, texts, metrics),
 		},
 	}

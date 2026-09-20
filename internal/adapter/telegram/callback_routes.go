@@ -110,16 +110,26 @@ var callbackRoutes = []callbackRoute{
 		return false, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 	}},
 	{match: exact("menu:upcoming"), handle: simple((*UpdateHandler).upcoming)},
-	{match: exact("menu:rules"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-		kb := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, "menu:main")}}}
+	{match: prefixed("menu:rules"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		// The rules are reachable from more than one place now (the menu,
+		// and the help screen in either surface), so the screen carries
+		// where it came from rather than always returning to the group
+		// menu — which, from a private chat, is a menu the reader was
+		// never on.
+		back := strings.TrimPrefix(strings.TrimPrefix(data, "menu:rules"), ":")
+		if back == "" {
+			back = "menu:main"
+		}
+		kb := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(settings.Locale, back)}}}
 		return false, h.respond(ctx, target, managedScreenContext(target, settings, h.Texts.Get("rules.text", settings.Locale)), kb)
 	}},
 	{match: exact("menu:help"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-		return false, h.helpView(ctx, target, settings.Locale, "menu:main")
+		return false, h.helpView(ctx, target, settings.Locale, "menu:main", cb.Message.Chat.Type == "private")
 	}},
 	{match: prefixed("stats:p:"), handle: routeStatsPage},
-	{match: exact("stats:all"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
-		return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime(), "menu:stats", common.UserID{Value: cb.From.ID})
+	{match: prefixed("stats:all"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		_, game := splitGame(data)
+		return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime().ForGame(game), "menu:stats", common.UserID{Value: cb.From.ID})
 	}},
 	{match: exact("stats:years"), handle: simple((*UpdateHandler).yearMenu)},
 	{match: prefixed("stats:months:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
@@ -214,6 +224,10 @@ var callbackRoutes = []callbackRoute{
 	{match: exact("settings:top_tier"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsTopTier},
 	{match: exact("settings:auto_subscribe"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribe},
 	{match: prefixed("settings:auto_subscribe:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribeGame},
+	{match: exact("settings:quiet"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).quietHoursView)},
+	{match: prefixed("settings:quiet:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.setQuietHours(ctx, cb, target, settings, strings.TrimPrefix(data, "settings:quiet:"))
+	}},
 	{match: exact("settings:stream_announce"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamAnnounce},
 	{match: exact("settings:stream_language"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamLanguage},
 	{match: exact("settings:games"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).gamesView)},
@@ -274,6 +288,10 @@ func routeEventsView(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, t
 // nested switch) so each kind's parsing stays independently readable and
 // under the complexity budget the rest of this file holds to.
 func routeStatsPage(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	// The game filter rides as an optional trailing token on every stats
+	// callback, so it is taken off here once rather than threaded through
+	// each period's own fixed-length parsing.
+	data, game := splitGame(data)
 	parts := strings.Split(data, ":")
 	if len(parts) < 4 {
 		return false, newValidationError("invalid leaderboard page callback")
@@ -281,11 +299,11 @@ func routeStatsPage(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, ta
 	viewer := common.UserID{Value: cb.From.ID}
 	switch parts[2] {
 	case "a":
-		return routeStatsPageAllTime(h, ctx, target, settings, viewer, parts)
+		return routeStatsPageAllTime(h, ctx, target, settings, viewer, parts, game)
 	case "y":
-		return routeStatsPageYear(h, ctx, target, settings, viewer, parts)
+		return routeStatsPageYear(h, ctx, target, settings, viewer, parts, game)
 	case "m":
-		return routeStatsPageMonth(h, ctx, target, settings, viewer, parts)
+		return routeStatsPageMonth(h, ctx, target, settings, viewer, parts, game)
 	case "e":
 		return routeStatsPageEvent(h, ctx, target, settings, viewer, parts)
 	default:
@@ -293,7 +311,7 @@ func routeStatsPage(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, ta
 	}
 }
 
-func routeStatsPageAllTime(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
+func routeStatsPageAllTime(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string, game competition.GameCode) (bool, error) {
 	if len(parts) != 4 {
 		return false, newValidationError("invalid all-time leaderboard page callback")
 	}
@@ -301,10 +319,10 @@ func routeStatsPageAllTime(h *UpdateHandler, ctx context.Context, target replyTa
 	if parseErr != nil || page < 0 {
 		return false, newValidationError("invalid leaderboard page")
 	}
-	return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime(), "menu:stats", viewer, page)
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.AllTime().ForGame(game), "menu:stats", viewer, page)
 }
 
-func routeStatsPageYear(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
+func routeStatsPageYear(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string, game competition.GameCode) (bool, error) {
 	if len(parts) != 6 {
 		return false, newValidationError("invalid yearly leaderboard page callback")
 	}
@@ -317,10 +335,10 @@ func routeStatsPageYear(h *UpdateHandler, ctx context.Context, target replyTarge
 	if parts[5] == "y" {
 		back = "stats:years"
 	}
-	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year), back, viewer, page)
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year).ForGame(game), back, viewer, page)
 }
 
-func routeStatsPageMonth(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
+func routeStatsPageMonth(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string, game competition.GameCode) (bool, error) {
 	if len(parts) != 6 || len(parts[3]) != 6 {
 		return false, newValidationError("invalid monthly leaderboard page callback")
 	}
@@ -334,7 +352,7 @@ func routeStatsPageMonth(h *UpdateHandler, ctx context.Context, target replyTarg
 	if parts[5] == "m" {
 		back = fmt.Sprintf("stats:months:%d", year)
 	}
-	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, time.Month(monthInt)), back, viewer, page)
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, time.Month(monthInt)).ForGame(game), back, viewer, page)
 }
 
 func routeStatsPageEvent(h *UpdateHandler, ctx context.Context, target replyTarget, settings chat.Settings, viewer common.UserID, parts []string) (bool, error) {
@@ -446,10 +464,12 @@ func parseChartPeriod(parts []string) (scoring.StatsPeriod, error) {
 // chart. Whether it's drawn for everyone or just the caller follows the
 // same personal-vs-group signal sendProgressionChart itself resolves.
 func routeStatsChart(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	data, game := splitGame(data)
 	period, err := parseChartPeriod(strings.Split(strings.TrimPrefix(data, "stats:chart:"), ":"))
 	if err != nil {
 		return false, err
 	}
+	period = period.ForGame(game)
 	viewer := common.UserID{Value: cb.From.ID}
 	return false, h.sendProgressionChart(ctx, target, settings, period, viewer)
 }
@@ -457,15 +477,17 @@ func routeStatsChart(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, t
 // routeStatsRankChart is routeStatsChart's sibling for the leaderboard
 // position (rank movement) chart.
 func routeStatsRankChart(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	data, game := splitGame(data)
 	period, err := parseChartPeriod(strings.Split(strings.TrimPrefix(data, "stats:rankchart:"), ":"))
 	if err != nil {
 		return false, err
 	}
 	viewer := common.UserID{Value: cb.From.ID}
-	return false, h.sendRankChart(ctx, target, settings, period, viewer)
+	return false, h.sendRankChart(ctx, target, settings, period.ForGame(game), viewer)
 }
 
 func routeStatsYear(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	data, game := splitGame(data)
 	parts := strings.Split(data, ":")
 	if len(parts) < 3 || len(parts) > 4 {
 		return false, newValidationError("invalid stats year callback")
@@ -478,10 +500,11 @@ func routeStatsYear(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, ta
 	if len(parts) == 4 && parts[3] == "years" {
 		back = "stats:years"
 	}
-	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year), back, common.UserID{Value: cb.From.ID})
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForYear(year).ForGame(game), back, common.UserID{Value: cb.From.ID})
 }
 
 func routeStatsMonth(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	data, game := splitGame(data)
 	parts := strings.Split(data, ":")
 	if len(parts) < 3 || len(parts) > 5 {
 		return false, newValidationError("invalid stats month callback")
@@ -499,7 +522,7 @@ func routeStatsMonth(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, t
 		}
 		back = fmt.Sprintf("stats:months:%d", backYear)
 	}
-	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, month), back, common.UserID{Value: cb.From.ID})
+	return false, h.renderLeaderboard(ctx, target, settings, scoring.ForMonth(year, month).ForGame(game), back, common.UserID{Value: cb.From.ID})
 }
 
 func routeModeratorsPick(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {

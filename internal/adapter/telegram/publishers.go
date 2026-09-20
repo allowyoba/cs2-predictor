@@ -566,6 +566,36 @@ func (p *personalNotePublisher) Publish(ctx context.Context, message common.Outb
 	return err
 }
 
+// NewEventRecapPublisher delivers one person's own half of a tournament
+// recap: where they finished, out of how many, and what they got right.
+//
+// The chat's recap is everyone's result and nobody's in particular; this
+// is the one somebody screenshots. It rides on the same opt-in as the
+// per-match recap — see common.EventRecapNotification.
+func NewEventRecapPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) common.OutboxPublisher {
+	return &personalNotePublisher{
+		eventType: "telegram.event-recap-personal", client: client, chats: chats, texts: texts, metrics: metrics,
+		compose: func(payload string) (int64, string, error) {
+			var n common.EventRecapNotification
+			if err := json.Unmarshal([]byte(payload), &n); err != nil {
+				return 0, "", err
+			}
+			locale := common.LocaleRU
+			text := texts.Get("erecap.title", locale, bold(escapeHTML(n.EventName)))
+			if n.ChatTitle != "" {
+				text += "\n" + italic(escapeHTML(n.ChatTitle))
+			}
+			text += "\n\n" + texts.Get("erecap.place", locale, bold(itoa(n.Rank)), n.Participants) +
+				"\n" + texts.Get("erecap.points", locale, bold(itoa(n.Points))) +
+				"\n" + texts.Get("erecap.accuracy", locale, n.ExactPredictions, n.CorrectPredictions-n.ExactPredictions, n.Predictions)
+			if n.Award != "" {
+				text += "\n\n" + texts.Get("erecap.award", locale, bold(texts.Get("award."+n.Award, locale)))
+			}
+			return n.UserID, text, nil
+		},
+	}
+}
+
 // NewResultRecapPublisher delivers the opt-in "here's how you did" DM
 // after a match a person predicted is settled.
 func NewResultRecapPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) common.OutboxPublisher {

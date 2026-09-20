@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
@@ -43,6 +44,7 @@ func (h *UpdateHandler) privateBetsMenu(ctx context.Context, target replyTarget,
 	if err != nil {
 		return err
 	}
+	zone := h.userZone(ctx, userID)
 
 	back := h.backButton(locale, betsBackTarget(chatID, listPage))
 	if len(bets) == 0 {
@@ -63,7 +65,7 @@ func (h *UpdateHandler) privateBetsMenu(ctx context.Context, target replyTarget,
 	var b strings.Builder
 	b.WriteString(bold(h.Texts.Get("bets.title", locale)))
 	for _, bet := range bets[start:end] {
-		b.WriteString("\n\n" + h.betLine(bet, locale, chatID != nil))
+		b.WriteString("\n\n" + h.betLine(bet, locale, chatID != nil, zone))
 	}
 
 	var rows [][]InlineButton
@@ -83,7 +85,7 @@ func (h *UpdateHandler) privateBetsMenu(ctx context.Context, target replyTarget,
 // settled, so this stays silent rather than claiming "+0"). The chat name is
 // only shown on the all-chats screen — on a chat-scoped one it would repeat
 // the same chat on every single row.
-func (h *UpdateHandler) betLine(bet scoring.UserBet, locale common.LocaleCode, hideChatName bool) string {
+func (h *UpdateHandler) betLine(bet scoring.UserBet, locale common.LocaleCode, hideChatName bool, zone *time.Location) string {
 	marker := "❌"
 	if bet.Correct {
 		marker = "✅"
@@ -91,7 +93,10 @@ func (h *UpdateHandler) betLine(bet scoring.UserBet, locale common.LocaleCode, h
 	matchup := fmt.Sprintf("%s — %s", escapeHTML(truncate(bet.FirstTeamName, 24)), escapeHTML(truncate(bet.SecondTeamName, 24)))
 	line := marker + " " + bold(matchup)
 	line += "\n" + h.Texts.Get("bets.line_scores", locale, bet.PredictedScore.String(), bet.ActualScore.String())
-	meta := bet.PlayedAt.Format("02.01.2006")
+	// In the reader's own zone: a match that started at 01:00 Moscow time
+	// was played the evening before in Berlin, and a list of dates that
+	// disagrees with the reader's calendar is quietly wrong on every row.
+	meta := bet.PlayedAt.In(zone).Format("02.01.2006")
 	if !hideChatName {
 		meta = escapeHTML(truncate(bet.ChatTitle, 30)) + " · " + meta
 	}

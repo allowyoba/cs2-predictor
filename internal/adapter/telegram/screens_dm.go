@@ -156,6 +156,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTarget, locale common.LocaleCode) error {
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
+		{button(h.Texts.Get("dm.timezone", locale), "pstats:timezone")},
 		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
 		{button(h.Texts.Get("idea.title", locale), "idea:menu")},
 		{h.backButton(locale, "pstats:menu")},

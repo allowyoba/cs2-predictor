@@ -274,9 +274,13 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	case data == "pstats:insights":
 		err = h.renderPersonalInsights(ctx, target, userID, locale)
 	case data == "pstats:help":
-		err = h.helpView(ctx, target, locale, "pstats:menu")
+		err = h.helpView(ctx, target, locale, "pstats:menu", true)
 	case data == "pstats:rename":
 		err = h.renameMenu(ctx, target, userID, locale)
+	case data == "pstats:timezone":
+		err = h.userTimezoneView(ctx, target, userID, locale)
+	case strings.HasPrefix(data, "pstats:tz:"):
+		err = h.setUserTimezone(ctx, cb, target, userID, locale, strings.TrimPrefix(data, "pstats:tz:"))
 	case data == "idea:menu":
 		err = h.suggestionMenu(ctx, target, locale)
 	case data == "idea:write":

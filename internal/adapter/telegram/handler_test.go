@@ -46,6 +46,7 @@ type fakeChats struct {
 	notifyPrefs   map[int64]chat.NotificationPrefs
 	nicknames     map[int64]string
 	profiles      map[int64]chat.UserProfile
+	zones         map[int64]string
 }
 
 func newFakeChats() *fakeChats {
@@ -183,6 +184,25 @@ func (f *fakeChats) SetAutoSubscribeGame(_ context.Context, chatID common.ChatID
 	}
 	s.AutoSubscribeGames = next
 	f.settings[chatID.Value] = s
+	return nil
+}
+
+// zones backs the per-user timezone; absent means "never chose one".
+func (f *fakeChats) UserTimezone(_ context.Context, userID common.UserID) (*string, error) {
+	if zone, ok := f.zones[userID.Value]; ok {
+		return &zone, nil
+	}
+	return nil, nil
+}
+func (f *fakeChats) SetUserTimezone(_ context.Context, userID common.UserID, timezone string) error {
+	if f.zones == nil {
+		f.zones = map[int64]string{}
+	}
+	if timezone == "" {
+		delete(f.zones, userID.Value)
+		return nil
+	}
+	f.zones[userID.Value] = timezone
 	return nil
 }
 func (f *fakeChats) IsModerator(_ context.Context, chatID common.ChatID, userID common.UserID) (bool, error) {

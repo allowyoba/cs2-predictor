@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/platform/common"
 )
 
 // The settings screen shows the chat's timezone, but for a long time the
@@ -83,4 +84,52 @@ func (h *UpdateHandler) setTimezone(ctx context.Context, cb *CallbackQuery, targ
 		return false, err
 	}
 	return true, h.timezoneView(ctx, target, settings)
+}
+
+// --- the same picker, for one person rather than a chat ---
+//
+// A private chat has no chat settings to render from, and its timezone
+// belongs to the reader alone: the dates in their bet history, and the
+// times in the reminders and recaps the bot sends them.
+
+func cbUserTimezone(index int) string { return "pstats:tz:" + strconv.Itoa(index) }
+
+func (h *UpdateHandler) userTimezoneView(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+	current := h.userZone(ctx, userID).String()
+	rows := make([][]InlineButton, 0, len(commonTimezones)/2+2)
+	for i := 0; i < len(commonTimezones); i += 2 {
+		row := []InlineButton{button(timezoneLabel(commonTimezones[i], current), cbUserTimezone(i))}
+		if i+1 < len(commonTimezones) {
+			row = append(row, button(timezoneLabel(commonTimezones[i+1], current), cbUserTimezone(i+1)))
+		}
+		rows = append(rows, row)
+	}
+	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:settings")})
+
+	text := bold(h.Texts.Get("dm.timezone", locale)) + "\n\n" +
+		h.Texts.Get("settings.timezone_current", locale, code(escapeHTML(current))) + "\n\n" +
+		h.Texts.Get("dm.timezone_hint", locale)
+	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
+}
+
+func (h *UpdateHandler) setUserTimezone(ctx context.Context, cb *CallbackQuery, target replyTarget, userID common.UserID, locale common.LocaleCode, raw string) error {
+	index, err := strconv.Atoi(raw)
+	if err != nil || index < 0 || index >= len(commonTimezones) {
+		return newValidationError("invalid timezone choice %q", raw)
+	}
+	zone := commonTimezones[index]
+	// Validated against the tzdata this process actually has, for the same
+	// reason the chat picker does it: a zone missing from a slim container
+	// must fail here rather than silently render every time in UTC.
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		return h.toast(ctx, cb.ID, h.Texts.Get("settings.timezone_unknown", locale, zone))
+	}
+	if err := h.Chats.SetUserTimezone(ctx, userID, loc.String()); err != nil {
+		return err
+	}
+	if err := h.toast(ctx, cb.ID, "✅ "+loc.String()); err != nil {
+		return err
+	}
+	return h.userTimezoneView(ctx, target, userID, locale)
 }
