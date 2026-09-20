@@ -186,7 +186,10 @@ esac
                               "APIFY_MAX_TEAMS=\n"
                               "EVENT_EVE_LEAD=\n"
                               "DATABASE_POOL_SIZE=\n"
-                              "MINIAPP_URL=https://bot.example.test/app/\n")
+                              "MINIAPP_URL=https://bot.example.test/app/\n"
+                              "HOST_ALERT_MEMORY=\n"
+                              "HOST_ALERT_DISK=\n"
+                              "HOST_ALERT_LOAD_PER_CPU=\n")
             self.assertFalse(Path(tmp, "deploy_key").exists())
             self.assertFalse(Path(tmp, "known_hosts").exists())
 

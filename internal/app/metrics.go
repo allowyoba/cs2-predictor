@@ -38,6 +38,10 @@ type Metrics struct {
 	// message, by outcome — the one place a flood is visible as a shape
 	// rather than as individual log lines.
 	Suggestions *prometheus.CounterVec
+	// HostUsage is the machine itself: memory, disk and load. Everything
+	// else here measures this bot's work, and none of it notices the
+	// failure that stops all of it at once.
+	HostUsage *prometheus.GaugeVec
 }
 
 // RecordAdminAction and RecordDMDelivery implement telegram.AdminMetrics.
@@ -103,7 +107,10 @@ func NewMetrics(registry *prometheus.Registry) *Metrics {
 	m.Suggestions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "feature_suggestions_total", Help: "Incoming feature suggestions, by outcome.",
 	}, []string{"outcome"})
-	registry.MustRegister(m.JobLastRun, m.WebhookState, m.DeadLetters, m.Suggestions)
+	m.HostUsage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "host_resource_usage_ratio", Help: "Machine resource usage as a fraction (memory, disk, load per CPU).",
+	}, []string{"resource"})
+	registry.MustRegister(m.JobLastRun, m.WebhookState, m.DeadLetters, m.Suggestions, m.HostUsage)
 	registry.MustRegister(m.SyncRuns, m.SyncEntities, m.ProviderCalls, m.ProviderLatency, m.PredictionPolls, m.OutboxEvents,
 		m.HTTPRequests, m.HTTPDuration, m.HTTPPanics, m.AdminActions, m.DMDeliveries)
 	return m

@@ -92,6 +92,11 @@ esac
             # App is served from the same host, and a deployment that hosts
             # it should not have to name the address twice.
             "MINIAPP_URL": "https://bot.example.test/app/",
+            # Machine-resource alert levels: unset here, so the bot keeps
+            # its own defaults rather than the deploy inventing numbers.
+            "HOST_ALERT_MEMORY": "",
+            "HOST_ALERT_DISK": "",
+            "HOST_ALERT_LOAD_PER_CPU": "",
         }
         self.new_env_file = "".join(f"{k}={v}\n" for k, v in self.new_env_values.items())
         self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],

@@ -43,6 +43,12 @@ type RouterDeps struct {
 	// disables the limiter (see withRateLimit).
 	WebhookRateLimit app.WebhookRateLimitConfig
 
+	// MiniApp wires the authenticated half of the Mini App API — the
+	// endpoints about one person. Left zero, those routes answer 503
+	// rather than disappearing: a client that cannot tell "not deployed"
+	// from "wrong URL" retries the wrong thing.
+	MiniApp MiniAppDeps
+
 	// Teams backs the Mini App's team/crest endpoint. Nil leaves the route
 	// registered but answering 503, which is a clearer signal to a client
 	// than a 404 on a path that does exist in other deployments.
@@ -76,11 +82,17 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// The Mini App's own surface. Versioned in the path from its first
 	// endpoint: a Mini App is a shipped client that keeps running against
 	// whatever it was built for, so breaking changes need somewhere to go.
-	miniappTeams := teamsHandler(deps.Teams)
-	if deps.Metrics != nil && deps.Log != nil {
-		miniappTeams = withObservability("miniapp_teams", miniappTeams, deps.Metrics, deps.Log)
+	instrument := func(route string, handler http.Handler) http.Handler {
+		if deps.Metrics == nil || deps.Log == nil {
+			return handler
+		}
+		return withObservability(route, handler, deps.Metrics, deps.Log)
 	}
+	miniappTeams := instrument("miniapp_teams", teamsHandler(deps.Teams))
 	mux.Handle("GET /api/miniapp/v1/teams", miniappTeams)
+	mux.Handle("GET /api/miniapp/v1/me/dashboard", instrument("miniapp_dashboard", dashboardHandler(deps.MiniApp)))
+	mux.Handle("GET /api/miniapp/v1/me/access", instrument("miniapp_access", accessHandler(deps.MiniApp)))
+	mux.Handle("POST /api/miniapp/v1/me/access", instrument("miniapp_access_request", accessHandler(deps.MiniApp)))
 	// The Mini App's own page, served from the binary. See
 	// internal/miniapp for why it is embedded rather than deployed as
 	// files next to the reverse proxy.

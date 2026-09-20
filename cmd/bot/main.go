@@ -294,6 +294,7 @@ func run() error {
 			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
 			telegram.WithQuietHours(telegram.NewEventEvePublisher(telegramClient, chats, texts), chats, clock),
 			telegram.NewSuggestionPublisher(telegramClient, chats, texts, metrics),
+			telegram.NewMiniAppAccessPublisher(telegramClient, chats, texts, metrics),
 		},
 	}
 
@@ -304,6 +305,12 @@ func run() error {
 		Inspector: telegramClient, Alerter: adminAlerter, Metrics: metrics, Clock: clock, Log: log,
 		PendingThreshold: cfg.DeliveryBacklogAlert,
 	}
+	// The machine itself: the only failure that takes every job down at
+	// once, and the only one nothing else here would notice.
+	hostMonitor := &app.HostMonitor{
+		Metrics: metrics, Alerter: adminAlerter, Limits: cfg.HostLimits, Log: log, Root: "/",
+	}
+
 	deadLetters := &app.DeadLetterWatch{Store: outbox, Alerter: adminAlerter, Metrics: metrics, Log: log}
 
 	// backgroundJobs tracks every scheduler goroutine so shutdown can wait
@@ -356,12 +363,17 @@ func run() error {
 		// silent — see app.WebhookWatchdog and app.DeadLetterWatch.
 		runBackground("webhook-watchdog", cfg.WatchdogInterval, webhookWatchdog.Check)
 		runBackground("dead-letter-watch", cfg.WatchdogInterval, deadLetters.Check)
+		runBackground("host-monitor", cfg.WatchdogInterval, hostMonitor.Check)
 	}
 	defer backgroundJobs.Wait()
 
 	mux := httpapi.NewRouter(httpapi.RouterDeps{
 		Webhook: webhookHandler, Gateway: gateway, Registry: registry, Pool: pool,
 		Metrics: metrics, Log: log, WebhookRateLimit: cfg.WebhookRateLimit, Teams: catalog,
+		MiniApp: httpapi.MiniAppDeps{
+			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats,
+			Operators: cfg.TeamMatchOperatorChatIDs, Clock: clock, Log: log,
+		},
 		Version: version, Commit: commit, BuildTime: buildTime,
 		EnrichmentState: enrichmentRepo, EnrichmentSources: enrichmentSources,
 	})

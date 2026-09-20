@@ -145,9 +145,10 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 	}
 	// The Mini App opens on top of this dashboard rather than replacing
 	// it: the bot stays the place predictions are made, and the app is
-	// where the history behind them is read.
-	if h.MiniAppURL != "" {
-		rows = append(rows, []InlineButton{webAppButton(h.Texts.Get("private.miniapp", locale), h.MiniAppURL)})
+	// where the history behind them is read. Closed by default — see
+	// miniapp_access.go for what each state offers.
+	if row := h.miniAppRow(ctx, userID, locale); row != nil {
+		rows = append(rows, row)
 	}
 	if backRow != nil {
 		rows = append(rows, backRow)

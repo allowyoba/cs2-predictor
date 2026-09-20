@@ -116,19 +116,40 @@
   /** logos maps a lowercased team name to its crest URL, per game. */
   const logos = new Map();
 
-  /** fetchJSON is every network read here: bounded, and never throwing past the caller. */
-  async function fetchJSON(path, timeoutMs = 6000) {
+  /**
+   * fetchJSON is every network read here: bounded, and never throwing past
+   * the caller.
+   *
+   * Personal reads carry Telegram's own signed launch parameters, which is
+   * the only credential this app has — there is no token of ours to store,
+   * and nothing to leak if the page is opened anywhere else.
+   */
+  async function fetchJSON(path, { timeoutMs = 6000, signed = false, method = 'GET' } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const headers = { Accept: 'application/json' };
+    if (signed) {
+      const initData = tg?.initData || '';
+      if (!initData) throw new UnauthenticatedError();
+      headers.Authorization = `tma ${initData}`;
+    }
     try {
-      const response = await fetch(`${API_BASE}${path}`, {
-        signal: controller.signal,
-        headers: { Accept: 'application/json' },
-      });
+      const response = await fetch(`${API_BASE}${path}`, { method, signal: controller.signal, headers });
+      if (response.status === 401) throw new UnauthenticatedError();
+      if (response.status === 403) throw new ForbiddenError(await response.json().catch(() => ({})));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /** The two refusals the API can return, told apart so the screen can. */
+  class UnauthenticatedError extends Error {}
+  class ForbiddenError extends Error {
+    constructor(body) {
+      super('forbidden');
+      this.access = body || {};
     }
   }
 
@@ -221,6 +242,85 @@
     const node = document.querySelector(selector);
     if (node) node.textContent = value;
   };
+
+  // --- the real numbers ------------------------------------------------
+  //
+  // Everything above is the prototype's own demo data. What follows is the
+  // person's actual record, read from the bot's database through a signed
+  // launch. When it arrives it replaces the demo figures; when it does not
+  // — no access yet, no network — the screen says so rather than leaving
+  // mock numbers on display as if they were real.
+
+  let dashboard = null;
+
+  /** applyDashboard overwrites the headline figures with real ones. */
+  function applyDashboard(data) {
+    dashboard = data;
+    const summary = data.summary || {};
+    setText('#accuracyValue', summary.accuracy ?? 0);
+    setText('#accuracySub', `${summary.correct ?? 0} верных из ${summary.predictions ?? 0} прогнозов`);
+    setText('#sampleValue', summary.predictions ?? 0);
+    setText('#streakValue', data.form?.current_streak ?? 0);
+    if (data.form?.recent?.length) {
+      const wins = data.form.recent.filter(Boolean).length;
+      setText('#formScore', Math.round((wins / data.form.recent.length) * 100));
+    }
+    const trend = data.trend;
+    setText('#trendValue', trend
+      ? `${trend.delta_pp > 0 ? '↗ +' : trend.delta_pp < 0 ? '↘ −' : '→ '}${Math.abs(trend.delta_pp)} п.п.`
+      : '— недостаточно данных');
+    renderGameRail(data.games || []);
+  }
+
+  /**
+   * renderGameRail replaces the demo rail with the games this person has
+   * actually predicted in. A game nobody has played is not a filter, it is
+   * a dead end with a label on it.
+   */
+  function renderGameRail(games) {
+    const rail = document.querySelector('#gameRail');
+    if (!rail || games.length === 0) return;
+    rail.replaceChildren(...games.map((entry) => {
+      const chip = el('button', 'game-chip');
+      chip.dataset.game = entry.game.toLowerCase();
+      chip.append(el('i', 'game-dot'), el('span', null, DEMO[entry.game.toLowerCase()]?.label || entry.game),
+        el('small', null, `${entry.accuracy}%`));
+      chip.addEventListener('click', () => setGame(chip.dataset.game));
+      return chip;
+    }));
+    const first = games[0].game.toLowerCase();
+    if (DEMO[first]) void setGame(first);
+  }
+
+  /** showAccessNotice replaces the screen with why it is empty. */
+  function showAccessNotice(kind) {
+    const notice = document.querySelector('#accessNotice');
+    const shell = document.querySelector('#app');
+    if (!notice || !shell) return;
+    const messages = {
+      forbidden: 'Доступ к приложению ещё не выдан. Запросите его в личном кабинете бота — придёт ответ.',
+      unauthenticated: 'Откройте приложение из бота: вне Telegram оно не может подтвердить, кто вы.',
+      failed: 'Не удалось загрузить данные. Попробуйте открыть приложение ещё раз.',
+    };
+    notice.textContent = messages[kind] || messages.failed;
+    notice.hidden = false;
+    shell.dataset.state = kind;
+  }
+
+  async function loadDashboard() {
+    try {
+      applyDashboard(await fetchJSON('/api/miniapp/v1/me/dashboard', { signed: true }));
+      const notice = document.querySelector('#accessNotice');
+      if (notice) notice.hidden = true;
+    } catch (error) {
+      if (error instanceof ForbiddenError) showAccessNotice('forbidden');
+      else if (error instanceof UnauthenticatedError) showAccessNotice('unauthenticated');
+      else {
+        console.warn('dashboard unavailable', error);
+        showAccessNotice('failed');
+      }
+    }
+  }
 
   async function setGame(game) {
     const data = DEMO[game];
@@ -356,6 +456,7 @@
     initSheet();
 
     void setGame(params.get('game') || 'cs2');
+    void loadDashboard();
     const screen = params.get('screen');
     if (screen) showScreen(screen);
     else syncBackButton('dashboard');
