@@ -25,10 +25,10 @@ func NewChatRepository(pool *pgxpool.Pool) *ChatRepository {
 
 func (r *ChatRepository) Find(ctx context.Context, chatID common.ChatID) (*chat.Settings, error) {
 	row := executor(ctx, r.pool).QueryRow(ctx,
-		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, stream_announcements, prefer_hltv_logos, stream_language, quiet_from_minute, quiet_to_minute FROM telegram_chat WHERE id = $1`, chatID.Value)
+		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, prefer_hltv_logos, stream_language, quiet_from_minute, quiet_to_minute FROM telegram_chat WHERE id = $1`, chatID.Value)
 	var s chat.Settings
 	var id int64
-	if err := row.Scan(&id, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.StreamAnnouncements, &s.PreferHLTVLogos, &s.StreamLanguage, &s.QuietFromMinute, &s.QuietToMinute); err != nil {
+	if err := row.Scan(&id, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.PreferHLTVLogos, &s.StreamLanguage, &s.QuietFromMinute, &s.QuietToMinute); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -45,7 +45,7 @@ func (r *ChatRepository) Find(ctx context.Context, chatID common.ChatID) (*chat.
 
 func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx,
-		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, stream_announcements, prefer_hltv_logos, stream_language, quiet_from_minute, quiet_to_minute
+		`SELECT id, title, locale, timezone, default_topic_id, active, default_top_tier_only, prefer_hltv_logos, stream_language, quiet_from_minute, quiet_to_minute
 		   FROM telegram_chat
 		  WHERE active = true
 		  ORDER BY id`)
@@ -58,7 +58,7 @@ func (r *ChatRepository) ListActive(ctx context.Context) ([]chat.Settings, error
 	var ids []int64
 	for rows.Next() {
 		var s chat.Settings
-		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.StreamAnnouncements, &s.PreferHLTVLogos, &s.StreamLanguage, &s.QuietFromMinute, &s.QuietToMinute); err != nil {
+		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.PreferHLTVLogos, &s.StreamLanguage, &s.QuietFromMinute, &s.QuietToMinute); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -145,19 +145,18 @@ func (r *ChatRepository) SetEnabledGames(ctx context.Context, chatID common.Chat
 // used by every upsert in the original JPA adapters.
 func (r *ChatRepository) Save(ctx context.Context, s chat.Settings) (chat.Settings, error) {
 	_, err := executor(ctx, r.pool).Exec(ctx,
-		`INSERT INTO telegram_chat(id, title, locale, timezone, default_topic_id, active, default_top_tier_only, stream_announcements, prefer_hltv_logos, stream_language, quiet_from_minute, quiet_to_minute, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
+		`INSERT INTO telegram_chat(id, title, locale, timezone, default_topic_id, active, default_top_tier_only, prefer_hltv_logos, stream_language, quiet_from_minute, quiet_to_minute, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
 		 ON CONFLICT (id) DO UPDATE SET
 		   title = excluded.title, locale = excluded.locale, timezone = excluded.timezone,
 		   default_topic_id = excluded.default_topic_id, active = excluded.active,
 		   default_top_tier_only = excluded.default_top_tier_only,
-		   stream_announcements = excluded.stream_announcements,
 		   prefer_hltv_logos = excluded.prefer_hltv_logos,
 		   stream_language = excluded.stream_language,
 		   quiet_from_minute = excluded.quiet_from_minute, quiet_to_minute = excluded.quiet_to_minute,
 		   updated_at = now()`,
 		s.ChatID.Value, s.Title, s.Locale, s.Timezone, s.DefaultTopicID, s.Active, s.DefaultTopTierOnly,
-		s.StreamAnnouncements, s.PreferHLTVLogos, s.StreamLanguage, s.QuietFromMinute, s.QuietToMinute)
+		s.PreferHLTVLogos, s.StreamLanguage, s.QuietFromMinute, s.QuietToMinute)
 	return s, err
 }
 
@@ -477,21 +476,6 @@ func (r *ChatRepository) FilterDMReachable(ctx context.Context, userIDs []common
 
 var _ common.NotificationAudience = (*ChatRepository)(nil)
 
-// notificationColumn maps a notification kind to its preference column.
-// Kept as an explicit allow-list rather than string interpolation of the
-// kind: this value reaches SQL, and an unknown kind must be a plain error,
-// never a query.
-func notificationColumn(kind common.NotificationKind) (string, bool) {
-	switch kind {
-	case common.NotifyResultRecaps:
-		return "result_recaps", true
-	case common.NotifyPollReminders:
-		return "poll_reminders", true
-	default:
-		return "", false
-	}
-}
-
 // Recipients narrows candidates to those who opted into kind AND can be
 // reached by DM. Both conditions matter: an opt-in from someone who has
 // since blocked the bot would otherwise produce a failing send per match.
@@ -499,8 +483,7 @@ func (r *ChatRepository) Recipients(ctx context.Context, kind common.Notificatio
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	column, ok := notificationColumn(kind)
-	if !ok {
+	if !common.KnownNotificationKind(kind) {
 		return nil, fmt.Errorf("unknown notification kind %q", kind)
 	}
 	values := make([]int64, len(candidates))
@@ -508,7 +491,10 @@ func (r *ChatRepository) Recipients(ctx context.Context, kind common.Notificatio
 		values[i] = id.Value
 	}
 	rows, err := executor(ctx, r.pool).Query(ctx,
-		`SELECT id FROM telegram_user WHERE id = ANY($1) AND dm_reachable AND `+column, values)
+		`SELECT u.id FROM telegram_user u
+		   JOIN notification_preference p
+		     ON p.scope = 'user' AND p.subject_id = u.id AND p.kind = $2 AND p.enabled
+		  WHERE u.id = ANY($1) AND u.dm_reachable`, values, string(kind))
 	if err != nil {
 		return nil, err
 	}
@@ -524,31 +510,78 @@ func (r *ChatRepository) Recipients(ctx context.Context, kind common.Notificatio
 	return out, rows.Err()
 }
 
-// NotificationPrefs reads back one person's own opt-ins, for their
-// settings screen.
-func (r *ChatRepository) NotificationPrefs(ctx context.Context, userID common.UserID) (chat.NotificationPrefs, error) {
-	var prefs chat.NotificationPrefs
+var _ common.NotifySwitchboard = (*ChatRepository)(nil)
+
+// NotifyEnabled answers for one switch. No row means off, which is how a
+// chat or a person the bot has never stored a preference for gets the
+// default without anything having to seed one.
+func (r *ChatRepository) NotifyEnabled(ctx context.Context, scope common.NotifyScope, subject int64, kind string) (bool, error) {
+	var on bool
 	err := executor(ctx, r.pool).QueryRow(ctx,
-		`SELECT result_recaps, poll_reminders FROM telegram_user WHERE id = $1`, userID.Value).
-		Scan(&prefs.ResultRecaps, &prefs.PollReminders)
+		`SELECT enabled FROM notification_preference WHERE scope = $1 AND subject_id = $2 AND kind = $3`,
+		string(scope), subject, kind).Scan(&on)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return chat.NotificationPrefs{}, nil
+		return false, nil
 	}
-	return prefs, err
+	return on, err
 }
 
-// SetNotificationPref turns one opt-in on or off. The row is created if
-// this is the first the bot has heard of the user, so a preference can be
-// set before they have voted anywhere.
-func (r *ChatRepository) SetNotificationPref(ctx context.Context, userID common.UserID, kind common.NotificationKind, on bool) error {
-	column, ok := notificationColumn(kind)
-	if !ok {
-		return fmt.Errorf("unknown notification kind %q", kind)
+// NotifySettings returns every switch this subject has a row for, for the
+// settings screen to render in one read.
+func (r *ChatRepository) NotifySettings(ctx context.Context, scope common.NotifyScope, subject int64) (map[string]bool, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT kind, enabled FROM notification_preference WHERE scope = $1 AND subject_id = $2`,
+		string(scope), subject)
+	if err != nil {
+		return nil, err
 	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var kind string
+		var on bool
+		if err := rows.Scan(&kind, &on); err != nil {
+			return nil, err
+		}
+		out[kind] = on
+	}
+	return out, rows.Err()
+}
+
+// SetNotifyEnabled writes one switch. The row carries its own subject, so
+// nothing has to exist in telegram_chat or telegram_user first — an
+// operator chat id from configuration never will.
+func (r *ChatRepository) SetNotifyEnabled(ctx context.Context, scope common.NotifyScope, subject int64, kind string, on bool) error {
 	_, err := executor(ctx, r.pool).Exec(ctx,
-		`INSERT INTO telegram_user (id, display_name, `+column+`) VALUES ($1, '', $2)
-		 ON CONFLICT (id) DO UPDATE SET `+column+` = EXCLUDED.`+column, userID.Value, on)
+		`INSERT INTO notification_preference (scope, subject_id, kind, enabled) VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (scope, subject_id, kind)
+		 DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
+		string(scope), subject, kind, on)
 	return err
+}
+
+// NotifySubjects asks the fan-out question once for a whole batch.
+func (r *ChatRepository) NotifySubjects(ctx context.Context, scope common.NotifyScope, kind string, candidates []int64) ([]int64, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT subject_id FROM notification_preference
+		  WHERE scope = $1 AND kind = $2 AND enabled AND subject_id = ANY($3)`,
+		string(scope), kind, candidates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (r *ChatRepository) SetUserLocale(ctx context.Context, userID common.UserID, locale common.LocaleCode) error {
@@ -577,7 +610,7 @@ func (r *ChatRepository) RecordManaged(ctx context.Context, chatID common.ChatID
 
 func (r *ChatRepository) ManagedChats(ctx context.Context, userID common.UserID) ([]chat.Settings, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx, `
-		SELECT c.id, c.title, c.locale, c.timezone, c.default_topic_id, c.active, c.default_top_tier_only, c.stream_announcements, c.prefer_hltv_logos, c.stream_language, c.quiet_from_minute, c.quiet_to_minute
+		SELECT c.id, c.title, c.locale, c.timezone, c.default_topic_id, c.active, c.default_top_tier_only, c.prefer_hltv_logos, c.stream_language, c.quiet_from_minute, c.quiet_to_minute
 		  FROM chat_manager_seen s
 		  JOIN telegram_chat c ON c.id = s.chat_id
 		 WHERE s.user_id = $1 AND c.active = true
@@ -589,7 +622,7 @@ func (r *ChatRepository) ManagedChats(ctx context.Context, userID common.UserID)
 	var out []chat.Settings
 	for rows.Next() {
 		var s chat.Settings
-		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.StreamAnnouncements, &s.PreferHLTVLogos, &s.StreamLanguage, &s.QuietFromMinute, &s.QuietToMinute); err != nil {
+		if err := rows.Scan(&s.ChatID.Value, &s.Title, &s.Locale, &s.Timezone, &s.DefaultTopicID, &s.Active, &s.DefaultTopTierOnly, &s.PreferHLTVLogos, &s.StreamLanguage, &s.QuietFromMinute, &s.QuietToMinute); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

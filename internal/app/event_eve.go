@@ -50,9 +50,11 @@ type EventEveScheduler struct {
 	Scoring       scoring.Repository
 	Store         ScheduledReportStore
 	Outbox        common.Outbox
-	Lock          common.ClusterLock
-	Clock         common.Clock
-	Log           *slog.Logger
+	// Switches decides which chats asked to be told a day ahead.
+	Switches common.NotifySwitchboard
+	Lock     common.ClusterLock
+	Clock    common.Clock
+	Log      *slog.Logger
 
 	// Lead is how far ahead of the first match to post; zero uses
 	// DefaultEventEveLead. Negative disables the job.
@@ -163,6 +165,10 @@ func (s *EventEveScheduler) notifyIfDue(ctx context.Context, settings chat.Setti
 	// chat subscribing mid-tournament would get the same wrong message.
 	if event.Status != competition.EventUpcoming {
 		return nil
+	}
+	wanted, err := (NotifyGate{Switches: s.Switches}).ChatWants(ctx, settings.ChatID, common.ChatNotifyEventEve)
+	if err != nil || !wanted {
+		return err
 	}
 	claimed, err := s.Store.Claim(ctx, settings.ChatID, eventEveReportType, periodKey)
 	if err != nil || !claimed {

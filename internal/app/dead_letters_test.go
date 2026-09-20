@@ -30,7 +30,7 @@ func newDeadLetterWatch(store *fakeDeadLetters) (*DeadLetterWatch, *fakeSyncOutb
 	outbox := &fakeSyncOutbox{}
 	return &DeadLetterWatch{
 		Store:   store,
-		Alerter: &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Log: slog.Default()},
+		Alerter: &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Switches: allNotificationsOn{}, Log: slog.Default()},
 		Metrics: newTestMetrics(), Log: slog.Default(),
 	}, outbox
 }

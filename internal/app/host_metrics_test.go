@@ -16,7 +16,7 @@ func newHostMonitor(t *testing.T) (*HostMonitor, *fakeSyncOutbox) {
 	outbox := &fakeSyncOutbox{}
 	return &HostMonitor{
 		Metrics: newTestMetrics(),
-		Alerter: &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Log: slog.Default()},
+		Alerter: &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Switches: allNotificationsOn{}, Log: slog.Default()},
 		Limits:  HostLimits{Memory: 0.9, Disk: 0.85, Load: 4},
 		Log:     slog.Default(),
 	}, outbox

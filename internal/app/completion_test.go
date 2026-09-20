@@ -176,7 +176,7 @@ func TestEventCompletionService_DefersWhileAnyMatchIsNotTerminal(t *testing.T) {
 	scoringRepo := &fakeScoringForCompletion{}
 	outbox := newTestOutboxForCompletion()
 
-	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default()).WithSwitches(allNotificationsOn{})
 	if err := svc.Complete(context.Background(), competition.Event{ID: eventID}); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestEventCompletionService_AwardsMedalsAndNotifiesOnceAllMatchesTerminal(t 
 	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1, Predictions: 3}}}
 	outbox := newTestOutboxForCompletion()
 
-	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default()).WithSwitches(allNotificationsOn{})
 	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Major Final"}); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestEventCompletionService_StaysSilentWhenNobodyInTheChatPredicted(t *testi
 	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Rank: 1}}}
 	outbox := newTestOutboxForCompletion()
 
-	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default()).WithSwitches(allNotificationsOn{})
 	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Old Major"}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestEventCompletionService_IsIdempotentPerChat(t *testing.T) {
 	scoringRepo := &fakeScoringForCompletion{leaderboard: []scoring.UserStanding{{UserID: common.UserID{Value: 1}, DisplayName: "A", Points: 5, Rank: 1, Predictions: 3}}}
 	outbox := newTestOutboxForCompletion()
 
-	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default())
+	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox, common.SystemUTCClock(), identityTx, slog.Default()).WithSwitches(allNotificationsOn{})
 	event := competition.Event{ID: eventID, Name: "Major Final"}
 
 	if err := svc.Complete(context.Background(), event); err != nil {
@@ -331,7 +331,7 @@ func TestEventCompletion_DMsEachParticipantTheirOwnResult(t *testing.T) {
 	audience := &fakeRecapAudience{optedIn: map[int64]bool{1: true, 3: true}}
 
 	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox,
-		common.SystemUTCClock(), identityTx, slog.Default()).WithPersonalRecaps(audience)
+		common.SystemUTCClock(), identityTx, slog.Default()).WithSwitches(allNotificationsOn{}).WithPersonalRecaps(audience)
 	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Major"}); err != nil {
 		t.Fatal(err)
 	}
@@ -345,10 +345,10 @@ func TestEventCompletion_DMsEachParticipantTheirOwnResult(t *testing.T) {
 	if personal != 1 {
 		t.Fatalf("expected one personal recap — the opted-in participant — got %d of %v", personal, outbox.enqueued)
 	}
-	// Reusing the per-match opt-in rather than inventing a second switch
-	// that means almost the same thing.
-	if len(audience.asked) != 1 || audience.asked[0] != common.NotifyResultRecaps {
-		t.Fatalf("asked about %v, want the existing recap preference", audience.asked)
+	// Its own switch, not the per-match one: a tournament recap every few
+	// weeks and a result note several times a day are different appetites.
+	if len(audience.asked) != 1 || audience.asked[0] != common.NotifyEventRecaps {
+		t.Fatalf("asked about %v, want the tournament recap preference", audience.asked)
 	}
 	// The chat's own recap still goes out regardless.
 	var chatRecap bool
@@ -376,7 +376,7 @@ func TestEventCompletion_SendsNoPersonalRecapsWithoutAnAudience(t *testing.T) {
 	outbox := newTestOutboxForCompletion()
 
 	svc := NewEventCompletionService(catalog, subs, fakeChatsForCompletion{}, scoringRepo, nil, outbox,
-		common.SystemUTCClock(), identityTx, slog.Default())
+		common.SystemUTCClock(), identityTx, slog.Default()).WithSwitches(allNotificationsOn{})
 	if err := svc.Complete(context.Background(), competition.Event{ID: eventID, Name: "Major"}); err != nil {
 		t.Fatal(err)
 	}

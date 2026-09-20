@@ -55,7 +55,7 @@ func (f *fakeReleaseStore) Claim(_ context.Context, version, commit string) (boo
 }
 
 func newAlerter(outbox *adminAlertOutbox, releases common.ReleaseAnnouncementStore, chatIDs ...int64) *AdminAlerter {
-	return &AdminAlerter{Outbox: outbox, Releases: releases, ChatIDs: chatIDs, Log: slog.Default()}
+	return &AdminAlerter{Outbox: outbox, Releases: releases, ChatIDs: chatIDs, Switches: allNotificationsOn{}, Log: slog.Default()}
 }
 
 // A restart must not re-announce the build it is already running: the claim

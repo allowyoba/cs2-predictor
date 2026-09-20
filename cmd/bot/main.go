@@ -123,7 +123,8 @@ func run() error {
 	// through it: the gateway via ObserveHealth, every enrichment sync via
 	// the ObservedSyncState decorator below.
 	adminAlerter := &app.AdminAlerter{
-		Outbox: outbox, Releases: enrichmentRepo, ChatIDs: cfg.TeamMatchOperatorChatIDs, Log: log,
+		Outbox: outbox, Releases: enrichmentRepo, ChatIDs: cfg.TeamMatchOperatorChatIDs,
+		Switches: chats, Log: log,
 	}
 	gateway.ObserveHealth(adminAlerter)
 	enrichmentState := &app.ObservedSyncState{SyncStateRepository: enrichmentRepo, Observer: adminAlerter}
@@ -190,7 +191,7 @@ func run() error {
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
 		WithRecaps(chats, chatTitle, log)
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
-		WithPersonalRecaps(chats)
+		WithPersonalRecaps(chats).WithSwitches(chats)
 
 	// teamMatch resolves a team with no cached ranking against whichever
 	// ranking feeds (teamMatchSources) are actually enabled — pointless
@@ -240,19 +241,19 @@ func run() error {
 	synchronizer := &app.CompetitionSynchronization{
 		Gateway: gateway, Catalog: catalog, Subscriptions: subscriptions, Chats: chats, ActiveChats: chats,
 		Predictions: predictionService, Settlement: settlement, EventCompletion: completion, TeamMatch: teamMatch,
-		Outbox: outbox, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
+		Outbox: outbox, Switches: chats, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
 		MatchSyncColdInterval: cfg.SyncMatchesColdInterval,
 	}
 	digests := &app.DigestScheduler{
 		Chats: chats, Scoring: scoringRepo, Insights: scoringRepo, Store: reportStore,
-		Outbox: outbox, Lock: clusterLock, Clock: clock, RunTx: runTx, Log: log,
+		Outbox: outbox, Switches: chats, Lock: clusterLock, Clock: clock, RunTx: runTx, Log: log,
 	}
 
 	// Runs on the digest job's own cadence: both are "is anything due for
 	// this chat right now?" sweeps, and neither needs a schedule of its own.
 	eve := &app.EventEveScheduler{
 		Chats: chats, ChatSettings: chats, Subscriptions: subscriptions, Catalog: catalog,
-		Scoring: scoringRepo, Store: reportStore, Outbox: outbox, Lock: clusterLock,
+		Scoring: scoringRepo, Store: reportStore, Outbox: outbox, Switches: chats, Lock: clusterLock,
 		Clock: clock, Log: log, Lead: cfg.EventEveLead,
 	}
 
