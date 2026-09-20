@@ -49,3 +49,15 @@ main{padding:0 16px calc(84px + var(--safe-bottom))}.screen{display:none;animati
   font-size: 14px;
   line-height: 1.45;
 }
+
+/* Every list on these screens can legitimately be empty — a new account
+   has no history, and a team needs a few predictions before its percentage
+   means anything. Say so in place, rather than leaving a blank card that
+   reads as a failure. */
+.empty-line {
+  margin: 0;
+  padding: 14px 2px;
+  color: var(--text-secondary, #b9c0cc);
+  font-size: 14px;
+  line-height: 1.45;
+}

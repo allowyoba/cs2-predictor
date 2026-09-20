@@ -49,6 +49,11 @@ type RouterDeps struct {
 	// from "wrong URL" retries the wrong thing.
 	MiniApp MiniAppDeps
 
+	// MiniAppHistory backs the history screen. Separate from MiniApp
+	// because it is a different repository in the composition root, and
+	// bundling them would make one nil turn both off.
+	MiniAppHistory MiniAppHistory
+
 	// Teams backs the Mini App's team/crest endpoint. Nil leaves the route
 	// registered but answering 503, which is a clearer signal to a client
 	// than a 404 on a path that does exist in other deployments.
@@ -91,6 +96,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	miniappTeams := instrument("miniapp_teams", teamsHandler(deps.Teams))
 	mux.Handle("GET /api/miniapp/v1/teams", miniappTeams)
 	mux.Handle("GET /api/miniapp/v1/me/dashboard", instrument("miniapp_dashboard", dashboardHandler(deps.MiniApp)))
+	mux.Handle("GET /api/miniapp/v1/me/history", instrument("miniapp_history", historyHandler(deps.MiniApp, deps.MiniAppHistory)))
 	mux.Handle("GET /api/miniapp/v1/me/access", instrument("miniapp_access", accessHandler(deps.MiniApp)))
 	mux.Handle("POST /api/miniapp/v1/me/access", instrument("miniapp_access_request", accessHandler(deps.MiniApp)))
 	// The Mini App's own page, served from the binary. See

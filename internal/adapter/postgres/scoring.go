@@ -480,12 +480,15 @@ func (r *ScoringRepository) UserBets(ctx context.Context, userID common.UserID, 
 		       COALESCE(t1.name, ''), COALESCE(t2.name, ''),
 		       po.first_score, po.second_score,
 		       m.first_score, m.second_score,
-		       COALESCE(a.points, 0)
+		       COALESCE(a.points, 0),
+		       g.code, e.name
 		  FROM prediction_vote v
 		  JOIN match_poll p ON p.id = v.poll_id
 		  JOIN telegram_chat c ON c.id = p.chat_id
 		  JOIN poll_option po ON po.poll_id = v.poll_id AND po.option_index = v.option_index
 		  JOIN esport_match m ON m.id = p.match_id
+		  JOIN tournament_event e ON e.id = m.event_id
+		  JOIN game g ON g.id = e.game_id
 		  LEFT JOIN match_team mt1 ON mt1.match_id = m.id AND mt1.position = 1
 		  LEFT JOIN match_team mt2 ON mt2.match_id = m.id AND mt2.position = 2
 		  LEFT JOIN team t1 ON t1.id = mt1.team_id
@@ -508,7 +511,8 @@ func (r *ScoringRepository) UserBets(ctx context.Context, userID common.UserID, 
 		var b scoring.UserBet
 		var predictedFirst, predictedSecond, actualFirst, actualSecond int
 		if err := rows.Scan(&b.PlayedAt, &b.ChatID.Value, &b.ChatTitle, &b.FirstTeamName, &b.SecondTeamName,
-			&predictedFirst, &predictedSecond, &actualFirst, &actualSecond, &b.Points); err != nil {
+			&predictedFirst, &predictedSecond, &actualFirst, &actualSecond, &b.Points,
+			&b.Game, &b.EventName); err != nil {
 			return nil, err
 		}
 		b.PredictedScore = competition.MatchScore{First: predictedFirst, Second: predictedSecond}

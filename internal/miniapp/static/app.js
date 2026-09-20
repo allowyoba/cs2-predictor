@@ -252,6 +252,19 @@
   // mock numbers on display as if they were real.
 
   let dashboard = null;
+  /** currentGame is the rail's selection, used when looking up crests. */
+  let currentGame = 'cs2';
+
+  /**
+   * GAME_LABELS names a discipline the way people say it. The API answers
+   * with the bot's own codes; nothing else in the app should have to know
+   * what those look like.
+   */
+  const GAME_LABELS = { CS2: 'CS2', DOTA2: 'Dota 2' };
+  const gameLabel = (code) => GAME_LABELS[code] || code;
+
+  /** percentText renders a share the way every screen here shows one. */
+  const percentText = (value) => `${value}%`;
 
   /** applyDashboard overwrites the headline figures with real ones. */
   function applyDashboard(data) {
@@ -270,6 +283,243 @@
       ? `${trend.delta_pp > 0 ? '↗ +' : trend.delta_pp < 0 ? '↘ −' : '→ '}${Math.abs(trend.delta_pp)} п.п.`
       : '— недостаточно данных');
     renderGameRail(data.games || []);
+    renderAnalytics(data);
+    renderAchievements(data);
+    renderProfile(data);
+  }
+
+  // --- analytics --------------------------------------------------------
+
+  function renderAnalytics(data) {
+    const summary = data.summary || {};
+    setText('#analyticsGameLabel', 'все игры');
+    setText('#analyticsAccuracy', summary.predictions ? percentText(summary.accuracy) : '—');
+    setText('#analyticsSample', summary.predictions ? `n=${summary.predictions}` : 'нет данных');
+
+    const trend = data.trend;
+    setText('#analyticsTrend', trend ? `${trend.delta_pp > 0 ? '+' : ''}${trend.delta_pp} п.п.` : '—');
+    setText('#analyticsTrendNote', trend
+      ? `${trend.current_sample} против ${trend.previous_sample} прогнозов`
+      : 'нужно два окна подряд');
+    setText('#analyticsStreak', data.form?.current_streak ?? '—');
+    setText('#analyticsBestStreak', `лучшая ${data.form?.best_streak ?? 0}`);
+
+    const games = document.querySelector('#analyticsGames');
+    if (games) {
+      games.replaceChildren(...(data.games || []).map((entry) => {
+        const row = el('div', 'segment-row' + (entry.accuracy < 50 ? ' is-warning' : ''));
+        const copy = el('div', 'segment-copy');
+        copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
+        const meter = el('div', 'segment-meter');
+        const fill = el('i');
+        fill.style.width = `${Math.max(0, Math.min(100, entry.accuracy))}%`;
+        meter.append(fill);
+        row.append(copy, meter, el('b', null, percentText(entry.accuracy)));
+        return row;
+      }));
+      if (!(data.games || []).length) games.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
+    }
+
+    const teams = document.querySelector('#analyticsTeams');
+    if (teams) {
+      teams.replaceChildren(...(data.teams || []).map((team, index) => {
+        const row = el('div', 'team-row' + (team.accuracy < 50 ? ' low' : ''));
+        row.append(el('span', 'rank-num', String(index + 1).padStart(2, '0')), teamMark(currentGame, team.team));
+        const copy = el('div', 'team-copy');
+        copy.append(el('strong', null, team.team), el('small', null, `${team.predictions} прогнозов`));
+        row.append(copy, el('em', null, percentText(team.accuracy)));
+        return row;
+      }));
+      if (!(data.teams || []).length) {
+        teams.replaceChildren(emptyLine('Команда появится здесь, когда прогнозов по ней станет достаточно.'));
+      }
+    }
+  }
+
+  // --- achievements -----------------------------------------------------
+  //
+  // Derived from the same figures, with the rule written on each card.
+  // Nothing is invented: a badge is a threshold over a number the database
+  // actually holds, and its progress is that number.
+
+  function achievementsFor(data) {
+    const summary = data.summary || {};
+    const form = data.form || {};
+    const strongGames = (data.games || []).filter((g) => g.predictions >= 25 && g.accuracy >= 65).length;
+    return [
+      { title: 'Сотня', rule: '100 верных прогнозов', value: summary.correct || 0, goal: 100 },
+      { title: 'Снайпер', rule: '25 точных счётов', value: summary.exact || 0, goal: 25 },
+      { title: 'Серия', rule: '5 верных подряд', value: form.best_streak || 0, goal: 5 },
+      { title: 'Мультигейм', rule: '≥65% в двух играх при n≥25', value: strongGames, goal: 2 },
+      { title: 'Турнирный стаж', rule: '10 турниров с прогнозами', value: summary.tournaments || 0, goal: 10 },
+    ];
+  }
+
+  function renderAchievements(data) {
+    const list = achievementsFor(data);
+    const earned = list.filter((a) => a.value >= a.goal).length;
+
+    const summary = document.querySelector('#achievementSummary');
+    if (summary) {
+      summary.replaceChildren(
+        summaryTile(String(earned), 'получено'),
+        summaryTile(String(list.length - earned), 'в прогрессе'),
+        summaryTile(String((data.games || []).length), 'дисциплины'),
+      );
+    }
+
+    const root = document.querySelector('#achievementList');
+    if (!root) return;
+    root.replaceChildren(...list.map((item) => {
+      const done = item.value >= item.goal;
+      const card = el('article', 'achievement-card' + (done ? ' earned' : ''));
+      card.append(el('div', 'achievement-medal', done ? '✓' : String(item.goal)));
+      const body = el('div');
+      const head = el('div', 'achievement-head');
+      head.append(el('strong', null, item.title), el('span', null, done ? 'Получено' : 'В прогрессе'));
+      const bar = el('div', 'progress');
+      const fill = el('i');
+      fill.style.width = `${Math.min(100, Math.round((item.value / item.goal) * 100))}%`;
+      bar.append(fill);
+      body.append(head, el('p', null, item.rule), bar, el('small', null, `${item.value} / ${item.goal}`));
+      card.append(body);
+      return card;
+    }));
+  }
+
+  function summaryTile(value, label) {
+    const tile = el('article');
+    tile.append(el('strong', null, value), el('span', null, label));
+    return tile;
+  }
+
+  // --- profile ----------------------------------------------------------
+
+  function renderProfile(data) {
+    const user = data.user || {};
+    const summary = data.summary || {};
+    setText('#profile-title', user.display_name || '—');
+    setText('#profileAvatar', (user.display_name || '?').slice(0, 1).toUpperCase());
+    setText('#profileSubtitle', summary.predictions
+      ? `${summary.predictions} прогнозов в ${summary.tournaments} турнирах`
+      : 'Здесь появится ваш профиль после первых прогнозов');
+
+    const kpis = document.querySelector('#profileKpis');
+    if (kpis) {
+      kpis.replaceChildren(
+        kpiTile('ВСЕГО', String(summary.predictions || 0), 'прогнозов'),
+        kpiTile('ТОЧНОСТЬ', summary.predictions ? percentText(summary.accuracy) : '—', 'all-time'),
+        kpiTile('ОЧКИ', String(summary.points || 0), 'за всё время'),
+      );
+    }
+
+    const games = document.querySelector('#profileGames');
+    if (!games) return;
+    games.replaceChildren(...(data.games || []).map((entry) => {
+      const row = el('article');
+      row.append(el('span', 'game-symbol', gameLabel(entry.game).slice(0, 2).toUpperCase()));
+      const copy = el('div');
+      copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
+      row.append(copy, el('b', null, percentText(entry.accuracy)));
+      if (entry.trend) {
+        row.append(el('em', entry.trend.delta_pp >= 0 ? 'positive-text' : 'negative-text',
+          `${entry.trend.delta_pp > 0 ? '+' : ''}${entry.trend.delta_pp}`));
+      }
+      return row;
+    }));
+    if (!(data.games || []).length) games.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
+  }
+
+  function kpiTile(label, value, note) {
+    const tile = el('article');
+    tile.append(el('small', null, label), el('strong', null, value), el('span', null, note));
+    return tile;
+  }
+
+  /** emptyLine is the one shape every empty list here uses. */
+  function emptyLine(text) {
+    return el('p', 'empty-line', text);
+  }
+
+  // --- history ----------------------------------------------------------
+
+  let historyGame = '';
+
+  async function loadHistory() {
+    const feed = document.querySelector('#historyFeed');
+    if (!feed) return;
+    feed.replaceChildren(emptyLine('Загружаем…'));
+    try {
+      const query = historyGame ? `?game=${encodeURIComponent(historyGame)}` : '';
+      const body = await fetchJSON(`/api/miniapp/v1/me/history${query}`, { signed: true });
+      renderHistory(body.entries || []);
+    } catch (error) {
+      if (error instanceof ForbiddenError) showAccessNotice('forbidden');
+      else if (error instanceof UnauthenticatedError) showAccessNotice('unauthenticated');
+      feed.replaceChildren(emptyLine('Не удалось загрузить историю.'));
+    }
+  }
+
+  function renderHistory(entries) {
+    const feed = document.querySelector('#historyFeed');
+    if (!feed) return;
+    if (entries.length === 0) {
+      feed.replaceChildren(emptyLine('Здесь появятся ваши прогнозы после первых завершённых матчей.'));
+      return;
+    }
+    const nodes = [];
+    let lastDay = '';
+    for (const entry of entries) {
+      const day = new Date(entry.played_at).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+      if (day !== lastDay) {
+        nodes.push(el('div', 'date-label', day.toUpperCase()));
+        lastDay = day;
+      }
+      nodes.push(historyCard(entry));
+    }
+    feed.replaceChildren(...nodes);
+  }
+
+  function historyCard(entry) {
+    const card = el('article', `history-card ${entry.correct ? 'correct' : 'wrong'}`);
+    const status = el('div', 'history-status');
+    status.append(
+      el('span', 'game-mini', gameLabel(entry.game)),
+      el('span', `result-badge ${entry.correct ? 'success' : 'danger'}`, entry.correct ? '✓ Верно' : '× Ошибка'),
+      el('small', null, entry.points > 0 ? `+${entry.points}` : '0'),
+    );
+
+    const matchup = el('div', 'matchup');
+    const left = el('div', 'team-side');
+    left.append(teamMark(entry.game.toLowerCase(), entry.first), el('strong', null, entry.first));
+    const versus = el('div', 'versus');
+    versus.append(el('b', null, entry.actual), el('span', null, `прогноз ${entry.predicted}`));
+    const right = el('div', 'team-side right');
+    right.append(teamMark(entry.game.toLowerCase(), entry.second), el('strong', null, entry.second));
+    matchup.append(left, versus, right);
+
+    const foot = el('div', 'history-foot');
+    foot.append(el('span', null, entry.event || ''), el('span', null, entry.chat || ''));
+    card.append(status, matchup, foot);
+    return card;
+  }
+
+  /** renderHistoryFilters builds one chip per game the person plays. */
+  function renderHistoryFilters(games) {
+    const rail = document.querySelector('#historyFilters');
+    if (!rail) return;
+    const chips = [{ code: '', label: 'Все' }, ...games.map((g) => ({ code: g.game, label: gameLabel(g.game) }))];
+    rail.replaceChildren(...chips.map((chip) => {
+      const button = el('button', 'chip' + (chip.code === historyGame ? ' selected' : ''), chip.label);
+      button.dataset.filterGame = chip.code;
+      button.addEventListener('click', () => {
+        historyGame = chip.code;
+        for (const other of rail.querySelectorAll('.chip')) other.classList.remove('selected');
+        button.classList.add('selected');
+        void loadHistory();
+      });
+      return button;
+    }));
   }
 
   /**
@@ -309,7 +559,10 @@
 
   async function loadDashboard() {
     try {
-      applyDashboard(await fetchJSON('/api/miniapp/v1/me/dashboard', { signed: true }));
+      const data = await fetchJSON('/api/miniapp/v1/me/dashboard', { signed: true });
+      applyDashboard(data);
+      renderHistoryFilters(data.games || []);
+      void loadHistory();
       const notice = document.querySelector('#accessNotice');
       if (notice) notice.hidden = true;
     } catch (error) {
@@ -325,6 +578,7 @@
   async function setGame(game) {
     const data = DEMO[game];
     if (!data) return;
+    currentGame = game;
     document.documentElement.dataset.game = game;
     for (const chip of document.querySelectorAll('.game-chip')) {
       const active = chip.dataset.game === game;
