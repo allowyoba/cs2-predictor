@@ -53,7 +53,7 @@ func (h *UpdateHandler) modeHub(ctx context.Context, target replyTarget, locale 
 // same way every other operator-only screen in this package does.
 func (h *UpdateHandler) systemToolsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
 	if !h.isTeamMatchOperator(ctx, userID) {
-		return h.respond(ctx, target, h.Texts.Get("error.forbidden", locale), nil)
+		return h.refuse(ctx, target, locale, "hub:root")
 	}
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("hub.team_matches", locale), "team_matches:list:0")},

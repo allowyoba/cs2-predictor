@@ -143,3 +143,9 @@ func TestSelectEventsToSync_FetchesEverythingWhenTheSplitIsDisabled(t *testing.T
 		}
 	}
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; the
+// tests here only ever seed unstarted matches, so it answers the same way.
+func (c *liveCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return c.FindUnstartedMatchesForEvents(ctx, ids)
+}

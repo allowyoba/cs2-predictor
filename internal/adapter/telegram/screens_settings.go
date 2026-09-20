@@ -40,6 +40,7 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		{button(h.Texts.Get("settings.notifications", settings.Locale), "settings:notify")},
 		{button(h.quietHoursLabel(settings), "settings:quiet")},
 		{button(h.logoSourceLabel(settings), "settings:logos")},
+		{button(h.flagSourceLabel(settings), "settings:flags")},
 		{button(topTierLabel, "settings:top_tier")},
 		{button(autoSubscribeLabel, "settings:auto_subscribe")},
 		{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
@@ -126,6 +127,18 @@ func (h *UpdateHandler) logoSourceLabel(settings chat.Settings) string {
 	return h.Texts.Get("settings.logos_label", settings.Locale, state)
 }
 
+// flagSourceLabel is the same row for the country flag beside a team name.
+// A separate switch from the crest one: PandaScore's country is often the
+// organisation's registration, HLTV's is the roster's, and a chat may well
+// want the provider's picture with HLTV's flag or the other way round.
+func (h *UpdateHandler) flagSourceLabel(settings chat.Settings) string {
+	state := h.Texts.Get("settings.logos_provider", settings.Locale)
+	if settings.PreferHLTVFlags {
+		state = h.Texts.Get("settings.logos_hltv", settings.Locale)
+	}
+	return h.Texts.Get("settings.flags_label", settings.Locale, state)
+}
+
 // gamesView lists every supported game as a toggle — a chat starts with
 // none enabled (see chat_enabled_game's migration), so this is also the
 // only place a chat ever turns one on for the first time.
@@ -168,7 +181,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // adding its kind here fails that test.
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
-	"top_tier", "auto_subscribe", "stream_language", "notify", "quiet_hours", "logo_source", "games", "event_topic", "moderator_added", "moderator_removed",
+	"top_tier", "auto_subscribe", "stream_language", "notify", "quiet_hours", "logo_source", "flag_source", "games", "event_topic", "moderator_added", "moderator_removed",
 	// stream_announce is retired as a call site — the switch moved into
 	// the notifications screen — but rows written under it are still in
 	// the history, and a label they no longer have would read as a bug.

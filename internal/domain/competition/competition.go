@@ -181,6 +181,25 @@ type Team struct {
 	// Location is the provider's ISO-3166 alpha-2 country code when known
 	// (PandaScore exposes it on team/opponent objects, e.g. "DE", "RU").
 	Location string
+	// HLTVLocation is the same code as HLTV's ranking reports it:
+	// Counter-Strike only, ranked teams only. HLTV decides it from the
+	// roster rather than from where the organisation is registered, which
+	// is what a flag beside a team name is meant to say. Read through
+	// LocationFor rather than directly.
+	HLTVLocation string
+}
+
+// LocationFor picks the country to draw a flag from, mirroring LogoFor:
+// preferHLTV asks for HLTV's answer and falls back to the provider's when
+// HLTV has none — which is most teams, since its ranking lists thirty.
+func (t Team) LocationFor(preferHLTV bool) string {
+	if preferHLTV && t.HLTVLocation != "" {
+		return t.HLTVLocation
+	}
+	if t.Location != "" {
+		return t.Location
+	}
+	return t.HLTVLocation
 }
 
 // LogoFor picks the crest to show. preferHLTV asks for HLTV's picture and

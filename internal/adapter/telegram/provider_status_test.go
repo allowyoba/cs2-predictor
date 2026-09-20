@@ -141,31 +141,51 @@ func TestFormatCompetitionProviderStatus_RendersStatusAndDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	now := time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC)
 	got := formatCompetitionProviderStatus(texts, common.LocaleRU, app.HealthDown,
-		map[string]any{"lastSuccess": "2026-09-01T00:00:00Z", "lastFailure": "pandascore: timeout"})
-	if !strings.Contains(got, "PandaScore") || !strings.Contains(got, "DOWN") {
-		t.Fatalf("expected provider name and status, got %q", got)
-	}
-	if !strings.Contains(got, "pandascore: timeout") {
-		t.Fatalf("expected the last-failure detail, got %q", got)
+		map[string]any{"lastSuccess": "2026-09-01T00:00:00Z"}, now)
+	if !strings.Contains(got, "PandaScore") {
+		t.Fatalf("expected the provider name, got %q", got)
 	}
 	if !strings.Contains(got, "🔴") {
 		t.Fatalf("expected the down icon, got %q", got)
 	}
+	// Three hours before "now", said as an age rather than as a timestamp
+	// somebody has to subtract in their head.
+	if !strings.Contains(got, ru(t, "providers.hours", 3)) {
+		t.Fatalf("expected the age of the last success, got %q", got)
+	}
 }
 
-func TestFormatEnrichmentProviderStatus_HealthyProviderShowsUpIcon(t *testing.T) {
-	texts, err := LoadTexts()
-	if err != nil {
-		t.Fatal(err)
+// A feed's freshness only means something against how often it is supposed
+// to run: three hours is an outage for a fifteen-minute poll and normal for
+// a weekly fetch. The screen has to say which it is.
+func TestProviderStatus_JudgesFreshnessAgainstTheConfiguredInterval(t *testing.T) {
+	server, _ := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+	now := handler.Clock.Now()
+	threeHoursAgo := now.Add(-3 * time.Hour)
+	st := &enrichment.SyncState{Provider: enrichment.SourceGRID, LastSuccessAt: &threeHoursAgo}
+
+	handler.EnrichmentIntervals = map[enrichment.Source]time.Duration{enrichment.SourceGRID: 15 * time.Minute}
+	overdue := handler.enrichmentRow(common.LocaleRU, enrichment.SourceGRID, st)
+	if overdue.severity != severityDown {
+		t.Fatalf("a feed three hours late on a fifteen-minute schedule reads as healthy: %q", overdue.text)
 	}
-	success := time.Date(2026, 9, 8, 3, 0, 0, 0, time.UTC)
-	st := &enrichment.SyncState{Provider: enrichment.SourceValveVRS, LastSuccessAt: &success}
-	got := formatEnrichmentProviderStatus(texts, common.LocaleRU, enrichment.SourceValveVRS, st)
-	if !strings.Contains(got, "🟢") {
-		t.Fatalf("expected the up icon for a healthy provider, got %q", got)
+	if !strings.Contains(overdue.text, ru(t, "providers.overdue")) {
+		t.Fatalf("expected the screen to say it is overdue, got %q", overdue.text)
 	}
-	if !strings.Contains(got, "08.09.2026") {
-		t.Fatalf("expected the formatted last-success date, got %q", got)
+
+	handler.EnrichmentIntervals = map[enrichment.Source]time.Duration{enrichment.SourceGRID: 7 * 24 * time.Hour}
+	fine := handler.enrichmentRow(common.LocaleRU, enrichment.SourceGRID, st)
+	if fine.severity != severityOK {
+		t.Fatalf("the same timestamp on a weekly schedule must be fine: %q", fine.text)
+	}
+
+	// The source is named the way somebody says it, not the way the
+	// database spells it.
+	if strings.Contains(fine.text, string(enrichment.SourceGRID)) && providerName(enrichment.SourceValveVRS) != "Valve VRS" {
+		t.Fatalf("provider names are still raw constants: %q", fine.text)
 	}
 }

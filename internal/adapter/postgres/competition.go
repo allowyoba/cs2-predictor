@@ -242,7 +242,7 @@ func (r *CompetitionRepository) FindEvent(ctx context.Context, id common.EventID
 func (r *CompetitionRepository) TeamsForGame(ctx context.Context, game competition.GameCode, limit int) ([]competition.Team, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx, `
 		SELECT t.id, t.name, t.external_id, COALESCE(t.location, ''),
-		       COALESCE(t.logo_url, ''), COALESCE(t.hltv_logo_url, '')
+		       COALESCE(t.logo_url, ''), COALESCE(t.hltv_logo_url, ''), COALESCE(t.hltv_location, '')
 		  FROM team t
 		  JOIN game g ON g.id = t.game_id
 		  LEFT JOIN LATERAL (
@@ -261,7 +261,7 @@ func (r *CompetitionRepository) TeamsForGame(ctx context.Context, game competiti
 	var out []competition.Team
 	for rows.Next() {
 		var t competition.Team
-		if err := rows.Scan(&t.ID.Value, &t.Name, &t.ExternalID, &t.Location, &t.LogoURL, &t.HLTVLogoURL); err != nil {
+		if err := rows.Scan(&t.ID.Value, &t.Name, &t.ExternalID, &t.Location, &t.LogoURL, &t.HLTVLogoURL, &t.HLTVLocation); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -314,6 +314,25 @@ func (r *CompetitionRepository) SaveEvent(ctx context.Context, e competition.Eve
 // matchSelect fetches everything a domain Match needs — the match row, its
 // stage (if any), and both participant teams — in a single round trip via
 // LEFT JOINs, so listing N matches costs one query rather than N.
+// teamFrom assembles one side of a match from the nullable columns the
+// LEFT JOINs produce. Nil id means the side is not decided yet — a real
+// state on a bracket that has not been drawn, not a missing row.
+func teamFrom(id *[16]byte, name, externalID, location, logo, hltvLogo, hltvLocation *string) *competition.Team {
+	if id == nil {
+		return nil
+	}
+	team := &competition.Team{ID: common.TeamID{Value: *id}}
+	for target, value := range map[*string]*string{
+		&team.Name: name, &team.ExternalID: externalID, &team.Location: location,
+		&team.LogoURL: logo, &team.HLTVLogoURL: hltvLogo, &team.HLTVLocation: hltvLocation,
+	} {
+		if value != nil {
+			*target = *value
+		}
+	}
+	return team
+}
+
 const matchSelect = `
 	SELECT m.id, m.event_id, m.external_id, m.status, m.series_kind, m.series_size,
 	       m.scheduled_at, m.actual_started_at, m.first_score, m.second_score,
@@ -326,8 +345,8 @@ const matchSelect = `
 	                         ORDER BY ms.official DESC, ms.main DESC, ms.url)
 	          FROM match_stream ms WHERE ms.match_id = m.id) AS streams,
 	       es.name, es.external_id,
-	       t1.id, t1.name, t1.external_id, t1.location, t1.logo_url, t1.hltv_logo_url,
-	       t2.id, t2.name, t2.external_id, t2.location, t2.logo_url, t2.hltv_logo_url
+	       t1.id, t1.name, t1.external_id, t1.location, t1.logo_url, t1.hltv_logo_url, t1.hltv_location,
+	       t2.id, t2.name, t2.external_id, t2.location, t2.logo_url, t2.hltv_logo_url, t2.hltv_location
 	  FROM esport_match m
 	  LEFT JOIN event_stage es ON es.id = m.stage_id
 	  LEFT JOIN match_team mt1 ON mt1.match_id = m.id AND mt1.position = 1
@@ -343,14 +362,14 @@ func scanMatch(row interface {
 	var streamsRaw []byte
 	var stageName, stageExternalID *string
 	var t1ID, t2ID *[16]byte
-	var t1Name, t1ExternalID, t1Location, t1Logo, t1HLTVLogo *string
-	var t2Name, t2ExternalID, t2Location, t2Logo, t2HLTVLogo *string
+	var t1Name, t1ExternalID, t1Location, t1Logo, t1HLTVLogo, t1HLTVLocation *string
+	var t2Name, t2ExternalID, t2Location, t2Logo, t2HLTVLogo, t2HLTVLocation *string
 
 	if err := row.Scan(&m.ID.Value, &m.EventID.Value, &m.ExternalID, &m.Status, &m.Format.Kind, &m.Format.Size,
 		&m.ScheduledAt, &m.ActualStartedAt, &firstScore, &secondScore, &streamsRaw,
 		&stageName, &stageExternalID,
-		&t1ID, &t1Name, &t1ExternalID, &t1Location, &t1Logo, &t1HLTVLogo,
-		&t2ID, &t2Name, &t2ExternalID, &t2Location, &t2Logo, &t2HLTVLogo); err != nil {
+		&t1ID, &t1Name, &t1ExternalID, &t1Location, &t1Logo, &t1HLTVLogo, &t1HLTVLocation,
+		&t2ID, &t2Name, &t2ExternalID, &t2Location, &t2Logo, &t2HLTVLogo, &t2HLTVLocation); err != nil {
 		return nil, err
 	}
 	if firstScore != nil && secondScore != nil {
@@ -365,30 +384,8 @@ func scanMatch(row interface {
 		m.Stage = stageName
 		m.StageExternalID = stageExternalID
 	}
-	if t1ID != nil {
-		m.FirstTeam = &competition.Team{ID: common.TeamID{Value: *t1ID}, Name: *t1Name, ExternalID: *t1ExternalID}
-		if t1Location != nil {
-			m.FirstTeam.Location = *t1Location
-		}
-		if t1Logo != nil {
-			m.FirstTeam.LogoURL = *t1Logo
-		}
-		if t1HLTVLogo != nil {
-			m.FirstTeam.HLTVLogoURL = *t1HLTVLogo
-		}
-	}
-	if t2ID != nil {
-		m.SecondTeam = &competition.Team{ID: common.TeamID{Value: *t2ID}, Name: *t2Name, ExternalID: *t2ExternalID}
-		if t2Location != nil {
-			m.SecondTeam.Location = *t2Location
-		}
-		if t2Logo != nil {
-			m.SecondTeam.LogoURL = *t2Logo
-		}
-		if t2HLTVLogo != nil {
-			m.SecondTeam.HLTVLogoURL = *t2HLTVLogo
-		}
-	}
+	m.FirstTeam = teamFrom(t1ID, t1Name, t1ExternalID, t1Location, t1Logo, t1HLTVLogo, t1HLTVLocation)
+	m.SecondTeam = teamFrom(t2ID, t2Name, t2ExternalID, t2Location, t2Logo, t2HLTVLogo, t2HLTVLocation)
 	return &m, nil
 }
 
@@ -434,6 +431,20 @@ func (r *CompetitionRepository) FindUnstartedMatchesForEvents(ctx context.Contex
 		values[i] = id.Value
 	}
 	return r.findMatches(ctx, ` WHERE m.event_id = ANY($1) AND m.status = $2`, values, competition.MatchNotStarted)
+}
+
+// FindPlayableMatchesForEvents adds the matches in play to the ones still
+// to come — see the port's doc comment.
+func (r *CompetitionRepository) FindPlayableMatchesForEvents(ctx context.Context, eventIDs []common.EventID) ([]competition.Match, error) {
+	if len(eventIDs) == 0 {
+		return nil, nil
+	}
+	values := make([]uuid.UUID, len(eventIDs))
+	for i, id := range eventIDs {
+		values[i] = id.Value
+	}
+	return r.findMatches(ctx, ` WHERE m.event_id = ANY($1) AND m.status = ANY($2)`,
+		values, []string{string(competition.MatchNotStarted), string(competition.MatchRunning)})
 }
 
 // EventsWithLiveMatches implements competition.LiveMatchCatalog: the ids of

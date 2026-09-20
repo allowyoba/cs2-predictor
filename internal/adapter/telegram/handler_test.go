@@ -303,6 +303,13 @@ func (fakeCatalog) FindMatch(context.Context, common.MatchID) (*competition.Matc
 func (fakeCatalog) FindUnstartedMatches(context.Context, common.EventID) ([]competition.Match, error) {
 	return nil, nil
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; these
+// tests only ever seed unstarted matches, so it answers the same way.
+func (c fakeCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return c.FindUnstartedMatchesForEvents(ctx, ids)
+}
+
 func (fakeCatalog) FindUnstartedMatchesForEvents(context.Context, []common.EventID) ([]competition.Match, error) {
 	return nil, nil
 }

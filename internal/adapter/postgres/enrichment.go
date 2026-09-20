@@ -80,13 +80,22 @@ func (r *EnrichmentRepository) ListTeams(ctx context.Context, games ...competiti
 // than quietly writing into a column that is not its own. IS DISTINCT FROM
 // keeps the weekly refresh from rewriting rows that already match, and
 // treats a NULL logo as different from a real one.
-func (r *EnrichmentRepository) SetRankingLogo(ctx context.Context, teamID common.TeamID, source enrichment.Source, logoURL string) error {
-	if logoURL == "" || source != enrichment.SourceHLTV {
+func (r *EnrichmentRepository) SetRankingAppearance(ctx context.Context, teamID common.TeamID, source enrichment.Source, logoURL, countryCode string) error {
+	if source != enrichment.SourceHLTV || (logoURL == "" && countryCode == "") {
 		return nil
 	}
+	// COALESCE(NULLIF(...)) keeps a half-empty row from erasing the other
+	// half: a feed that reports a crest and no country should not blank
+	// the country it reported last week.
 	_, err := executor(ctx, r.pool).Exec(ctx,
-		`UPDATE team SET hltv_logo_url = $2, updated_at = now()
-		  WHERE id = $1 AND hltv_logo_url IS DISTINCT FROM $2`, teamID.Value, logoURL)
+		`UPDATE team
+		    SET hltv_logo_url = COALESCE(NULLIF($2, ''), hltv_logo_url),
+		        hltv_location = COALESCE(NULLIF($3, ''), hltv_location),
+		        updated_at = now()
+		  WHERE id = $1
+		    AND (hltv_logo_url IS DISTINCT FROM COALESCE(NULLIF($2, ''), hltv_logo_url)
+		      OR hltv_location IS DISTINCT FROM COALESCE(NULLIF($3, ''), hltv_location))`,
+		teamID.Value, logoURL, countryCode)
 	return err
 }
 

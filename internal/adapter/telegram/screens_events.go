@@ -523,7 +523,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 	for i, sub := range subs {
 		eventIDs[i] = sub.EventID
 	}
-	matches, err := h.Catalog.FindUnstartedMatchesForEvents(ctx, eventIDs)
+	matches, err := h.Catalog.FindPlayableMatchesForEvents(ctx, eventIDs)
 	if err != nil {
 		return err
 	}
@@ -563,6 +563,7 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		upcoming = append(upcoming, upcomingMatch{
 			eventName: eventName,
 			when:      m.ScheduledAt.In(loc), match: m,
+			preferHLTVFlags: settings.PreferHLTVFlags,
 		})
 	}
 	sort.Slice(upcoming, func(i, j int) bool {
@@ -616,6 +617,10 @@ type upcomingMatch struct {
 	// clock times from disagreeing.
 	when  time.Time
 	match competition.Match
+	// preferHLTVFlags travels with the row rather than being read again
+	// where it is rendered: the setting belongs to the chat this list was
+	// built for, and the renderer no longer has it in hand.
+	preferHLTVFlags bool
 }
 
 // renderUpcomingGroups groups the next ten chronological matches by event
@@ -657,8 +662,8 @@ func (h *UpdateHandler) upcomingMatchLines(item upcomingMatch, settings chat.Set
 	locale := settings.Locale
 	// The same flags the poll carries: this list and the poll are the two
 	// places a team is named, and they should look like the same product.
-	first := teamNameWithFlag(item.match.FirstTeam, formatTeamCompact(item.match.FirstTeam))
-	second := teamNameWithFlag(item.match.SecondTeam, formatTeamCompact(item.match.SecondTeam))
+	first := teamNameWithFlag(item.match.FirstTeam, formatTeamCompact(item.match.FirstTeam), item.preferHLTVFlags)
+	second := teamNameWithFlag(item.match.SecondTeam, formatTeamCompact(item.match.SecondTeam), item.preferHLTVFlags)
 	match := matchStatusIcon(item.match.Status) + " " + code(item.when.Format("15:04")) + " " + bold(escapeHTML(first)) + " — " + bold(escapeHTML(second))
 	meta := item.match.Format.Label()
 	if item.match.Stage != nil {

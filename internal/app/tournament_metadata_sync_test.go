@@ -243,3 +243,9 @@ func (f *erroringSubs) ActiveEventIDs(context.Context) ([]common.EventID, error)
 func (f *erroringSubs) Subscriptions(context.Context, common.ChatID) ([]subscription.EventSubscription, error) {
 	return nil, nil
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; the
+// tests here only ever seed unstarted matches, so it answers the same way.
+func (f *fakeTournamentCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return f.FindUnstartedMatchesForEvents(ctx, ids)
+}

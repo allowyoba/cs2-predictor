@@ -316,3 +316,9 @@ func TestEventEve_SaysNothingWhenTheStartIsHoursAway(t *testing.T) {
 		t.Fatalf("expected no 'tomorrow' message hours before the start, got %+v", f.outbox.sent)
 	}
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; the
+// tests here only ever seed unstarted matches, so it answers the same way.
+func (c *eveCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return c.FindUnstartedMatchesForEvents(ctx, ids)
+}

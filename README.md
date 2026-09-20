@@ -37,6 +37,9 @@ that mark whichever one is currently active. If you're not on the visible page, 
 divider so you're never wondering where you landed. Rows show rank, name, points, and — when there's a previous
 period to compare against — a little ↑3 / ↓1 / • showing whether you moved.
 
+**The scoring rules live on the scoreboard.** "How are points worked out" is asked while looking at a table of
+points, so that is where the link is, rather than one menu up beside the command reference.
+
 **A change log per chat**: who turned on which language, changed the timezone, flipped the top-tier filter,
 subscribed, unsubscribed, or got made a moderator, and when. `Settings → Recent changes`.
 
@@ -51,6 +54,15 @@ administrator gets — goes out until somebody has asked for it. A chat's manage
 sets what lands in their own DM, and an operator sets which alerts are worth being woken by. What is not switchable is
 the bot answering something you just did: a poll's result, the confirmation of an unsubscribe. Those are replies, and a
 reply nobody receives is a broken command rather than a quiet one.
+
+**A Mini App** for reading the history behind all of it. It opens from your own DM with the bot, on top of the
+dashboard rather than replacing it: the bot stays the place predictions are made, the app is where the record is
+read. Five screens — an overview of current form, analytics (which disciplines and which teams you read well and
+badly), the full history of settled predictions, awards, and a profile — and **one filter bar** driving all of them.
+Pick a discipline or a chat once and every figure on every screen answers that question; no screen carries a filter
+of its own. It is **closed by default for everybody**: a person asks for access from the bot and an operator grants
+it, because the app reads somebody's entire prediction history and a surface like that opens to nobody until
+somebody decides otherwise. Launches are verified against Telegram's own signature — see `docs/miniapp/SECURITY.md`.
 
 **A personal stats breakdown** — current streak, best streak ever, your form over the last 10 predictions, accuracy
 broken down per team, and how the last 30 days compare to the 30 before that.
@@ -92,6 +104,17 @@ confirms it, not you. If nobody else is reachable, or Telegram won't let the bot
 conversation with it, you get to confirm it yourself a second time instead. A pending request can be withdrawn while
 it's waiting, and whoever was asked gets told if it was. Bulk cleanup of finished tournaments skips all of this —
 there's no live poll left on a finished tournament that a second signature could be protecting.
+
+**Team crests and flags have a source you choose.** PandaScore covers every game and every team; HLTV covers the
+thirty Counter-Strike teams it ranks, and it is the better source for both — its picture is the one that audience
+recognises, and it decides a team's country from the roster rather than from where the organisation is registered,
+which is what a flag beside a team name is actually meant to say. Both are stored side by side and a chat picks which
+is rendered, on two separate switches: `Settings → 🖼 Team logos` and `Settings → 🏳 Team flags`. Both default to the
+match provider, and a team HLTV has never ranked quietly falls back to it.
+
+**The schedule keeps a match while it is being played.** A match does not stop existing when it kicks off — between
+the poll closing and the result landing it is the most interesting thing on the list — so "what's on" shows it with a
+🔴 until the result actually arrives, instead of dropping it at exactly the moment people look.
 
 **Team-data enrichment** — Valve Regional Standings, optionally HLTV's own world ranking, and optionally GRID and
 Liquipedia — shows up as extra context inside a poll (a VRS rank, an HLTV rank, recent form, head-to-head record).

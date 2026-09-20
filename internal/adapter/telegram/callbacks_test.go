@@ -1023,3 +1023,9 @@ func TestEventsBrowse_SingleGameKeepsAFlatList(t *testing.T) {
 		}
 	}
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; the
+// tests here only ever seed unstarted matches, so it answers the same way.
+func (c *dataCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return c.FindUnstartedMatchesForEvents(ctx, ids)
+}

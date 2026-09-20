@@ -51,6 +51,13 @@ type Settings struct {
 	// thirty Counter-Strike teams — the well-known ones, which is exactly
 	// why some chats want them.
 	PreferHLTVLogos bool
+	// PreferHLTVFlags switches Counter-Strike country flags to HLTV's own
+	// answer where it has one. Off by default, for the same reason as the
+	// crests: the match provider covers every game and every team, HLTV's
+	// ranking covers thirty Counter-Strike ones. HLTV decides a team's
+	// country from its roster rather than from where the organisation is
+	// registered, which is what a flag beside a team name is meant to say.
+	PreferHLTVFlags bool
 	// StreamLanguage is the language this chat wants match broadcasts in.
 	// Empty — the default — means "follow the bot's language"; resolve it
 	// through StreamLocale rather than reading it directly.

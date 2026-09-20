@@ -387,3 +387,9 @@ func TestEventCompletion_SendsNoPersonalRecapsWithoutAnAudience(t *testing.T) {
 		}
 	}
 }
+
+// FindPlayableMatchesForEvents widens the same fixture by one status; the
+// tests here only ever seed unstarted matches, so it answers the same way.
+func (f *fakeCatalogForCompletion) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
+	return f.FindUnstartedMatchesForEvents(ctx, ids)
+}

@@ -1549,6 +1549,60 @@ func TestCompetitionRepository_FindUnstartedMatchesForEventsBatchesAcrossEvents(
 	}
 }
 
+// A match does not stop existing when it kicks off. Between the poll
+// closing and the result landing it is the most interesting thing on the
+// schedule, and the screen that lists what is on has to keep showing it —
+// while the poll pipeline, which reads the narrower set, must not start
+// offering votes on a match already in play.
+func TestCompetitionRepository_PlayableMatchesKeepTheOnesInPlay(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Live",
+		ExternalID: "e-live", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	soon := time.Now().UTC().Add(time.Hour)
+	started := time.Now().UTC().Add(-time.Hour)
+	upcoming := competition.Match{ID: common.NewMatchID(), EventID: event.ID, ExternalID: "m-soon",
+		Status: competition.MatchNotStarted, Format: format, ScheduledAt: &soon}
+	running := competition.Match{ID: common.NewMatchID(), EventID: event.ID, ExternalID: "m-running",
+		Status: competition.MatchRunning, Format: format, ScheduledAt: &started, ActualStartedAt: &started}
+	finished := competition.Match{ID: common.NewMatchID(), EventID: event.ID, ExternalID: "m-done",
+		Status: competition.MatchFinished, Format: format, ScheduledAt: &started, ActualStartedAt: &started}
+	for _, m := range []competition.Match{upcoming, running, finished} {
+		if _, err := catalog.SaveMatch(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	playable, err := catalog.FindPlayableMatchesForEvents(ctx, []common.EventID{event.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[common.MatchID]bool{}
+	for _, m := range playable {
+		seen[m.ID] = true
+	}
+	if !seen[upcoming.ID] || !seen[running.ID] {
+		t.Fatalf("expected the upcoming and the running match, got %+v", playable)
+	}
+	if seen[finished.ID] {
+		t.Fatal("a finished match is history, not something still on")
+	}
+
+	// The poll pipeline's own view stays exactly as narrow as it was.
+	unstarted, err := catalog.FindUnstartedMatchesForEvents(ctx, []common.EventID{event.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unstarted) != 1 || unstarted[0].ID != upcoming.ID {
+		t.Fatalf("polls would now be offered on a match in play: %+v", unstarted)
+	}
+}
+
 // TestPredictionRepository_OpenPollsDueBatchFetchesOptionsPerPoll covers the
 // batch poll-fetch path (queryPolls, backing OpenPollsDue/OpenPollsForMatch/
 // PollsForMatch): two due polls with DIFFERENT option sets must each get
@@ -3614,12 +3668,15 @@ func TestCompetitionRepository_TeamCrestsFromBothSources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// HLTV's ranking then adds its own picture for the ranked team.
-	if err := enrich.SetRankingLogo(ctx, ranked.ID, enrichment.SourceHLTV, "https://img-cdn.hltv.org/vitality.png"); err != nil {
+	// HLTV's ranking then adds its own picture and its own country for the
+	// ranked team. Both travel together: they come from the same feed row.
+	if err := enrich.SetRankingAppearance(ctx, ranked.ID, enrichment.SourceHLTV,
+		"https://img-cdn.hltv.org/vitality.png", "FR"); err != nil {
 		t.Fatal(err)
 	}
-	// A source that publishes no crest must not write into HLTV's column.
-	if err := enrich.SetRankingLogo(ctx, unranked.ID, enrichment.SourceValveVRS, "https://example.invalid/vrs.png"); err != nil {
+	// A source that is not HLTV must not write into HLTV's columns.
+	if err := enrich.SetRankingAppearance(ctx, unranked.ID, enrichment.SourceValveVRS,
+		"https://example.invalid/vrs.png", "SE"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3644,6 +3701,32 @@ func TestCompetitionRepository_TeamCrestsFromBothSources(t *testing.T) {
 	}
 	if five.LogoFor(true) != five.LogoURL {
 		t.Fatalf("an unranked team must keep the provider's crest, got %q", five.LogoFor(true))
+	}
+	// The flag follows the same rule as the crest, on its own switch: a
+	// chat may well want the provider's picture with HLTV's country.
+	if vit.HLTVLocation != "FR" {
+		t.Fatalf("HLTV's country was not stored: %+v", vit)
+	}
+	if five.HLTVLocation != "" {
+		t.Fatalf("a non-HLTV source wrote into HLTV's country column: %q", five.HLTVLocation)
+	}
+	if vit.LocationFor(true) != "FR" {
+		t.Fatalf("LocationFor ignored the preference: %+v", vit)
+	}
+
+	// A crest-only refresh must not blank the country it stored last week.
+	if err := enrich.SetRankingAppearance(ctx, ranked.ID, enrichment.SourceHLTV,
+		"https://img-cdn.hltv.org/vitality-2.png", ""); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := catalog.TeamsForGame(ctx, competition.GameCS2, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, team := range refreshed {
+		if team.ID == ranked.ID && team.HLTVLocation != "FR" {
+			t.Fatalf("a crest-only refresh erased the country: %+v", team)
+		}
 	}
 
 	// A later match sync that carries no crest must not erase the stored one.

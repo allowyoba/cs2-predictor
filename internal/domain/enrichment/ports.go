@@ -74,11 +74,14 @@ type TeamLister interface {
 // crest — while every other game falls back to whatever PandaScore
 // published when the team was first seen.
 type TeamLogoWriter interface {
-	// SetRankingLogo stores the crest in the column belonging to that
-	// source, leaving the match provider's own alone. A no-op when the
-	// stored value already matches, so a weekly refresh does not rewrite
-	// every row it touches.
-	SetRankingLogo(ctx context.Context, teamID common.TeamID, source Source, logoURL string) error
+	// SetRankingAppearance stores the crest and the country in the columns
+	// belonging to that source, leaving the match provider's own alone.
+	// Both travel together because they come from the same row of the same
+	// feed, and splitting them would mean two writes to say one thing. A
+	// no-op when the stored values already match, so a weekly refresh does
+	// not rewrite every row it touches; an empty value leaves whatever is
+	// stored alone rather than erasing it.
+	SetRankingAppearance(ctx context.Context, teamID common.TeamID, source Source, logoURL, countryCode string) error
 }
 
 // RankingRepository persists/reads cached TeamRanking rows.
