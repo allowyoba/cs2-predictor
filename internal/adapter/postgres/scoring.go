@@ -149,25 +149,46 @@ func (r *ScoringRepository) chatTimezone(ctx context.Context, chatID common.Chat
 // chat's own timezone, then compared against
 // COALESCE(actual_started_at, scheduled_at).
 func periodClause(period scoring.StatsPeriod, zone *time.Location) (string, []any) {
-	bounds := func(from, until time.Time) (string, []any) {
-		return " AND COALESCE(m.actual_started_at, m.scheduled_at) >= $2 AND COALESCE(m.actual_started_at, m.scheduled_at) < $3",
-			[]any{from.In(time.UTC), until.In(time.UTC)}
+	// $1 is always the chat (or user) the caller filters by, so this
+	// clause's own arguments start at $2 and are numbered as they are
+	// appended — a game filter on top of a date range needs $4, and
+	// hardcoding the numbers is how that silently breaks.
+	var args []any
+	next := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args)+1)
 	}
+	var clause string
 	switch period.Kind {
 	case scoring.PeriodEvent:
-		return " AND m.event_id = $2", []any{period.EventID.Value}
+		clause = " AND m.event_id = " + next(period.EventID.Value)
 	case scoring.PeriodYear:
 		from := time.Date(period.Year, time.January, 1, 0, 0, 0, 0, zone)
-		return bounds(from, from.AddDate(1, 0, 0))
+		clause = betweenClause(from, from.AddDate(1, 0, 0), next)
 	case scoring.PeriodMonth:
 		from := time.Date(period.Year, period.Month, 1, 0, 0, 0, 0, zone)
-		return bounds(from, from.AddDate(0, 1, 0))
+		clause = betweenClause(from, from.AddDate(0, 1, 0), next)
 	case scoring.PeriodDay:
 		from := time.Date(period.Day.Year(), period.Day.Month(), period.Day.Day(), 0, 0, 0, 0, zone)
-		return bounds(from, from.AddDate(0, 0, 1))
-	default: // AllTime
-		return "", nil
+		clause = betweenClause(from, from.AddDate(0, 0, 1), next)
 	}
+	return clause + gameClause(period.Game, next), args
+}
+
+// betweenClause bounds a period by when its matches were actually played.
+func betweenClause(from, until time.Time, next func(any) string) string {
+	return " AND COALESCE(m.actual_started_at, m.scheduled_at) >= " + next(from.In(time.UTC)) +
+		" AND COALESCE(m.actual_started_at, m.scheduled_at) < " + next(until.In(time.UTC))
+}
+
+// gameClause narrows a period to one game — an empty code means all of
+// them, which is every figure this bot showed before the split existed.
+func gameClause(game competition.GameCode, next func(any) string) string {
+	if game == "" {
+		return ""
+	}
+	return ` AND EXISTS (SELECT 1 FROM tournament_event pe JOIN game pg ON pg.id = pe.game_id
+	                      WHERE pe.id = m.event_id AND pg.code = ` + next(string(game)) + `)`
 }
 
 // scoringAggregateSelect is the aggregation column list shared by
@@ -294,17 +315,22 @@ const userStatsQuery = scoringAggregateSelect + `
 // when one person participates in multiple chats configured for different
 // regions.
 func userPeriodClause(period scoring.StatsPeriod) (string, []any) {
+	var args []any
+	next := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args)+1)
+	}
+	var clause string
 	switch period.Kind {
 	case scoring.PeriodEvent:
-		return " AND m.event_id = $2", []any{period.EventID.Value}
+		clause = " AND m.event_id = " + next(period.EventID.Value)
 	case scoring.PeriodYear:
-		return " AND EXTRACT(YEAR FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = $2", []any{period.Year}
+		clause = " AND EXTRACT(YEAR FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = " + next(period.Year)
 	case scoring.PeriodMonth:
-		return ` AND EXTRACT(YEAR FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = $2
-		         AND EXTRACT(MONTH FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = $3`, []any{period.Year, int(period.Month)}
-	default:
-		return "", nil
+		clause = " AND EXTRACT(YEAR FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = " + next(period.Year) +
+			" AND EXTRACT(MONTH FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = " + next(int(period.Month))
 	}
+	return clause + gameClause(period.Game, next), args
 }
 
 // UserStats aggregates one Telegram user's finished predictions across every
