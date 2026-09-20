@@ -185,7 +185,8 @@ esac
                               "APIFY_RANKING_CHECK_INTERVAL=\n"
                               "APIFY_MAX_TEAMS=\n"
                               "EVENT_EVE_LEAD=\n"
-                              "DATABASE_POOL_SIZE=\n")
+                              "DATABASE_POOL_SIZE=\n"
+                              "MINIAPP_URL=https://bot.example.test/app/\n")
             self.assertFalse(Path(tmp, "deploy_key").exists())
             self.assertFalse(Path(tmp, "known_hosts").exists())
 

@@ -233,6 +233,7 @@ func run() error {
 		EnrichmentSources:        enrichmentSources,
 		DeadLetters:              outbox,
 		Feedback:                 feedbackService,
+		MiniAppURL:               cfg.MiniAppURL,
 	}
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
@@ -272,7 +273,10 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	case strings.HasPrefix(data, "notify:toggle:"):
 		err = h.toggleNotification(ctx, target, userID, locale, strings.TrimPrefix(data, "notify:toggle:"))
 	case data == "pstats:insights":
-		err = h.renderPersonalInsights(ctx, target, userID, locale)
+		err = h.renderPersonalInsights(ctx, target, userID, locale, "")
+	case strings.HasPrefix(data, "pstats:insights:"):
+		err = h.renderPersonalInsights(ctx, target, userID, locale,
+			competition.GameCode(strings.TrimPrefix(data, "pstats:insights:")))
 	case data == "pstats:help":
 		err = h.helpView(ctx, target, locale, "pstats:menu", true)
 	case data == "pstats:rename":

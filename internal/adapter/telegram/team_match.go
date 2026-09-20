@@ -253,7 +253,10 @@ func (h *UpdateHandler) teamMatchQueueMenu(ctx context.Context, target replyTarg
 	if err != nil {
 		return err
 	}
-	back := []InlineButton{h.backButton(locale, "pstats:menu")}
+	// This list is opened from the system panel, so back returns there —
+	// not to the personal dashboard, which is a different section
+	// entirely and was never on the way here.
+	back := []InlineButton{h.backButton(locale, "hub:system")}
 	if len(pending) == 0 {
 		return h.respond(ctx, target, bold(h.Texts.Get("teammatch.title", locale))+"\n\n"+h.Texts.Get("teammatch.empty", locale),
 			&InlineKeyboard{InlineKeyboard: [][]InlineButton{back}})

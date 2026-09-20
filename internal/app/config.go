@@ -66,6 +66,10 @@ type Config struct {
 	// app.DefaultEventEveLead; negative turns the nudge off entirely,
 	// which is the documented way to opt out of it.
 	EventEveLead time.Duration
+	// MiniAppURL is the HTTPS address the Mini App is served from, as
+	// Telegram will open it. Empty hides the button that opens it: a
+	// deployment that does not host the page must not offer one.
+	MiniAppURL string
 	// WatchdogInterval paces the two health watchers (the Telegram webhook
 	// and the outbox's dead letters). Both are cheap — one API call and
 	// one grouped count — and both cover failures that are otherwise
@@ -451,6 +455,12 @@ func LoadConfig() (Config, error) {
 	}
 	// The day-before tournament nudge. Unset means DefaultEventEveLead; a
 	// negative value turns it off.
+	cfg.MiniAppURL = strings.TrimSpace(envString("MINIAPP_URL", ""))
+	if cfg.MiniAppURL != "" && !strings.HasPrefix(cfg.MiniAppURL, "https://") {
+		// Telegram refuses anything else outright, and the failure shows
+		// up as a button that does nothing rather than as an error.
+		return Config{}, fmt.Errorf("MINIAPP_URL must be an https:// address, got %q", cfg.MiniAppURL)
+	}
 	if cfg.WatchdogInterval, err = envDuration("WATCHDOG_INTERVAL", 5*time.Minute); err != nil {
 		return Config{}, err
 	}
