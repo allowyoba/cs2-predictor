@@ -55,12 +55,23 @@ type StatsPeriod struct {
 	// not "mid-table", they are first at what they actually play — and one
 	// merged table hides exactly that.
 	Game competition.GameCode
+	// ChatID narrows every figure to one chat's polls; nil means all of
+	// them. Somebody who plays in a forty-person chat and a four-person
+	// one is measured against two different fields, and a merged number
+	// belongs to neither.
+	ChatID *common.ChatID
 }
 
 // ForGame narrows a period to one game; an empty code widens it back to
 // all of them, which is what the "all games" choice on the screen does.
 func (p StatsPeriod) ForGame(game competition.GameCode) StatsPeriod {
 	p.Game = game
+	return p
+}
+
+// ForChat narrows a period to one chat; nil widens it back to all of them.
+func (p StatsPeriod) ForChat(chatID *common.ChatID) StatsPeriod {
+	p.ChatID = chatID
 	return p
 }
 

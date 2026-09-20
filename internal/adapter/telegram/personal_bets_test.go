@@ -41,6 +41,14 @@ func TestPrivateBets_ListsEverySettledBetAcrossChats(t *testing.T) {
 			Correct: true, Points: 3,
 		},
 		{
+			// Read the winner, missed the scoreline: worth a point, and
+			// worth its own glyph.
+			PlayedAt: now.Add(-90 * time.Minute), ChatID: common.ChatID{Value: -1001}, ChatTitle: "Office CS2",
+			FirstTeamName: "Spirit", SecondTeamName: "MOUZ",
+			PredictedScore: competition.MatchScore{First: 2, Second: 0}, ActualScore: competition.MatchScore{First: 2, Second: 1},
+			Correct: true, Points: 1,
+		},
+		{
 			PlayedAt: now.Add(-2 * time.Hour), ChatID: common.ChatID{Value: -1002}, ChatTitle: "Friends",
 			FirstTeamName: "Vitality", SecondTeamName: "FaZe",
 			PredictedScore: competition.MatchScore{First: 2, Second: 1}, ActualScore: competition.MatchScore{First: 1, Second: 2},
@@ -55,7 +63,10 @@ func TestPrivateBets_ListsEverySettledBetAcrossChats(t *testing.T) {
 		t.Fatalf("expected an all-chats lookup (nil chat filter), got %v", personal.betsChatID)
 	}
 	text := lastText(*calls)
-	for _, want := range []string{"NAVI", "G2", "Office CS2", "Vitality", "FaZe", "Friends", "2:0", "2:1", "1:2", "✅", "❌"} {
+	// Three outcomes, three markers: an exact scoreline is worth more
+	// points than reading the winner, and a single tick for both hid the
+	// harder result on the screen that lists it.
+	for _, want := range []string{"NAVI", "G2", "Office CS2", "Vitality", "FaZe", "Friends", "2:0", "2:1", "1:2", "🎯", "✅", "❌"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("bets screen %q is missing %q", text, want)
 		}

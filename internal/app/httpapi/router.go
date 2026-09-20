@@ -98,7 +98,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	}
 	miniappTeams := instrument("miniapp_teams", teamsHandler(deps.Teams))
 	mux.Handle("GET /api/miniapp/v1/teams", miniappTeams)
-	mux.Handle("GET /api/miniapp/v1/me/dashboard", instrument("miniapp_dashboard", dashboardHandler(deps.MiniApp)))
+	mux.Handle("GET /api/miniapp/v1/me/dashboard", instrument("miniapp_dashboard", dashboardHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/active", instrument("miniapp_active", activeHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/chats", instrument("miniapp_chats", chatsHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/history", instrument("miniapp_history", historyHandler(deps.MiniApp, deps.MiniAppHistory)))

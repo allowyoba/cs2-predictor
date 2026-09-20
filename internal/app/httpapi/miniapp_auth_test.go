@@ -158,7 +158,7 @@ func miniAppRequest(t *testing.T, path, initData string) *http.Request {
 // nothing at all — not even whether that person exists.
 func TestMiniappDashboard_RefusesAnUnsignedLaunch(t *testing.T) {
 	stats := &stubMiniAppStats{}
-	handler := dashboardHandler(miniAppTestDeps(&stubAccess{}, stats))
+	handler := dashboardHandler(miniAppTestDeps(&stubAccess{}, stats), nil)
 
 	for _, initData := range []string{"", "user=%7B%22id%22%3A42%7D&hash=deadbeef"} {
 		recorder := httptest.NewRecorder()
@@ -179,7 +179,7 @@ func TestMiniappDashboard_RefusesAnUnsignedLaunch(t *testing.T) {
 // owed the reason — and still no data.
 func TestMiniappDashboard_RefusesSomebodyWithoutAccess(t *testing.T) {
 	stats := &stubMiniAppStats{}
-	handler := dashboardHandler(miniAppTestDeps(&stubAccess{}, stats))
+	handler := dashboardHandler(miniAppTestDeps(&stubAccess{}, stats), nil)
 	initData := signInitData(t, `{"id":42,"first_name":"A"}`, time.Now())
 
 	recorder := httptest.NewRecorder()
@@ -200,7 +200,7 @@ func TestMiniappDashboard_ServesTheSignedUsersOwnStatistics(t *testing.T) {
 		standing: &scoring.UserStanding{Points: 42, Predictions: 10, CorrectPredictions: 7, ExactPredictions: 3, Tournaments: 2},
 	}
 	access := &stubAccess{access: map[int64]chat.MiniAppStatus{42: chat.MiniAppGranted}}
-	handler := dashboardHandler(miniAppTestDeps(access, stats))
+	handler := dashboardHandler(miniAppTestDeps(access, stats), nil)
 	initData := signInitData(t, `{"id":42,"first_name":"Аня"}`, time.Now())
 
 	recorder := httptest.NewRecorder()
@@ -225,7 +225,7 @@ func TestMiniappDashboard_ServesTheSignedUsersOwnStatistics(t *testing.T) {
 // Root operators are exempt: they are who grants access to everybody else.
 func TestMiniappDashboard_LetsOperatorsInWithoutAGrant(t *testing.T) {
 	stats := &stubMiniAppStats{standing: &scoring.UserStanding{Predictions: 1}}
-	handler := dashboardHandler(miniAppTestDeps(&stubAccess{}, stats, 7))
+	handler := dashboardHandler(miniAppTestDeps(&stubAccess{}, stats, 7), nil)
 	initData := signInitData(t, `{"id":7,"first_name":"Root"}`, time.Now())
 
 	recorder := httptest.NewRecorder()
@@ -292,7 +292,7 @@ func TestMiniappDashboard_UsesTheNameTheBotShowsEverywhereElse(t *testing.T) {
 		deps := miniAppTestDeps(access, &stubMiniAppStats{standing: &scoring.UserStanding{}})
 		deps.Names = names
 		recorder := httptest.NewRecorder()
-		dashboardHandler(deps).ServeHTTP(recorder, miniAppRequest(t, "/api/miniapp/v1/me/dashboard", initData))
+		dashboardHandler(deps, nil).ServeHTTP(recorder, miniAppRequest(t, "/api/miniapp/v1/me/dashboard", initData))
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
 		}

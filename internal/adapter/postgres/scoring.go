@@ -330,6 +330,11 @@ func userPeriodClause(period scoring.StatsPeriod) (string, []any) {
 		clause = " AND EXTRACT(YEAR FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = " + next(period.Year) +
 			" AND EXTRACT(MONTH FROM timezone(c.timezone, COALESCE(m.actual_started_at, m.scheduled_at)))::int = " + next(int(period.Month))
 	}
+	// The user queries span every chat, so this is where narrowing to one
+	// of them belongs; periodClause's own $1 is already a chat.
+	if period.ChatID != nil {
+		clause += " AND p.chat_id = " + next(period.ChatID.Value)
+	}
 	return clause + gameClause(period.Game, next), args
 }
 
@@ -409,6 +414,7 @@ func (r *ScoringRepository) UserPredictions(ctx context.Context, userID common.U
 WITH picks AS (
     SELECT COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
            g.code AS game,
+           p.chat_id AS chat_id,
            CASE
              WHEN po.first_score > po.second_score THEN mt1.team_id
              WHEN po.second_score > po.first_score THEN mt2.team_id
@@ -432,6 +438,7 @@ WITH picks AS (
 )
 SELECT p.played_at,
        p.game,
+       p.chat_id,
        p.predicted_team_id,
        COALESCE(t.name, ''),
        p.predicted_team_id = p.actual_team_id AS correct
@@ -450,7 +457,7 @@ SELECT p.played_at,
 	var out []scoring.UserPrediction
 	for rows.Next() {
 		var p scoring.UserPrediction
-		if err := rows.Scan(&p.PlayedAt, &p.Game, &p.TeamID.Value, &p.TeamName, &p.Correct); err != nil {
+		if err := rows.Scan(&p.PlayedAt, &p.Game, &p.ChatID.Value, &p.TeamID.Value, &p.TeamName, &p.Correct); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

@@ -3775,6 +3775,17 @@ func TestScoringRepository_ActivePredictionsCarryStreamsAndSkipFinishedMatches(t
 	if _, err := catalog.SaveEvent(ctx, event); err != nil {
 		t.Fatal(err)
 	}
+	// A prediction only counts as pending while the chat is still
+	// following the tournament and still has the game switched on — see
+	// the dropped-tournament case at the end of this test.
+	subs := pg.NewSubscriptionRepository(pool)
+	if _, err := subs.Subscribe(ctx, subscription.EventSubscription{ChatID: chatID, EventID: event.ID,
+		SubscribedAt: time.Now(), Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetEnabledGames(ctx, chatID, []competition.GameCode{competition.GameCS2}); err != nil {
+		t.Fatal(err)
+	}
 	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
 	var options []prediction.Option
 	for i, score := range format.PossibleScores() {
@@ -3843,5 +3854,35 @@ func TestScoringRepository_ActivePredictionsCarryStreamsAndSkipFinishedMatches(t
 	}
 	if withStream != 1 || withoutStream != 1 {
 		t.Fatalf("expected one match with a broadcast and one without, got %d/%d", withStream, withoutStream)
+	}
+
+	// The chat drops the tournament. Nobody in that room is waiting on
+	// these polls any more — they will never be settled there or talked
+	// about again — so they stop being "what you have riding right now".
+	if err := subs.Unsubscribe(ctx, chatID, event.ID); err != nil {
+		t.Fatal(err)
+	}
+	dropped, err := scoringRepo.ActivePredictions(ctx, player, scoring.ActivePredictionsMax)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dropped) != 0 {
+		t.Fatalf("a dropped tournament still shows %d pending predictions", len(dropped))
+	}
+
+	// Same for a discipline the chat has switched off.
+	if _, err := subs.Subscribe(ctx, subscription.EventSubscription{ChatID: chatID, EventID: event.ID,
+		SubscribedAt: time.Now(), Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetEnabledGames(ctx, chatID, []competition.GameCode{competition.GameDota2}); err != nil {
+		t.Fatal(err)
+	}
+	offGame, err := scoringRepo.ActivePredictions(ctx, player, scoring.ActivePredictionsMax)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(offGame) != 0 {
+		t.Fatalf("a switched-off discipline still shows %d pending predictions", len(offGame))
 	}
 }

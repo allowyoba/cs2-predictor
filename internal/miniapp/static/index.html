@@ -21,12 +21,18 @@
     </header>
 
     <!--
-      Пустой: дисциплины приходят из ответа API — те, в которых у человека
-      действительно есть прогнозы. Захардкоженный список показывал игры,
-      в которые человек не играл, с процентами, которых не существует.
+      Одна панель фильтров на всё приложение. Каждый экран показывает то,
+      что здесь выбрано, и каждый запрос несёт этот выбор — поэтому
+      «CS2» не может означать на истории одно, а на наградах другое.
+      Ряд с одним вариантом не рисуется: фильтр из одного пункта — мебель.
     -->
-    <div class="game-rail-wrap" aria-label="Выбор дисциплины" id="gameRailWrap" hidden>
-      <div class="game-rail" id="gameRail"></div>
+    <div class="filter-bar" id="filterBar" hidden>
+      <div class="filter-row" id="gameRailRow" aria-label="Дисциплина" hidden>
+        <div class="game-rail" id="gameRail"></div>
+      </div>
+      <div class="filter-row" id="chatRailRow" aria-label="Чат" hidden>
+        <div class="chat-rail" id="chatRail"></div>
+      </div>
     </div>
 
     <p class="access-notice" id="accessNotice" role="status" hidden></p>
@@ -88,7 +94,7 @@
           то, чего на «Обзоре» нет: из чего эта цифра складывается и где
           выборка достаточна, чтобы процент что-то значил.
         -->
-        <div class="analytics-overview">
+        <div class="analytics-overview" id="analyticsOverview" data-comparing="false">
           <article><span>Дисциплин</span><strong id="analyticsGameCount">—</strong><small id="analyticsCoverage">нет данных</small></article>
           <article><span>Сильнее всего</span><strong id="analyticsBest">—</strong><small id="analyticsBestNote">по вашим прогнозам</small></article>
           <article><span>Слабее всего</span><strong id="analyticsWorst">—</strong><small id="analyticsWorstNote">есть что подтянуть</small></article>
@@ -103,13 +109,26 @@
         <section class="glass-card analytics-card">
           <div class="section-title-row compact-row"><div><div class="eyebrow">КОМАНДЫ</div><h2>Кого вы читаете лучше</h2></div></div>
           <div class="team-table" id="analyticsTeams"></div>
-          <p class="legal-note">Команда попадает в список, когда прогнозов по ней достаточно, чтобы процент что-то значил.</p>
         </section>
+
+        <!--
+          Вторая половина того же рейтинга. Назвать только тех, кого
+          человек читает хорошо, — это ответ на половину вопроса, и обычно
+          не на ту половину, с которой можно что-то сделать.
+        -->
+        <section class="glass-card analytics-card" id="worstTeamsCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">КОМАНДЫ</div><h2>Кого вы читаете хуже</h2></div></div>
+          <div class="team-table" id="analyticsWorstTeams"></div>
+        </section>
+        <p class="legal-note">Команда попадает в списки, когда прогнозов по ней достаточно, чтобы процент что-то значил.</p>
       </section>
 
       <section class="screen" data-screen="history" aria-labelledby="history-title">
-        <div class="section-heading"><div><div class="eyebrow">ВСЕ ДИСЦИПЛИНЫ</div><h1 id="history-title">История</h1></div><button class="filter-button" id="filterButton"><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg><span>Фильтры</span></button></div>
-        <div class="filter-rail" id="historyFilters"><button class="chip selected" data-filter-game="">Все</button></div>
+        <!--
+          Без собственных чипов дисциплин: они дублировали панель наверху.
+          Здесь осталось только то, чего в ней нет, — верно или ошибка.
+        -->
+        <div class="section-heading"><div><div class="eyebrow">ЗАВЕРШЁННЫЕ ПРОГНОЗЫ</div><h1 id="history-title">История</h1></div><button class="filter-button" id="filterButton"><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg><span>Результат</span></button></div>
         <div class="history-feed" id="historyFeed"></div>
       </section>
 
@@ -124,6 +143,15 @@
         <section class="section-block">
           <div class="section-title-row"><div><div class="eyebrow">ПО ЧАТАМ</div><h2>Медали и результат</h2></div></div>
           <div class="chat-list" id="chatStandings"></div>
+        </section>
+
+        <!--
+          Что именно за медаль. Три золота — это число; «1 место, IEM
+          Katowice, в чате Прогнозы» — то, вместо чего это число стояло.
+        -->
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ВАШИ МЕДАЛИ</div><h2>За какие турниры</h2></div></div>
+          <div class="medal-list" id="medalList"></div>
         </section>
 
         <section class="section-block">
@@ -153,14 +181,12 @@
   </div>
 
   <div class="sheet-backdrop" id="sheetBackdrop" hidden>
-    <section class="bottom-sheet" role="dialog" aria-modal="true" aria-label="Фильтры истории">
-      <div class="sheet-grabber"></div><div class="sheet-head"><div><div class="eyebrow">ИСТОРИЯ</div><h2>Фильтры</h2></div><button class="icon-button small" id="closeSheet" aria-label="Закрыть">×</button></div>
+    <section class="bottom-sheet" role="dialog" aria-modal="true" aria-label="Фильтр по результату">
+      <div class="sheet-grabber"></div><div class="sheet-head"><div><div class="eyebrow">ИСТОРИЯ</div><h2>Результат</h2></div><button class="icon-button small" id="closeSheet" aria-label="Закрыть">×</button></div>
       <!--
-        Только те фильтры, которые API действительно умеет. Селект периода
-        выглядел рабочим и ничего не менял — контрол, который врёт, хуже
-        отсутствующего.
+        Дисциплина и чат живут в общей панели наверху; здесь только то,
+        что принадлежит именно истории.
       -->
-      <label>Дисциплина<select id="filterGame"><option value="">Все игры</option></select></label>
       <label>Результат<select id="filterResult"><option value="">Любой</option><option value="correct">Верно</option><option value="wrong">Ошибка</option></select></label>
       <button class="primary-button" id="applyFilters">Показать результаты</button>
     </section>
