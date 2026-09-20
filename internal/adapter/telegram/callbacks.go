@@ -131,7 +131,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	case data == "pstats:menu":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
 	case data == "pstats:settings":
-		err = h.privateSettingsMenu(ctx, target, locale)
+		err = h.privateSettingsMenu(ctx, target, userID, locale)
 	case data == "hub:root":
 		err = h.startLanding(ctx, target, userID, locale)
 	case data == "hub:personal":
@@ -282,7 +282,9 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 			err = setErr
 			break
 		}
-		err = h.privateSettingsMenu(ctx, target, next)
+		err = h.privateSettingsMenu(ctx, target, userID, next)
+	case data == "pstats:logos":
+		err = h.toggleLogoSource(ctx, target, userID, locale)
 	case data == "notify:menu":
 		err = h.notificationsMenu(ctx, target, userID, locale)
 	case strings.HasPrefix(data, "notify:toggle:"):

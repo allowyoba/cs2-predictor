@@ -70,9 +70,24 @@
    */
   const API_BASE = params.get('api') || '';
   /** Which crest set to ask for; mirrors the chat setting of the same name. */
-  const LOGO_SOURCE = params.get('logos') === 'hltv' ? 'hltv' : 'provider';
+  /**
+   * logoSource is which crests this person asked for, as the dashboard
+   * reports it. A personal setting, made in the bot's own DM settings:
+   * crests are only ever rendered here, so a chat-wide switch for them was
+   * a control nobody could see the effect of. The query parameter is still
+   * honoured so the page can be opened against a deployment by hand.
+   */
+  let logoSource = params.get('logos') === 'hltv' ? 'hltv' : 'provider';
 
-  /** logos maps a lowercased team name to its crest URL, per game. */
+  /**
+   * logos maps a lowercased team name to its crest URL, per game.
+   *
+   * Every URL points back at this bot: the crests are mirrored server-side
+   * so that opening this app never sends a request to HLTV's or
+   * PandaScore's CDN. The page's own Content-Security-Policy refuses
+   * images from anywhere else, so a third-party URL finding its way back
+   * in here fails visibly instead of quietly resuming that traffic.
+   */
   const logos = new Map();
 
   /**
@@ -121,7 +136,7 @@
     if (!game || logos.has(game)) return;
     logos.set(game, new Map());
     try {
-      const body = await fetchJSON(`/api/miniapp/v1/teams?game=${encodeURIComponent(game)}&logos=${LOGO_SOURCE}`);
+      const body = await fetchJSON(`/api/miniapp/v1/teams?game=${encodeURIComponent(game)}&logos=${logoSource}`);
       const byName = logos.get(game);
       for (const team of body.teams || []) {
         if (team.name && team.logo) byName.set(team.name.toLowerCase(), team.logo);
@@ -278,6 +293,11 @@
   /** applyDashboard overwrites the headline figures with real ones. */
   function applyDashboard(data) {
     dashboard = data;
+    // Applied before any crest is fetched: asking for the wrong source and
+    // correcting it afterwards would be two requests and a visible flicker.
+    if (data.user?.logo_source === 'hltv' || data.user?.logo_source === 'provider') {
+      logoSource = data.user.logo_source;
+    }
     const summary = data.summary || {};
     setText('#accuracyValue', summary.accuracy ?? 0);
     setText('#accuracySub', `${summary.correct ?? 0} верных из ${summary.predictions ?? 0} прогнозов`);

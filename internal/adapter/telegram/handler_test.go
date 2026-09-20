@@ -662,3 +662,7 @@ func (f *fakeChats) FilterDMReachable(_ context.Context, userIDs []common.UserID
 	}
 	return out, nil
 }
+
+func (f *fakeChats) PrefersHLTVLogos(context.Context, common.UserID) (bool, error) { return false, nil }
+
+func (f *fakeChats) SetPrefersHLTVLogos(context.Context, common.UserID, bool) error { return nil }

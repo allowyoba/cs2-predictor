@@ -12,6 +12,8 @@
 package miniapp
 
 import (
+	"strings"
+
 	"embed"
 	"io/fs"
 	"net/http"
@@ -39,6 +41,24 @@ func Handler(prefix string) (http.Handler, error) {
 		// clickjacking question outright.
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		// Images may only come from this origin. The crests are mirrored
+		// here precisely so no viewer's browser talks to HLTV's or
+		// PandaScore's CDN, and a policy is how that stays true: a stray
+		// third-party URL slipping back into the page later fails to load
+		// instead of quietly resuming the traffic this was built to stop.
+		//
+		// Telegram's own WebApp bridge is the one script allowed from
+		// elsewhere; everything else the page needs it already carries.
+		w.Header().Set("Content-Security-Policy", strings.Join([]string{
+			"default-src 'self'",
+			"img-src 'self' data:",
+			"style-src 'self' 'unsafe-inline'",
+			"script-src 'self' https://telegram.org",
+			"connect-src 'self'",
+			"frame-ancestors https://web.telegram.org https://telegram.org",
+			"base-uri 'none'",
+			"form-action 'none'",
+		}, "; "))
 		server.ServeHTTP(w, r)
 	})), nil
 }

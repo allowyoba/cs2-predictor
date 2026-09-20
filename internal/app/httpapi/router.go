@@ -61,6 +61,9 @@ type RouterDeps struct {
 	// registered but answering 503, which is a clearer signal to a client
 	// than a 404 on a path that does exist in other deployments.
 	Teams TeamCatalog
+	// Logos serves the mirrored crests; nil leaves the app drawing
+	// initials, which is its fallback for a team with no picture anyway.
+	Logos MiniAppLogos
 
 	// Version/Commit/BuildTime are reported by GET /version — set via
 	// -ldflags at build time (see Makefile and docker/Dockerfile),
@@ -96,8 +99,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		return withObservability(route, handler, deps.Metrics, deps.Log)
 	}
-	miniappTeams := instrument("miniapp_teams", teamsHandler(deps.Teams))
+	miniappTeams := instrument("miniapp_teams", teamsHandler(deps.Teams, deps.Logos))
 	mux.Handle("GET /api/miniapp/v1/teams", miniappTeams)
+	mux.Handle("GET /api/miniapp/v1/teams/{id}/logo", instrument("miniapp_logo", logoHandler(deps.Logos)))
 	mux.Handle("GET /api/miniapp/v1/me/dashboard", instrument("miniapp_dashboard", dashboardHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/active", instrument("miniapp_active", activeHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/chats", instrument("miniapp_chats", chatsHandler(deps.MiniApp, deps.MiniAppActive)))

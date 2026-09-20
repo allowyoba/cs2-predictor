@@ -577,3 +577,9 @@ func TestDiscoverEvents_SkipsChatsThatHaveNotEnabledTheEventsGame(t *testing.T) 
 func (f *fakeSyncCatalog) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
 	return f.FindUnstartedMatchesForEvents(ctx, ids)
 }
+
+func (*fakeSyncChats) PrefersHLTVLogos(context.Context, common.UserID) (bool, error) {
+	return false, nil
+}
+
+func (*fakeSyncChats) SetPrefersHLTVLogos(context.Context, common.UserID, bool) error { return nil }

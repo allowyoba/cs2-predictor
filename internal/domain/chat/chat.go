@@ -45,12 +45,6 @@ type Settings struct {
 	// through IsQuiet/QuietUntil rather than comparing the fields.
 	QuietFromMinute *int
 	QuietToMinute   *int
-	// PreferHLTVLogos switches Counter-Strike crests to HLTV's own
-	// pictures where it has them. Off by default: the match provider's
-	// logos cover every game and every team, while HLTV's ranking covers
-	// thirty Counter-Strike teams — the well-known ones, which is exactly
-	// why some chats want them.
-	PreferHLTVLogos bool
 	// PreferHLTVFlags switches Counter-Strike country flags to HLTV's own
 	// answer where it has one. Off by default, for the same reason as the
 	// crests: the match provider covers every game and every team, HLTV's
@@ -270,6 +264,15 @@ type Repository interface {
 	// every private screen used before this existed.
 	UserTimezone(ctx context.Context, userID common.UserID) (*string, error)
 	SetUserTimezone(ctx context.Context, userID common.UserID, timezone string) error
+	// PrefersHLTVLogos is this person's crest source for the Mini App.
+	//
+	// A person's setting rather than a chat's: crests are only rendered in
+	// the Mini App, which one person opens in their own private chat. It
+	// used to live on the chat, where nothing ever read it — see migration
+	// 0052. Country flags are the opposite and stay on the chat: those are
+	// rendered in the poll, in the room, for everybody.
+	PrefersHLTVLogos(ctx context.Context, userID common.UserID) (bool, error)
+	SetPrefersHLTVLogos(ctx context.Context, userID common.UserID, prefer bool) error
 
 	// SetDMReachable records whether the bot may message this user
 	// privately. Telegram forbids a bot's first message to someone who has

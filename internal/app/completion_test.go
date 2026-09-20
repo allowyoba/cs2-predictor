@@ -393,3 +393,11 @@ func TestEventCompletion_SendsNoPersonalRecapsWithoutAnAudience(t *testing.T) {
 func (f *fakeCatalogForCompletion) FindPlayableMatchesForEvents(ctx context.Context, ids []common.EventID) ([]competition.Match, error) {
 	return f.FindUnstartedMatchesForEvents(ctx, ids)
 }
+
+func (fakeChatsForCompletion) PrefersHLTVLogos(context.Context, common.UserID) (bool, error) {
+	return false, nil
+}
+
+func (fakeChatsForCompletion) SetPrefersHLTVLogos(context.Context, common.UserID, bool) error {
+	return nil
+}

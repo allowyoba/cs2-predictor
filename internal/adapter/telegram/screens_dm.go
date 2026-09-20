@@ -160,15 +160,53 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 // language, display name — behind one entry point from privateStatsMenu,
 // instead of each living as its own top-level button alongside unrelated
 // stats/navigation actions.
-func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTarget, locale common.LocaleCode) error {
+func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 		{button(h.Texts.Get("dm.timezone", locale), "pstats:timezone")},
 		{button(h.Texts.Get("dm.rename", locale), "pstats:rename")},
-		{button(h.Texts.Get("idea.title", locale), "idea:menu")},
-		{h.backButton(locale, "pstats:menu")},
 	}
+	// Only offered where it is visible. Crests are rendered in the Mini
+	// App and nowhere else, so somebody who has never opened it is being
+	// asked about something they have never seen.
+	if row := h.logoSourceRow(ctx, userID, locale); row != nil {
+		rows = append(rows, row)
+	}
+	rows = append(rows,
+		[]InlineButton{button(h.Texts.Get("idea.title", locale), "idea:menu")},
+		[]InlineButton{h.backButton(locale, "pstats:menu")},
+	)
 	return h.respond(ctx, target, h.Texts.Get("private.settings_title", locale), &InlineKeyboard{InlineKeyboard: rows})
+}
+
+// logoSourceRow offers the crest source, or nothing when this deployment
+// has no Mini App to render crests in.
+func (h *UpdateHandler) logoSourceRow(ctx context.Context, userID common.UserID, locale common.LocaleCode) []InlineButton {
+	if h.MiniAppURL == "" {
+		return nil
+	}
+	prefer, err := h.Chats.PrefersHLTVLogos(ctx, userID)
+	if err != nil {
+		h.Log.Warn("crest source lookup failed", "user", userID.Value, "error", err)
+		return nil
+	}
+	state := h.Texts.Get("settings.logos_provider", locale)
+	if prefer {
+		state = h.Texts.Get("settings.logos_hltv", locale)
+	}
+	return []InlineButton{button(h.Texts.Get("settings.logos_label", locale, state), "pstats:logos")}
+}
+
+// toggleLogoSource flips it and redraws the screen it was tapped on.
+func (h *UpdateHandler) toggleLogoSource(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+	prefer, err := h.Chats.PrefersHLTVLogos(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := h.Chats.SetPrefersHLTVLogos(ctx, userID, !prefer); err != nil {
+		return err
+	}
+	return h.privateSettingsMenu(ctx, target, userID, locale)
 }
 
 func (h *UpdateHandler) privateYearMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {

@@ -315,6 +315,10 @@ func run() error {
 
 	deadLetters := &app.DeadLetterWatch{Store: outbox, Alerter: adminAlerter, Metrics: metrics, Log: log}
 
+	logoMirror := &app.LogoMirror{
+		Cache: enrichmentRepo, Client: httpClient, Clock: clock, Lock: clusterLock, Log: log,
+	}
+
 	// backgroundJobs tracks every scheduler goroutine so shutdown can wait
 	// for them to actually stop (they each respect ctx via RunFixedDelay's
 	// select) before the deferred pool.Close() runs — otherwise a job still
@@ -366,16 +370,21 @@ func run() error {
 		runBackground("webhook-watchdog", cfg.WatchdogInterval, webhookWatchdog.Check)
 		runBackground("dead-letter-watch", cfg.WatchdogInterval, deadLetters.Check)
 		runBackground("host-monitor", cfg.WatchdogInterval, hostMonitor.Check)
+		// Copies team crests here so no viewer's browser ever fetches one
+		// from HLTV or PandaScore. Runs on the slow watchdog cadence and
+		// does nothing at all once it has them — see app.LogoMirror.
+		runBackground("logo-mirror", cfg.WatchdogInterval, logoMirror.Dispatch)
 	}
 	defer backgroundJobs.Wait()
 
 	mux := httpapi.NewRouter(httpapi.RouterDeps{
 		Webhook: webhookHandler, Gateway: gateway, Registry: registry, Pool: pool,
 		Metrics: metrics, Log: log, WebhookRateLimit: cfg.WebhookRateLimit, Teams: catalog,
+		Logos:          enrichmentRepo,
 		MiniAppHistory: scoringRepo,
 		MiniAppActive:  scoringRepo,
 		MiniApp: httpapi.MiniAppDeps{
-			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats,
+			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats, Prefs: chats,
 			Operators: cfg.TeamMatchOperatorChatIDs, Clock: clock, Log: log,
 		},
 		Version: version, Commit: commit, BuildTime: buildTime,

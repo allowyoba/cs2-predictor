@@ -39,7 +39,6 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		{button(streamLanguageLabel, "settings:stream_language")},
 		{button(h.Texts.Get("settings.notifications", settings.Locale), "settings:notify")},
 		{button(h.quietHoursLabel(settings), "settings:quiet")},
-		{button(h.logoSourceLabel(settings), "settings:logos")},
 		{button(h.flagSourceLabel(settings), "settings:flags")},
 		{button(topTierLabel, "settings:top_tier")},
 		{button(autoSubscribeLabel, "settings:auto_subscribe")},
@@ -117,20 +116,13 @@ func (h *UpdateHandler) autoSubscribeView(ctx context.Context, target replyTarge
 	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
-// logoSourceLabel is the settings-menu row for which crests Counter-Strike
-// teams are shown with.
-func (h *UpdateHandler) logoSourceLabel(settings chat.Settings) string {
-	state := h.Texts.Get("settings.logos_provider", settings.Locale)
-	if settings.PreferHLTVLogos {
-		state = h.Texts.Get("settings.logos_hltv", settings.Locale)
-	}
-	return h.Texts.Get("settings.logos_label", settings.Locale, state)
-}
-
-// flagSourceLabel is the same row for the country flag beside a team name.
-// A separate switch from the crest one: PandaScore's country is often the
-// organisation's registration, HLTV's is the roster's, and a chat may well
-// want the provider's picture with HLTV's flag or the other way round.
+// flagSourceLabel is the settings-menu row for the country flag beside a
+// team name.
+//
+// A chat setting, unlike the crest source: flags are rendered in the poll
+// and in the schedule, in the room, for everybody at once. Crests are only
+// ever seen in the Mini App, which one person opens alone — so that one
+// belongs to the person (see chat.Repository.PrefersHLTVLogos).
 func (h *UpdateHandler) flagSourceLabel(settings chat.Settings) string {
 	state := h.Texts.Get("settings.logos_provider", settings.Locale)
 	if settings.PreferHLTVFlags {
