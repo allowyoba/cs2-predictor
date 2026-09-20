@@ -26,9 +26,13 @@ type RankingSync struct {
 	// throughout as the identity/ranking lookup key, and folded into this
 	// job's cluster-lock name and log lines so two sources' jobs never
 	// contend with each other and their logs stay distinguishable.
-	Source    enrichment.Source
-	Provider  enrichment.RankingProvider
-	Teams     enrichment.TeamLister
+	Source   enrichment.Source
+	Provider enrichment.RankingProvider
+	Teams    enrichment.TeamLister
+	// TeamLogos stores the crest this feed publishes alongside each team.
+	// Optional: a deployment without it simply keeps whatever logo the
+	// match provider supplied.
+	TeamLogos enrichment.TeamLogoWriter
 	Rankings  enrichment.RankingRepository
 	Identity  enrichment.IdentityRepository
 	State     enrichment.SyncStateRepository
@@ -137,6 +141,14 @@ func (s *RankingSync) apply(ctx context.Context, ranked []enrichment.RankedTeam,
 		matched++
 		if err := s.Rankings.SaveRanking(ctx, enrichment.NewTeamRanking(teamID, rt)); err != nil {
 			s.Log.Error("ranking save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
+		}
+		// Best effort: a missing crest is a cosmetic loss in one surface,
+		// and failing the ranking sync over it would cost the rankings
+		// themselves.
+		if s.TeamLogos != nil && rt.Identity.LogoURL != "" {
+			if err := s.TeamLogos.SetRankingLogo(ctx, teamID, s.Source, rt.Identity.LogoURL); err != nil {
+				s.Log.Warn("team logo save failed", "source", s.Source, "team", rt.Identity.Name, "error", err)
+			}
 		}
 	}
 

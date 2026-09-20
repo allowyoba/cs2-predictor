@@ -228,6 +228,7 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("settings:quiet:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.setQuietHours(ctx, cb, target, settings, strings.TrimPrefix(data, "settings:quiet:"))
 	}},
+	{match: exact("settings:logos"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsLogos},
 	{match: exact("settings:stream_announce"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamAnnounce},
 	{match: exact("settings:stream_language"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamLanguage},
 	{match: exact("settings:games"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).gamesView)},
@@ -754,6 +755,25 @@ func (h *UpdateHandler) toggleAutoSubscribe(ctx context.Context, cb *CallbackQue
 	name := h.Texts.Get(gameShortLabelKey(code), settings.Locale)
 	h.logAdminAction(ctx, settings.ChatID, &cb.From, "auto_subscribe", name+":"+state)
 	return settings, h.toast(ctx, cb.ID, "✅ "+name+" — "+h.Texts.Get(toastKey, settings.Locale))
+}
+
+// routeSettingsLogos switches Counter-Strike crests between the match
+// provider's pictures (every game, every team) and HLTV's own (thirty
+// ranked teams, and the ones that audience recognises).
+func routeSettingsLogos(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+	settings.PreferHLTVLogos = !settings.PreferHLTVLogos
+	if _, err := h.Chats.Save(ctx, settings); err != nil {
+		return false, err
+	}
+	state, toastKey := "provider", "settings.logos_provider"
+	if settings.PreferHLTVLogos {
+		state, toastKey = "hltv", "settings.logos_hltv"
+	}
+	h.logAdminAction(ctx, settings.ChatID, &cb.From, "logo_source", state)
+	if err := h.toast(ctx, cb.ID, "✅ "+h.Texts.Get(toastKey, settings.Locale)); err != nil {
+		return false, err
+	}
+	return true, h.settingsView(ctx, target, settings, cb.Message.Chat.Type == "private")
 }
 
 // routeSettingsStreamAnnounce switches the broadcast link a closing poll

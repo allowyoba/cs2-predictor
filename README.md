@@ -394,3 +394,11 @@ readable from inside a chat instead of curling an endpoint.
 All of this — the exact GitHub secrets/variables needed, least-privilege sudo, image signing details, what's actually
 in a backup and how to restore one, the full Ansible role breakdown — is written up in much more depth in
 [ansible/README.md](ansible/README.md). This section is the tour; that one's the reference manual.
+
+### Mini App API
+
+`GET /api/miniapp/v1/teams?game=<cs2|dota2>&logos=<provider|hltv>` returns the
+game's teams with their crests, collected by the match sync (PandaScore, every
+game) and the weekly ranking fetch (HLTV, Counter-Strike). It carries no
+personal data, which is why it is cacheable and needs no initData handshake —
+see `docs/miniapp/TEAM_LOGOS.md`.

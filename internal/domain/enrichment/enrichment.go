@@ -74,6 +74,11 @@ func RankedGames(source Source) []competition.GameCode {
 type TeamIdentity struct {
 	Name   string
 	Roster []string
+	// LogoURL is the crest the ranking feed published alongside the name.
+	// HLTV's ranking carries one for every Counter-Strike team it lists,
+	// which makes it the best CS2 source there is: the same feed that
+	// decides the ranking also decides what the team looks like.
+	LogoURL string
 }
 
 // RankedTeam is one row of a provider's ranking feed, still in the

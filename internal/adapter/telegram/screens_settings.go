@@ -44,6 +44,7 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		{button(streamLanguageLabel, "settings:stream_language")},
 		{button(streamAnnounceLabel, "settings:stream_announce")},
 		{button(h.quietHoursLabel(settings), "settings:quiet")},
+		{button(h.logoSourceLabel(settings), "settings:logos")},
 		{button(topTierLabel, "settings:top_tier")},
 		{button(autoSubscribeLabel, "settings:auto_subscribe")},
 		{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
@@ -120,6 +121,16 @@ func (h *UpdateHandler) autoSubscribeView(ctx context.Context, target replyTarge
 	return h.respond(ctx, target, managedScreenContext(target, settings, text), &InlineKeyboard{InlineKeyboard: rows})
 }
 
+// logoSourceLabel is the settings-menu row for which crests Counter-Strike
+// teams are shown with.
+func (h *UpdateHandler) logoSourceLabel(settings chat.Settings) string {
+	state := h.Texts.Get("settings.logos_provider", settings.Locale)
+	if settings.PreferHLTVLogos {
+		state = h.Texts.Get("settings.logos_hltv", settings.Locale)
+	}
+	return h.Texts.Get("settings.logos_label", settings.Locale, state)
+}
+
 // gamesView lists every supported game as a toggle — a chat starts with
 // none enabled (see chat_enabled_game's migration), so this is also the
 // only place a chat ever turns one on for the first time.
@@ -162,7 +173,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // adding its kind here fails that test.
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
-	"top_tier", "auto_subscribe", "stream_language", "stream_announce", "quiet_hours", "games", "event_topic", "moderator_added", "moderator_removed",
+	"top_tier", "auto_subscribe", "stream_language", "stream_announce", "quiet_hours", "logo_source", "games", "event_topic", "moderator_added", "moderator_removed",
 	"moderator_permissions_changed", "invitation_created", "invitation_revoked", "invitation_accepted",
 }
 

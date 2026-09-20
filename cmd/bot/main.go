@@ -360,7 +360,7 @@ func run() error {
 
 	mux := httpapi.NewRouter(httpapi.RouterDeps{
 		Webhook: webhookHandler, Gateway: gateway, Registry: registry, Pool: pool,
-		Metrics: metrics, Log: log, WebhookRateLimit: cfg.WebhookRateLimit,
+		Metrics: metrics, Log: log, WebhookRateLimit: cfg.WebhookRateLimit, Teams: catalog,
 		Version: version, Commit: commit, BuildTime: buildTime,
 		EnrichmentState: enrichmentRepo, EnrichmentSources: enrichmentSources,
 	})

@@ -65,6 +65,22 @@ type TeamLister interface {
 	ListTeams(ctx context.Context, games ...competition.GameCode) ([]competition.Team, error)
 }
 
+// TeamLogoWriter stores the crest a ranking feed published for a team.
+//
+// Separate from the catalog's own team writes because it is a different
+// decision: the catalog records who is playing, this records what the best
+// available source says they look like. For Counter-Strike that source is
+// HLTV's ranking — the same feed that decides the ranking decides the
+// crest — while every other game falls back to whatever PandaScore
+// published when the team was first seen.
+type TeamLogoWriter interface {
+	// SetRankingLogo stores the crest in the column belonging to that
+	// source, leaving the match provider's own alone. A no-op when the
+	// stored value already matches, so a weekly refresh does not rewrite
+	// every row it touches.
+	SetRankingLogo(ctx context.Context, teamID common.TeamID, source Source, logoURL string) error
+}
+
 // RankingRepository persists/reads cached TeamRanking rows.
 type RankingRepository interface {
 	SaveRanking(ctx context.Context, ranking TeamRanking) error

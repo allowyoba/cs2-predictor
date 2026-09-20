@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru" data-game="cs2">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#07090E" />
+  <title>Predictor — Multi‑Game Analyst</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+</head>
+<body>
+  <div class="app-shell" id="app">
+    <header class="app-header">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><span>P</span></div>
+        <div class="brand-copy"><strong>Predictor</strong><small>ANALYST HUB</small></div>
+      </div>
+      <div class="header-actions">
+        <button class="icon-button" aria-label="Уведомления"><span class="notification-dot"></span><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
+        <button class="profile-pill" data-go="profile" aria-label="Открыть профиль"><span>A</span></button>
+      </div>
+    </header>
+
+    <div class="game-rail-wrap" aria-label="Выбор дисциплины">
+      <div class="game-rail" id="gameRail">
+        <button class="game-chip active" data-game="cs2" aria-pressed="true"><i class="game-dot"></i><span>CS2</span><small>75%</small></button>
+        <button class="game-chip" data-game="dota2" aria-pressed="false"><i class="game-dot"></i><span>Dota 2</span><small>68%</small></button>
+        <button class="game-chip" data-game="valorant" aria-pressed="false"><i class="game-dot"></i><span>Valorant</span><small>72%</small></button>
+        <button class="game-chip" data-game="lol" aria-pressed="false"><i class="game-dot"></i><span>LoL</span><small>64%</small></button>
+      </div>
+    </div>
+
+    <main>
+      <section class="screen is-active" data-screen="dashboard" aria-labelledby="dashboard-title">
+        <div class="section-heading hero-heading">
+          <div><div class="eyebrow" id="gameEyebrow">CS2 · ПОСЛЕДНИЕ 30 ДНЕЙ</div><h1 id="dashboard-title">Форма аналитика</h1></div>
+          <button class="period-chip" type="button">30 дней <span>⌄</span></button>
+        </div>
+
+        <article class="performance-card">
+          <div class="performance-top">
+            <div class="metric-block">
+              <span class="metric-label">Точность</span>
+              <div class="metric-value"><span id="accuracyValue">75</span><small>%</small></div>
+              <p id="accuracySub">63 верных из 84 прогнозов</p>
+            </div>
+            <div class="rank-orbit" aria-label="Форма за период">
+              <div class="rank-orbit-inner"><small>FORM</small><strong id="formScore">82</strong></div>
+            </div>
+          </div>
+          <div class="delta-row">
+            <span class="delta positive" id="trendValue">↗ +8 п.п.</span>
+            <span class="muted">к предыдущему периоду</span>
+          </div>
+          <div class="spark-bars" aria-hidden="true"><i style="height:34%"></i><i style="height:48%"></i><i style="height:42%"></i><i style="height:63%"></i><i style="height:58%"></i><i style="height:78%"></i><i style="height:72%"></i><i style="height:90%"></i><i style="height:82%"></i><i style="height:100%"></i></div>
+        </article>
+
+        <div class="quick-metrics" aria-label="Ключевые показатели">
+          <article><span>Серия</span><strong id="streakValue">4</strong><small>верных подряд</small></article>
+          <article><span>Выборка</span><strong id="sampleValue">84</strong><small>за 30 дней</small></article>
+          <article><span>Лучший сегмент</span><strong id="bestSegment">BO3</strong><small id="bestSegmentSub">78% · n=86</small></article>
+        </div>
+
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">MULTI‑GAME</div><h2>Портфель дисциплин</h2></div><button class="text-action" data-go="analytics">Сравнить</button></div>
+          <div class="portfolio-grid">
+            <article class="portfolio-card is-cs2"><div class="portfolio-head"><span class="game-symbol">C2</span><span class="delta positive">+8 п.п.</span></div><strong>75%</strong><p>CS2 · 84 прогноза</p><div class="meter"><i style="width:75%"></i></div></article>
+            <article class="portfolio-card is-dota"><div class="portfolio-head"><span class="game-symbol">D2</span><span class="delta">+2 п.п.</span></div><strong>68%</strong><p>Dota 2 · 51 прогноз</p><div class="meter"><i style="width:68%"></i></div></article>
+            <article class="portfolio-card is-val"><div class="portfolio-head"><span class="game-symbol">V</span><span class="delta positive">+5 п.п.</span></div><strong>72%</strong><p>Valorant · 39 прогнозов</p><div class="meter"><i style="width:72%"></i></div></article>
+            <article class="portfolio-card is-lol"><div class="portfolio-head"><span class="game-symbol">L</span><span class="delta negative">−3 п.п.</span></div><strong>64%</strong><p>LoL · 28 прогнозов</p><div class="meter"><i style="width:64%"></i></div></article>
+          </div>
+        </section>
+
+        <article class="coach-card">
+          <div class="coach-icon">AI</div>
+          <div class="coach-copy"><div class="eyebrow">COACH · ДОСТАТОЧНАЯ ВЫБОРКА</div><h2 id="coachTitle">BO1 остаётся вашей слабой зоной</h2><p id="coachText">52% на 21 прогнозе — на 19 п.п. ниже вашей общей точности в CS2.</p><button class="text-action" data-go="analytics">Разобрать паттерн <span>→</span></button></div>
+        </article>
+
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ПОСЛЕДНИЕ</div><h2>Прогнозы</h2></div><button class="text-action" data-go="history">Вся история</button></div>
+          <div class="match-list" id="recentMatches"></div>
+        </section>
+      </section>
+
+      <section class="screen" data-screen="analytics" aria-labelledby="analytics-title">
+        <div class="section-heading"><div><div class="eyebrow">АНАЛИТИКА · <span id="analyticsGameLabel">CS2</span></div><h1 id="analytics-title">Паттерны и сегменты</h1></div><button class="period-chip">90 дней <span>⌄</span></button></div>
+
+        <div class="analytics-overview">
+          <article><span>Точность</span><strong id="analyticsAccuracy">71%</strong><small>n=186</small></article>
+          <article><span>Δ к 90д</span><strong class="positive-text">+5 п.п.</strong><small>устойчивый рост</small></article>
+          <article><span>Уверенность</span><strong>High</strong><small>по 4 сегментам</small></article>
+        </div>
+
+        <section class="glass-card analytics-card">
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ФОРМАТ</div><h2>Где результат стабильнее</h2></div><span class="sample-chip">min n=5</span></div>
+          <div class="segment-list">
+            <div class="segment-row"><div class="segment-copy"><strong>BO3</strong><small>67 / 86</small></div><div class="segment-meter"><i style="width:78%"></i></div><b>78%</b></div>
+            <div class="segment-row"><div class="segment-copy"><strong>BO5</strong><small>11 / 15</small></div><div class="segment-meter"><i style="width:73%"></i></div><b>73%</b></div>
+            <div class="segment-row is-warning"><div class="segment-copy"><strong>BO1</strong><small>11 / 21</small></div><div class="segment-meter"><i style="width:52%"></i></div><b>52%</b></div>
+          </div>
+          <div class="context-note">Сегменты меняются по дисциплине: для Dota 2 — серии и патчи, Valorant — карты/форматы, LoL — Bo1/Bo3/стадия.</div>
+        </section>
+
+        <section class="glass-card analytics-card">
+          <div class="section-title-row compact-row"><div><div class="eyebrow">КОМАНДЫ · CS2</div><h2>Кого вы читаете лучше</h2></div><span class="source-pill">HLTV</span></div>
+          <div class="team-table">
+            <div class="team-row"><span class="rank-num">01</span><span class="team-logo"><img src="https://img-cdn.hltv.org/teamlogo/syrtYYKR7sBRw3ZHy1YFX7.png?ixlib=java-2.1.0&s=40e66714687bec05ea422255b1c0099e&w=50" alt="Team Spirit" loading="lazy"><b>TS</b></span><div class="team-copy"><strong>Spirit</strong><small>29 / 34</small></div><em>85%</em></div>
+            <div class="team-row"><span class="rank-num">02</span><span class="team-logo"><img src="https://img-cdn.hltv.org/teamlogo/9iMirAi7ArBLNU8p3kqUTZ.svg?ixlib=java-2.1.0&s=4dd8635be16122656093ae9884675d0c" alt="NAVI" loading="lazy"><b>NV</b></span><div class="team-copy"><strong>NAVI</strong><small>22 / 28</small></div><em>79%</em></div>
+            <div class="team-row"><span class="rank-num">03</span><span class="team-logo"><img src="https://img-cdn.hltv.org/teamlogo/IejtXpquZnE8KqYPB1LNKw.svg?ixlib=java-2.1.0&s=7fd33b8def053fbfd8fdbb58e3bdcd3c" alt="MOUZ" loading="lazy"><b>MZ</b></span><div class="team-copy"><strong>MOUZ</strong><small>16 / 22</small></div><em>73%</em></div>
+            <div class="team-row low"><span class="rank-num">04</span><span class="team-logo"><img src="https://img-cdn.hltv.org/teamlogo/zFLwAELOD15BjJSDMMNBWQ.png?ixlib=java-2.1.0&s=affb583e6716d8ee904826992255cc4b&w=50" alt="G2" loading="lazy"><b>G2</b></span><div class="team-copy"><strong>G2</strong><small>9 / 18</small></div><em>50%</em></div>
+          </div>
+          <p class="legal-note">Логотипы используются только для идентификации команд в CS2. При недоступности CDN показывается текстовый fallback.</p>
+        </section>
+
+        <section class="glass-card analytics-card">
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ОШИБКИ</div><h2>Что стоит перепроверять</h2></div></div>
+          <div class="risk-grid"><article><span>01</span><strong>Равные матчи</strong><p>58% ошибок · n=24</p></article><article><span>02</span><strong>BO1</strong><p>48% ошибок · n=21</p></article><article><span>03</span><strong>После паузы</strong><p>43% ошибок · n=14</p></article></div>
+        </section>
+      </section>
+
+      <section class="screen" data-screen="history" aria-labelledby="history-title">
+        <div class="section-heading"><div><div class="eyebrow">ВСЕ ДИСЦИПЛИНЫ</div><h1 id="history-title">История</h1></div><button class="filter-button" id="filterButton"><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg><span>Фильтры</span><b>2</b></button></div>
+        <div class="filter-rail"><button class="chip selected">Все</button><button class="chip">CS2</button><button class="chip">Dota 2</button><button class="chip">Valorant</button><button class="chip">LoL</button></div>
+        <div class="history-feed">
+          <div class="date-label">СЕГОДНЯ · 20 СЕН</div>
+          <article class="history-card correct"><div class="history-status"><span class="game-mini is-cs2">C2</span><span class="result-badge success">✓ Верно</span><small>+1</small></div><div class="matchup"><div class="team-side"><span class="team-logo large"><img src="https://img-cdn.hltv.org/teamlogo/9iMirAi7ArBLNU8p3kqUTZ.svg?ixlib=java-2.1.0&s=4dd8635be16122656093ae9884675d0c" alt="NAVI"><b>NV</b></span><strong>NAVI</strong></div><div class="versus"><small>BO3</small><b>2:0</b><span>прогноз 2:1</span></div><div class="team-side right"><span class="team-logo large"><img src="https://img-cdn.hltv.org/teamlogo/syrtYYKR7sBRw3ZHy1YFX7.png?ixlib=java-2.1.0&s=40e66714687bec05ea422255b1c0099e&w=50" alt="Spirit"><b>TS</b></span><strong>Spirit</strong></div></div><div class="history-foot"><span>ESL Pro League</span><span>CS2 · Playoff</span></div></article>
+          <article class="history-card wrong"><div class="history-status"><span class="game-mini is-val">V</span><span class="result-badge danger">× Ошибка</span><small>0</small></div><div class="matchup"><div class="team-side"><span class="team-monogram">FN</span><strong>Fnatic</strong></div><div class="versus"><small>BO3</small><b>1:2</b><span>прогноз 2:1</span></div><div class="team-side right"><span class="team-monogram">SEN</span><strong>Sentinels</strong></div></div><div class="history-foot"><span>VCT Masters</span><span>Valorant · Swiss</span></div></article>
+          <div class="date-label">19 СЕН</div>
+          <article class="history-card correct"><div class="history-status"><span class="game-mini is-dota">D2</span><span class="result-badge success">✓ Верно</span><small>+1</small></div><div class="matchup"><div class="team-side"><span class="team-monogram">TS</span><strong>Spirit</strong></div><div class="versus"><small>BO3</small><b>2:1</b><span>прогноз 2:1</span></div><div class="team-side right"><span class="team-monogram">TUN</span><strong>Tundra</strong></div></div><div class="history-foot"><span>The International</span><span>Dota 2 · Upper bracket</span></div></article>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="achievements" aria-labelledby="achievements-title">
+        <div class="section-heading"><div><div class="eyebrow">ПРОГРЕСС · MULTI‑GAME</div><h1 id="achievements-title">Достижения</h1></div><div class="level-chip"><span>12</span><small>LEVEL</small></div></div>
+        <div class="achievement-summary"><article><strong>8</strong><span>получено</span></article><article><strong>4</strong><span>в прогрессе</span></article><article><strong>3</strong><span>дисциплины</span></article></div>
+        <section class="achievement-group"><div class="category-title"><span class="category-icon">✦</span><div><h2>Универсальные</h2><p>Считаются по всем дисциплинам</p></div></div><article class="achievement-card earned"><div class="achievement-medal">100</div><div><div class="achievement-head"><strong>Centurion</strong><span>Получено</span></div><p>100 верных прогнозов в любых дисциплинах</p><div class="progress"><i style="width:100%"></i></div><small>213 / 100</small></div></article><article class="achievement-card"><div class="achievement-medal">3G</div><div><div class="achievement-head"><strong>Multi‑Game Analyst</strong><span>Gold</span></div><p>≥65% точности в трёх дисциплинах при n≥25</p><div class="progress"><i style="width:78%"></i></div><small>2 / 3 дисциплин готовы</small></div></article></section>
+        <section class="achievement-group"><div class="category-title"><span class="category-icon is-cs2">C2</span><div><h2>CS2</h2><p>Достижения внутри дисциплины</p></div></div><article class="achievement-card earned"><div class="achievement-medal">🔥</div><div><div class="achievement-head"><strong>Hot Hand</strong><span>Получено</span></div><p>5 верных прогнозов CS2 подряд</p><div class="progress"><i style="width:100%"></i></div><small>11 / 5 · 14 сентября</small></div></article><article class="achievement-card"><div class="achievement-medal">90</div><div><div class="achievement-head"><strong>Sniper</strong><span>Silver</span></div><p>90% на серии из 50 CS2 прогнозов</p><div class="progress"><i style="width:74%"></i></div><small>37 / 50 · текущая точность 82%</small></div></article></section>
+      </section>
+
+      <section class="screen" data-screen="profile" aria-labelledby="profile-title">
+        <div class="profile-hero"><div class="profile-avatar">A</div><div><div class="eyebrow">ANALYST PROFILE</div><h1 id="profile-title">Alex</h1><p>Прогнозист с марта 2025</p></div><button class="icon-button small" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.07A1.7 1.7 0 0 0 9 19.37a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15 1.7 1.7 0 0 0 3.07 14H3v-4h.07A1.7 1.7 0 0 0 4.63 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63 1.7 1.7 0 0 0 10 3.07V3h4v.07A1.7 1.7 0 0 0 15 4.63a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9 1.7 1.7 0 0 0 20.93 10H21v4h-.07A1.7 1.7 0 0 0 19.4 15Z"/></svg></button></div>
+        <div class="profile-kpis"><article><small>ВСЕГО</small><strong>744</strong><span>прогноза</span></article><article><small>ТОЧНОСТЬ</small><strong>71%</strong><span>all‑time</span></article><article><small>ИГРЫ</small><strong>4</strong><span>дисциплины</span></article></div>
+        <section class="section-block"><div class="section-title-row"><div><div class="eyebrow">ДИСЦИПЛИНЫ</div><h2>Ваш профиль по играм</h2></div></div><div class="discipline-list"><article><span class="game-symbol is-cs2">C2</span><div><strong>CS2</strong><small>542 прогноза</small></div><b>74%</b><em class="positive-text">+8</em></article><article><span class="game-symbol is-dota">D2</span><div><strong>Dota 2</strong><small>92 прогноза</small></div><b>68%</b><em class="positive-text">+2</em></article><article><span class="game-symbol is-val">V</span><div><strong>Valorant</strong><small>71 прогноз</small></div><b>72%</b><em class="positive-text">+5</em></article><article><span class="game-symbol is-lol">L</span><div><strong>League of Legends</strong><small>39 прогнозов</small></div><b>64%</b><em class="negative-text">−3</em></article></div></section>
+        <section class="section-block"><div class="eyebrow">СТИЛЬ</div><article class="style-card"><div class="style-orb">T</div><div><h2>Тактик</h2><p>Сильнее в длинных сериях и матчах с выраженной структурой. Ярлык объясняется измеримыми сегментами, не влияет на рейтинг.</p><div class="style-tags"><span>BO3</span><span>Playoff</span><span>S‑tier</span></div></div></article></section>
+        <section class="settings-list"><button><span>Методология статистики</span><b>›</b></button><button><span>Источники данных</span><b>›</b></button><button><span>Конфиденциальность</span><b>›</b></button><button><span>О приложении</span><b>›</b></button></section>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Основная навигация">
+      <button data-target="dashboard" class="active" aria-current="page"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H5v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Обзор</span></button>
+      <button data-target="analytics"><svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></svg><span>Аналитика</span></button>
+      <button data-target="history"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h11"/></svg><span>История</span></button>
+      <button data-target="achievements"><svg viewBox="0 0 24 24"><path d="M8 3h8v6a4 4 0 0 1-8 0V3Z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4M12 13v5M8 21h8"/></svg><span>Награды</span></button>
+      <button data-target="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.3-4 4-6 8-6s6.7 2 8 6"/></svg><span>Профиль</span></button>
+    </nav>
+  </div>
+
+  <div class="sheet-backdrop" id="sheetBackdrop" hidden>
+    <section class="bottom-sheet" role="dialog" aria-modal="true" aria-label="Фильтры истории">
+      <div class="sheet-grabber"></div><div class="sheet-head"><div><div class="eyebrow">ИСТОРИЯ</div><h2>Фильтры</h2></div><button class="icon-button small" id="closeSheet" aria-label="Закрыть">×</button></div>
+      <label>Дисциплина<select><option>Все игры</option><option>CS2</option><option>Dota 2</option><option>Valorant</option><option>League of Legends</option></select></label>
+      <label>Результат<select><option>Любой</option><option>Верно</option><option>Ошибка</option></select></label>
+      <label>Период<select><option>90 дней</option><option>30 дней</option><option>7 дней</option><option>Всё время</option></select></label>
+      <button class="primary-button" id="applyFilters">Показать результаты</button>
+    </section>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
