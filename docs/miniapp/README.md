@@ -7,7 +7,7 @@
 - `TECH_SPEC_v2.md` — продуктово-техническая спецификация с multi-game расширением и ограничениями текущего backend.
 - `DESIGN_SYSTEM.md` — обновлённая дизайн-система, игровые accent themes, адаптивность и правила data UI.
 - `FIGMA_HANDOFF.md` — структура Figma, variables/components/Auto Layout и правила handoff.
-- `../../miniapp-prototype/` — интерактивный HTML/CSS/JS прототип пяти основных вкладок.
+- `../../internal/miniapp/static/` — интерактивный HTML/CSS/JS прототип пяти основных вкладок; вшивается в бинарь и отдаётся ботом по `/app/`.
 - `../../figma/predictor-multigame-board.png` — обзор пяти мобильных экранов 390×844.
 - `../../figma/v2/screens/` — длинные render-проверки экранов.
 - `../../figma/v2/viewport-final/` — viewport-превью 390×844.
@@ -15,12 +15,15 @@
 
 ## Запуск прототипа
 
+Локально — статикой:
+
 ```bash
-cd miniapp-prototype
+cd internal/miniapp/static
 python -m http.server 8765
 ```
 
-Открыть `http://localhost:8765`. Логотипы подтягиваются с того же origin;
+Открыть `http://localhost:8765`. В проде страницу отдаёт сам бот по
+`https://<домен>/app/` — файлы вшиты в бинарь, отдельного деплоя статики нет. Логотипы подтягиваются с того же origin;
 чтобы открыть прототип локально против развёрнутого бота, добавьте
 `?api=https://<домен>` (и `&logos=hltv`, чтобы посмотреть вариант с HLTV). Telegram WebApp bridge подключается штатно; в обычном браузере platform calls имеют safe fallback.
 

@@ -94,9 +94,6 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # The Mini App's static files, installed next to the compose file by
-      # the deploy. Read-only: Caddy serves them and never writes here.
-      - ../miniapp:/srv/miniapp:ro
       # Certificates live here. Removing this volume means re-requesting
       # them from Let's Encrypt, which is rate limited.
       - caddy-data:/data
