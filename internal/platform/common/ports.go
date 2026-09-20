@@ -50,6 +50,29 @@ type Outbox interface {
 	Pending(ctx context.Context, limit int) ([]OutboxMessage, error)
 	Published(ctx context.Context, id uuid.UUID, occurredAt time.Time) error
 	Failed(ctx context.Context, id uuid.UUID, occurredAt time.Time, errText string) error
+	// Defer holds a message until the given time without spending one of
+	// its delivery attempts. It exists for the case where the message is
+	// perfectly fine and the moment is not — a chat's quiet hours — which
+	// must not look like a failure, or a long enough night would exhaust
+	// the retry budget and lose the message outright.
+	Defer(ctx context.Context, id uuid.UUID, occurredAt time.Time, until time.Time) error
+}
+
+// DeferredError is what a publisher returns to say "not now, try at this
+// time". The dispatcher reschedules the message instead of counting a
+// failed attempt.
+type DeferredError struct {
+	Until  time.Time
+	Reason string
+}
+
+func (e *DeferredError) Error() string {
+	return "delivery deferred until " + e.Until.Format(time.RFC3339) + ": " + e.Reason
+}
+
+// Deferred builds the error above, for the publishers that hold messages.
+func Deferred(until time.Time, reason string) error {
+	return &DeferredError{Until: until, Reason: reason}
 }
 
 // WebhookInfo is Telegram's own account of how delivery to this bot is

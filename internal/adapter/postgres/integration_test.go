@@ -3391,3 +3391,51 @@ func TestEnrichmentRepository_ListTeamsFiltersByGame(t *testing.T) {
 		t.Fatalf("an unscoped listing still returns every team, got %d vs %d", len(all), len(cs2Teams))
 	}
 }
+
+// Holding a message and failing to deliver it are different things in the
+// schema too: Defer moves the next attempt without spending one.
+func TestOutbox_DeferHoldsWithoutSpendingAnAttempt(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	outbox := pg.NewOutbox(pool)
+
+	id, err := outbox.Enqueue(ctx, "TELEGRAM_CHAT", "-1:big-event", "telegram.big-event-discovered", `{"chatId":-1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := outbox.Pending(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var occurredAt time.Time
+	for _, m := range pending {
+		if m.ID == id {
+			occurredAt = m.OccurredAt
+		}
+	}
+	if occurredAt.IsZero() {
+		t.Fatal("expected the message to be pending")
+	}
+
+	if err := outbox.Defer(ctx, id, occurredAt, time.Now().Add(6*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := outbox.Pending(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range after {
+		if m.ID == id {
+			t.Fatal("a held message must not be selected for delivery before its time")
+		}
+	}
+	// And it is still unspent: a nine-hour night must not cost nine
+	// attempts, or the retry budget would run out before morning.
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT attempts FROM outbox_event WHERE id = $1`, id).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 0 {
+		t.Fatalf("attempts = %d, want the hold to have cost none", attempts)
+	}
+}

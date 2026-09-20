@@ -214,6 +214,10 @@ var callbackRoutes = []callbackRoute{
 	{match: exact("settings:top_tier"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsTopTier},
 	{match: exact("settings:auto_subscribe"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribe},
 	{match: prefixed("settings:auto_subscribe:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsAutoSubscribeGame},
+	{match: exact("settings:quiet"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).quietHoursView)},
+	{match: prefixed("settings:quiet:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.setQuietHours(ctx, cb, target, settings, strings.TrimPrefix(data, "settings:quiet:"))
+	}},
 	{match: exact("settings:stream_announce"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamAnnounce},
 	{match: exact("settings:stream_language"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsStreamLanguage},
 	{match: exact("settings:games"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: simple((*UpdateHandler).gamesView)},
