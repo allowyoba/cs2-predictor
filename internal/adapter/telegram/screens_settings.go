@@ -43,6 +43,7 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 		{button(timezoneLabel, "settings:timezone")},
 		{button(streamLanguageLabel, "settings:stream_language")},
 		{button(streamAnnounceLabel, "settings:stream_announce")},
+		{button(h.quietHoursLabel(settings), "settings:quiet")},
 		{button(topTierLabel, "settings:top_tier")},
 		{button(autoSubscribeLabel, "settings:auto_subscribe")},
 		{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
@@ -161,7 +162,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // adding its kind here fails that test.
 var adminActionKinds = []string{
 	"subscribe", "unsubscribe", "locale", "timezone",
-	"top_tier", "auto_subscribe", "stream_language", "stream_announce", "games", "event_topic", "moderator_added", "moderator_removed",
+	"top_tier", "auto_subscribe", "stream_language", "stream_announce", "quiet_hours", "games", "event_topic", "moderator_added", "moderator_removed",
 	"moderator_permissions_changed", "invitation_created", "invitation_revoked", "invitation_accepted",
 }
 
