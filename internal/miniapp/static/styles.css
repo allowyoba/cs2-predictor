@@ -124,3 +124,17 @@ main{padding:0 16px calc(84px + var(--safe-bottom))}.screen{display:none;animati
 .medal-row { display: flex; gap: 8px; flex-shrink: 0; }
 .medal { font-size: 13px; }
 .medal.muted { color: var(--text-secondary, #b9c0cc); font-size: 12px; }
+
+.settings-group{display:grid;gap:8px}
+.settings-card{padding:13px;border:1px solid var(--border);border-radius:17px;background:var(--surface);display:grid;gap:6px}
+.settings-card h3{font-size:12px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.setting-row{width:100%;min-height:46px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2);color:var(--text);text-align:left;cursor:pointer}
+.setting-row.is-static{cursor:default;background:transparent}
+.setting-row strong{display:block;font-size:11px;font-weight:700}
+.setting-row small{display:block;font-size:9px;color:var(--text-3);margin-top:3px}
+.setting-value{flex:0 0 auto;font-size:10px;font-weight:700;color:var(--accent);white-space:nowrap}
+.setting-row.is-static .setting-value{color:var(--text-3)}
+.setting-switch{flex:0 0 auto;width:36px;height:20px;border-radius:999px;background:rgba(255,255,255,.12);position:relative;transition:background .15s}
+.setting-switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--text-2);transition:transform .15s,background .15s}
+.setting-toggle.is-on .setting-switch{background:rgba(var(--accent-rgb),.5)}
+.setting-toggle.is-on .setting-switch::after{transform:translateX(16px);background:var(--accent)}
