@@ -138,3 +138,39 @@ func TestMiniappHistory_RequiresASignedLaunchAndAccess(t *testing.T) {
 		t.Fatal("no history is read for somebody who may not see it")
 	}
 }
+
+// Somebody in two groups following the same tournament predicts the same
+// match twice. Two identical rows in a feed read as a bug, so they collapse
+// into one that says how many chats it was.
+func TestMiniappHistory_MergesTheSamePredictionMadeInSeveralChats(t *testing.T) {
+	now := time.Now()
+	same := historyBet(competition.GameCS2, "IEM Katowice", true, now)
+	inAnotherChat := same
+	inAnotherChat.ChatTitle = "Второй чат"
+	other := historyBet(competition.GameCS2, "IEM Katowice", true, now.Add(-time.Hour))
+
+	history := &stubHistory{bets: []scoring.UserBet{same, inAnotherChat, other}}
+	handler := historyHandler(miniAppTestDeps(&stubAccess{}, &stubMiniAppStats{}, 7), history)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, miniAppRequest(t, "/api/miniapp/v1/me/history",
+		signInitData(t, `{"id":7,"first_name":"Root"}`, now)))
+
+	var body historyDTO
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Count != 2 {
+		t.Fatalf("count = %d, want the duplicate merged away", body.Count)
+	}
+	if body.Entries[0].Chats != 2 {
+		t.Fatalf("chats = %d, want the merged row to say it was two", body.Entries[0].Chats)
+	}
+	// The points from both chats belong to the person either way.
+	if body.Entries[0].Points != same.Points+inAnotherChat.Points {
+		t.Fatalf("points = %d, want them summed", body.Entries[0].Points)
+	}
+	if body.Entries[1].Chats != 1 {
+		t.Fatalf("a single prediction stays a single one, got %d", body.Entries[1].Chats)
+	}
+}

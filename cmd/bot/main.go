@@ -371,8 +371,9 @@ func run() error {
 		Webhook: webhookHandler, Gateway: gateway, Registry: registry, Pool: pool,
 		Metrics: metrics, Log: log, WebhookRateLimit: cfg.WebhookRateLimit, Teams: catalog,
 		MiniAppHistory: scoringRepo,
+		MiniAppActive:  scoringRepo,
 		MiniApp: httpapi.MiniAppDeps{
-			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats,
+			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats,
 			Operators: cfg.TeamMatchOperatorChatIDs, Clock: clock, Log: log,
 		},
 		Version: version, Commit: commit, BuildTime: buildTime,

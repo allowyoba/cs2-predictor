@@ -37,6 +37,11 @@ type historyEntryDTO struct {
 	Actual    string    `json:"actual"`
 	Correct   bool      `json:"correct"`
 	Points    int       `json:"points"`
+	// Chats is how many chats this same prediction was made in. Somebody
+	// in two groups following the same tournament predicts the same match
+	// twice, and two identical rows in a feed read as a bug — so they
+	// collapse into one row that says so.
+	Chats int `json:"chats"`
 }
 
 type historyDTO struct {
@@ -108,18 +113,35 @@ func parseHistoryFilter(r *http.Request) (historyFilter, error) {
 // needs for a screen somebody scrolls twice.
 func buildHistory(bets []scoring.UserBet, filter historyFilter) historyDTO {
 	body := historyDTO{Entries: make([]historyEntryDTO, 0, min(filter.limit, len(bets)))}
+	// The same match predicted in two chats is one prediction as far as
+	// this feed is concerned: identical teams, identical call, identical
+	// result. Merged, with the points added up and the count kept, rather
+	// than shown twice as if the person had predicted twice.
+	seen := map[string]int{}
 	for _, bet := range bets {
 		if !filter.matches(bet) {
+			continue
+		}
+		// The same match, the same call, the same result: everything that
+		// would make two rows indistinguishable on screen. Anything that
+		// differs — a different call, a different outcome — is a different
+		// row and stays one.
+		key := bet.PlayedAt.UTC().Format(time.RFC3339) + "|" + bet.FirstTeamName + "|" + bet.SecondTeamName +
+			"|" + bet.PredictedScore.String() + "|" + bet.ActualScore.String()
+		if at, ok := seen[key]; ok {
+			body.Entries[at].Chats++
+			body.Entries[at].Points += bet.Points
 			continue
 		}
 		if len(body.Entries) == filter.limit {
 			break
 		}
+		seen[key] = len(body.Entries)
 		body.Entries = append(body.Entries, historyEntryDTO{
 			PlayedAt: bet.PlayedAt, Game: string(bet.Game), Event: bet.EventName, Chat: bet.ChatTitle,
 			First: bet.FirstTeamName, Second: bet.SecondTeamName,
 			Predicted: bet.PredictedScore.String(), Actual: bet.ActualScore.String(),
-			Correct: bet.Correct, Points: bet.Points,
+			Correct: bet.Correct, Points: bet.Points, Chats: 1,
 		})
 	}
 	body.Count = len(body.Entries)
