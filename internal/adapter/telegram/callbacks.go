@@ -285,6 +285,14 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.userTimezoneView(ctx, target, userID, locale)
 	case strings.HasPrefix(data, "pstats:tz:"):
 		err = h.setUserTimezone(ctx, cb, target, userID, locale, strings.TrimPrefix(data, "pstats:tz:"))
+	case data == "miniapp:request":
+		err = h.requestMiniAppAccess(ctx, cb, target, userID, locale)
+	case data == "miniapp:pending":
+		err = h.toast(ctx, cb.ID, h.Texts.Get("miniapp.pending", locale))
+	case strings.HasPrefix(data, "miniapp:grant:"):
+		err = h.decideMiniAppAccess(ctx, cb, userID, locale, strings.TrimPrefix(data, "miniapp:grant:"), chat.MiniAppGranted)
+	case strings.HasPrefix(data, "miniapp:deny:"):
+		err = h.decideMiniAppAccess(ctx, cb, userID, locale, strings.TrimPrefix(data, "miniapp:deny:"), chat.MiniAppDenied)
 	case data == "idea:menu":
 		err = h.suggestionMenu(ctx, target, locale)
 	case data == "idea:write":

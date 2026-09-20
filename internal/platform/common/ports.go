@@ -293,6 +293,12 @@ const (
 	// AdminAlertDeadLetters reports messages that have run out of retries
 	// and will never be delivered without a deliberate replay.
 	AdminAlertDeadLetters AdminAlertKind = "dead_letters"
+	// AdminAlertHostPressure reports the machine running out of memory,
+	// disk or CPU — the failure that takes everything else down at once
+	// and arrives disguised as unrelated errors everywhere.
+	AdminAlertHostPressure AdminAlertKind = "host_pressure"
+	// AdminAlertHostRecovered closes that loop.
+	AdminAlertHostRecovered AdminAlertKind = "host_recovered"
 )
 
 // AdminAlertNotification is the payload for the "telegram.admin-alert"
@@ -353,6 +359,21 @@ type EventRecapNotification struct {
 	// Award is the nomination this person won, if any (see
 	// scoring.PickEventAwards) — the part of a recap people screenshot.
 	Award string `json:"award,omitempty"`
+}
+
+// MiniAppAccessNotification carries both halves of the Mini App access
+// conversation: an operator being asked, and the person being answered.
+// One payload rather than two near-identical ones, distinguished by
+// Decision — these are rare messages and the pair would drift apart.
+type MiniAppAccessNotification struct {
+	ChatID      int64  `json:"chatId"`
+	UserID      int64  `json:"userId"`
+	DisplayName string `json:"displayName,omitempty"`
+	Username    string `json:"username,omitempty"`
+	// Decision marks the message as the answer rather than the request,
+	// and Granted says which answer it was.
+	Decision bool `json:"decision,omitempty"`
+	Granted  bool `json:"granted,omitempty"`
 }
 
 // ReleaseAnnouncementStore records which releases have already been

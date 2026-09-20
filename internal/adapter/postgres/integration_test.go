@@ -3650,3 +3650,84 @@ func TestCompetitionRepository_TeamCrestsFromBothSources(t *testing.T) {
 		}
 	}
 }
+
+// Mini App access is an access grant: closed until somebody opens it,
+// recorded with who decided, and not reopened by asking twice.
+func TestChatRepository_MiniAppAccessLifecycle(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	person := common.UserID{Value: 9001}
+	operator := common.UserID{Value: 9002}
+	now := time.Now().UTC()
+
+	access, err := chats.MiniAppAccess(ctx, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access != nil {
+		t.Fatalf("nobody has access until they are given it, got %+v", access)
+	}
+
+	if err := chats.RequestMiniAppAccess(ctx, person, now); err != nil {
+		t.Fatal(err)
+	}
+	// Asking again must not reset the queue position or reopen anything.
+	if err := chats.RequestMiniAppAccess(ctx, person, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	access, err = chats.MiniAppAccess(ctx, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access == nil || access.Status != chat.MiniAppPending || !access.RequestedAt.Equal(now) {
+		t.Fatalf("access = %+v, want the first request preserved", access)
+	}
+
+	pending, err := chats.PendingMiniAppRequests(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed bool
+	for _, row := range pending {
+		if row.UserID == person {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatalf("expected the request in the pending list, got %+v", pending)
+	}
+
+	if err := chats.DecideMiniAppAccess(ctx, person, chat.MiniAppGranted, operator, now.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	access, err = chats.MiniAppAccess(ctx, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access.Status != chat.MiniAppGranted || access.DecidedBy == nil || *access.DecidedBy != operator {
+		t.Fatalf("access = %+v, want granted and signed by the operator", access)
+	}
+	// A decided request leaves the queue.
+	pending, err = chats.PendingMiniAppRequests(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range pending {
+		if row.UserID == person {
+			t.Fatal("a decided request must not stay in the pending list")
+		}
+	}
+
+	// Asking again after a decision changes nothing: the decision stands
+	// until an operator changes it.
+	if err := chats.RequestMiniAppAccess(ctx, person, now.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	access, err = chats.MiniAppAccess(ctx, person)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access.Status != chat.MiniAppGranted {
+		t.Fatalf("status = %s, want the decision to stand", access.Status)
+	}
+}
