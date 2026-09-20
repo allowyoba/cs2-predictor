@@ -869,9 +869,11 @@ func TestChatRepository_DefaultTopTierOnlyRoundTrips(t *testing.T) {
 	}
 }
 
-// The broadcast announcement is opt-in, so what has to round-trip is both
-// the default (off, for every chat that already exists) and the choice.
-func TestChatRepository_StreamAnnouncementsDefaultOffAndRoundTrip(t *testing.T) {
+// Every switch the bot has starts off — for chats and people that already
+// exist, not only for new ones. The store answers that without a row
+// having to be written first, which is what makes "off by default" a
+// property of the schema rather than of whatever seeded it.
+func TestChatRepository_EverySwitchStartsOffAndRoundTrips(t *testing.T) {
 	pool, ctx := newTestPool(t)
 	chats := pg.NewChatRepository(pool)
 	chatID := common.ChatID{Value: -995}
@@ -879,24 +881,42 @@ func TestChatRepository_StreamAnnouncementsDefaultOffAndRoundTrip(t *testing.T) 
 	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := chats.Find(ctx, chatID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.StreamAnnouncements {
-		t.Fatal("broadcast announcements must be off until a chat asks for them")
+	for _, kind := range common.ChatNotificationKinds {
+		on, err := chats.NotifyEnabled(ctx, common.ScopeChat, chatID.Value, string(kind))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if on {
+			t.Fatalf("%s is on for a chat that never asked for it", kind)
+		}
 	}
 
-	got.StreamAnnouncements = true
-	if _, err := chats.Save(ctx, *got); err != nil {
+	if err := chats.SetNotifyEnabled(ctx, common.ScopeChat, chatID.Value, string(common.ChatNotifyStreams), true); err != nil {
 		t.Fatal(err)
 	}
-	after, err := chats.Find(ctx, chatID)
+	prefs, err := chats.NotifySettings(ctx, common.ScopeChat, chatID.Value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !after.StreamAnnouncements {
+	if !prefs[string(common.ChatNotifyStreams)] {
 		t.Fatal("expected the chat's choice to survive the round trip")
+	}
+	if prefs[string(common.ChatNotifyDigests)] {
+		t.Fatal("turning one switch on turned another on as well")
+	}
+
+	// An operator chat id never has to exist anywhere else: the alert
+	// contacts come from configuration, not from a row the bot wrote.
+	if err := chats.SetNotifyEnabled(ctx, common.ScopeOperator, 424242, string(common.AdminAlertHostPressure), true); err != nil {
+		t.Fatal(err)
+	}
+	on, err := chats.NotifyEnabled(ctx, common.ScopeOperator, 424242, string(common.AdminAlertHostPressure))
+	if err != nil || !on {
+		t.Fatalf("operator switch = %v, %v; want it stored", on, err)
+	}
+	// Scopes do not leak into one another.
+	if on, _ := chats.NotifyEnabled(ctx, common.ScopeChat, 424242, string(common.AdminAlertHostPressure)); on {
+		t.Fatal("an operator switch answered for a chat with the same id")
 	}
 }
 
@@ -2402,23 +2422,18 @@ func TestChatRepository_NotificationRecipientsNeedBothOptInAndReachability(t *te
 	reachableNoOptIn := common.UserID{Value: 9003}
 	otherKindOnly := common.UserID{Value: 9004}
 
-	for _, id := range []common.UserID{optedInReachable, optedInUnreachable, reachableNoOptIn, otherKindOnly} {
-		if err := chats.SetNotificationPref(ctx, id, common.NotifyResultRecaps, false); err != nil {
-			t.Fatal(err) // creates the row
-		}
-	}
 	for _, id := range []common.UserID{optedInReachable, reachableNoOptIn, otherKindOnly} {
 		if err := chats.SetDMReachable(ctx, id, true); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, id := range []common.UserID{optedInReachable, optedInUnreachable} {
-		if err := chats.SetNotificationPref(ctx, id, common.NotifyResultRecaps, true); err != nil {
+		if err := chats.SetNotifyEnabled(ctx, common.ScopeUser, id.Value, string(common.NotifyResultRecaps), true); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Opted into the other kind only: must not receive recaps.
-	if err := chats.SetNotificationPref(ctx, otherKindOnly, common.NotifyPollReminders, true); err != nil {
+	if err := chats.SetNotifyEnabled(ctx, common.ScopeUser, otherKindOnly.Value, string(common.NotifyPollReminders), true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2431,12 +2446,12 @@ func TestChatRepository_NotificationRecipientsNeedBothOptInAndReachability(t *te
 		t.Fatalf("recipients = %v, want only the opted-in reachable user %v", got, optedInReachable)
 	}
 
-	// The two kinds are independent switches.
-	prefs, err := chats.NotificationPrefs(ctx, otherKindOnly)
+	// The kinds are independent switches.
+	prefs, err := chats.NotifySettings(ctx, common.ScopeUser, otherKindOnly.Value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prefs.ResultRecaps || !prefs.PollReminders {
+	if prefs[string(common.NotifyResultRecaps)] || !prefs[string(common.NotifyPollReminders)] {
 		t.Fatalf("prefs = %+v, want reminders on and recaps off", prefs)
 	}
 

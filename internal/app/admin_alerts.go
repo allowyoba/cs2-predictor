@@ -28,6 +28,12 @@ type AdminAlerter struct {
 	Outbox   common.Outbox
 	Releases common.ReleaseAnnouncementStore
 	ChatIDs  []int64
+	// Switches decides which of these an operator chat actually wants.
+	// Each kind is off until somebody turns it on from /alerts — an alert
+	// nobody chose is the same unread noise as any other notification, and
+	// an operator who mutes the ones they do not act on is likelier to
+	// read the ones they kept.
+	Switches common.NotifySwitchboard
 	Log      *slog.Logger
 }
 
@@ -131,8 +137,18 @@ func (a *AdminAlerter) HostRecovered(ctx context.Context, resource, value string
 // than propagated, since every caller is either a background job or a
 // startup path that must not fail over a notification.
 func (a *AdminAlerter) fanOut(ctx context.Context, aggregateType, aggregateID string, build func(chatID int64) common.AdminAlertNotification) {
+	gate := NotifyGate{Switches: a.Switches}
 	for _, chatID := range a.ChatIDs {
-		payload, err := json.Marshal(build(chatID))
+		notification := build(chatID)
+		wanted, err := gate.OperatorWants(ctx, chatID, notification.Kind)
+		if err != nil {
+			a.Log.Error("admin alert preference lookup failed", "chatId", chatID, "error", err)
+			continue
+		}
+		if !wanted {
+			continue
+		}
+		payload, err := json.Marshal(notification)
 		if err != nil {
 			a.Log.Error("admin alert marshal failed", "error", err)
 			continue

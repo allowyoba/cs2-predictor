@@ -40,7 +40,10 @@ func streamPollFor(t *testing.T, streams []competition.Stream, announced string,
 	}
 	chats := newFakeChats()
 	chatID := common.ChatID{Value: -1}
-	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true, StreamAnnouncements: announce}); err != nil {
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.SetNotifyEnabled(context.Background(), common.ScopeChat, chatID.Value, string(common.ChatNotifyStreams), announce); err != nil {
 		t.Fatal(err)
 	}
 	eventID, matchID := common.NewEventID(), common.NewMatchID()

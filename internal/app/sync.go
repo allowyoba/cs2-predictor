@@ -37,10 +37,12 @@ type CompetitionSynchronization struct {
 	// optional enrichment dependency here.
 	TeamMatch *TeamMatchService
 	Outbox    common.Outbox
-	Lock      common.ClusterLock
-	Clock     common.Clock
-	Metrics   *Metrics
-	Log       *slog.Logger
+	// Switches decides which chats asked to hear about new tournaments.
+	Switches common.NotifySwitchboard
+	Lock     common.ClusterLock
+	Clock    common.Clock
+	Metrics  *Metrics
+	Log      *slog.Logger
 	// MatchSyncColdInterval is how often the match sync sweeps every
 	// subscribed tournament rather than only the ones with something
 	// happening. Zero disables the split and fetches everything on every
@@ -432,6 +434,17 @@ func (s *CompetitionSynchronization) ensureTeamsMatched(ctx context.Context, m c
 // transactional outbox, to every active chat not already subscribed to a
 // newly discovered S/A tier tournament — so it surfaces immediately instead
 // of only being reachable through an explicit /events search.
+// chatsWantingNewEvents asks the whole fan-out's question in one query
+// rather than one per chat. It gates the announcement only: a chat that
+// auto-subscribes still joins the tournament, it just is not told it did.
+func (s *CompetitionSynchronization) chatsWantingNewEvents(ctx context.Context, chats []chat.Settings) (map[int64]bool, error) {
+	candidates := make([]int64, 0, len(chats))
+	for _, settings := range chats {
+		candidates = append(candidates, settings.ChatID.Value)
+	}
+	return NotifyGate{Switches: s.Switches}.ChatsWanting(ctx, common.ChatNotifyNewEvents, candidates)
+}
+
 func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event competition.Event) error {
 	if s.ActiveChats == nil {
 		return nil
@@ -450,6 +463,11 @@ func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event
 	alreadySubscribed := make(map[common.ChatID]bool, len(subscribed))
 	for _, chatID := range subscribed {
 		alreadySubscribed[chatID] = true
+	}
+
+	wantsNews, err := s.chatsWantingNewEvents(ctx, chats)
+	if err != nil {
+		return err
 	}
 
 	for _, settings := range chats {
@@ -471,6 +489,9 @@ func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event
 				continue
 			}
 			eventType, notifyType = "telegram.auto-subscribed", "auto-subscribed"
+		}
+		if !wantsNews[settings.ChatID.Value] {
+			continue
 		}
 		n := common.BigEventDiscoveredNotification{
 			ChatID: settings.ChatID.Value, TopicID: settings.DefaultTopicID,

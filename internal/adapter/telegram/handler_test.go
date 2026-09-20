@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +42,7 @@ type fakeChats struct {
 	dmSessions    map[int64]int64
 	locales       map[int64]common.LocaleCode
 	reachable     map[int64]bool
-	notifyPrefs   map[int64]chat.NotificationPrefs
+	notifyPrefs   map[[2]any]bool
 	nicknames     map[int64]string
 	profiles      map[int64]chat.UserProfile
 	zones         map[int64]string
@@ -56,7 +55,7 @@ func newFakeChats() *fakeChats {
 		moderatorMeta: map[[2]int64]chat.ModeratorInfo{},
 		managed:       map[[2]int64]bool{}, dmSessions: map[int64]int64{},
 		locales: map[int64]common.LocaleCode{}, reachable: map[int64]bool{},
-		notifyPrefs: map[int64]chat.NotificationPrefs{},
+		notifyPrefs: map[[2]any]bool{},
 		nicknames:   map[int64]string{},
 		profiles:    map[int64]chat.UserProfile{},
 	}
@@ -80,21 +79,38 @@ func (f *fakeChats) ManagedChats(_ context.Context, userID common.UserID) ([]cha
 	}
 	return out, nil
 }
-func (f *fakeChats) NotificationPrefs(_ context.Context, userID common.UserID) (chat.NotificationPrefs, error) {
-	return f.notifyPrefs[userID.Value], nil
+
+var _ common.NotifySwitchboard = (*fakeChats)(nil)
+
+func (f *fakeChats) notifyKey(scope common.NotifyScope, subject int64, kind string) [2]any {
+	return [2]any{string(scope) + ":" + kind, subject}
 }
-func (f *fakeChats) SetNotificationPref(_ context.Context, userID common.UserID, kind common.NotificationKind, on bool) error {
-	prefs := f.notifyPrefs[userID.Value]
-	switch kind {
-	case common.NotifyResultRecaps:
-		prefs.ResultRecaps = on
-	case common.NotifyPollReminders:
-		prefs.PollReminders = on
-	default:
-		return fmt.Errorf("unknown notification kind %q", kind)
+func (f *fakeChats) NotifyEnabled(_ context.Context, scope common.NotifyScope, subject int64, kind string) (bool, error) {
+	return f.notifyPrefs[f.notifyKey(scope, subject, kind)], nil
+}
+func (f *fakeChats) NotifySettings(_ context.Context, scope common.NotifyScope, subject int64) (map[string]bool, error) {
+	out := map[string]bool{}
+	for key, on := range f.notifyPrefs {
+		prefix, ok := key[0].(string)
+		if !ok || key[1] != subject || !strings.HasPrefix(prefix, string(scope)+":") {
+			continue
+		}
+		out[strings.TrimPrefix(prefix, string(scope)+":")] = on
 	}
-	f.notifyPrefs[userID.Value] = prefs
+	return out, nil
+}
+func (f *fakeChats) SetNotifyEnabled(_ context.Context, scope common.NotifyScope, subject int64, kind string, on bool) error {
+	f.notifyPrefs[f.notifyKey(scope, subject, kind)] = on
 	return nil
+}
+func (f *fakeChats) NotifySubjects(_ context.Context, scope common.NotifyScope, kind string, candidates []int64) ([]int64, error) {
+	var out []int64
+	for _, id := range candidates {
+		if f.notifyPrefs[f.notifyKey(scope, id, kind)] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // Nickname/SetNickname mirror the postgres implementation's semantics: an
