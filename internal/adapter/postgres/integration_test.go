@@ -3738,3 +3738,95 @@ func TestChatRepository_MiniAppAccessLifecycle(t *testing.T) {
 		t.Fatalf("status = %s, want the decision to stand", access.Status)
 	}
 }
+
+// The unsettled half of a record: what somebody has riding right now, with
+// the broadcast to watch it on. Written against the real schema because
+// the stream lives in a JSON column and the language preference lives on
+// the chat — two things a fake would quietly get right.
+func TestScoringRepository_ActivePredictionsCarryStreamsAndSkipFinishedMatches(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	chatID := common.ChatID{Value: -300100}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Активные", Locale: common.LocaleRU,
+		Timezone: chat.DefaultTimezone, Active: true, StreamLanguage: common.LocaleRU}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Active Cup",
+		ExternalID: "active-event", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	var options []prediction.Option
+	for i, score := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: score})
+	}
+	player := common.UserID{Value: 7301}
+	soon := time.Now().UTC().Add(3 * time.Hour)
+
+	seed := func(external string, status competition.MatchStatus, streams []competition.Stream) {
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: external, Status: status, Format: format,
+			FirstTeam:   &competition.Team{ID: common.NewTeamID(), Name: "G2", ExternalID: external + "-a"},
+			SecondTeam:  &competition.Team{ID: common.NewTeamID(), Name: "NAVI", ExternalID: external + "-b"},
+			ScheduledAt: &soon, Streams: streams,
+		}
+		if status == competition.MatchFinished {
+			score := competition.MatchScore{First: 2, Second: 0}
+			match.Score = &score
+			match.ActualStartedAt = &soon
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := external + "-poll"
+		messageID := int64(len(external))
+		saved, err := predictions.SavePoll(ctx, prediction.Poll{
+			ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID,
+			TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+			Options: options, Status: prediction.PollOpen, ClosesAt: soon,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: player,
+			OptionIndex: 0, DisplayName: "Player", VotedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("active-upcoming", competition.MatchNotStarted, []competition.Stream{
+		{Language: "ru", URL: "https://twitch.tv/major_ru", Main: true, Official: true},
+		{Language: "en", URL: "https://twitch.tv/major_en", Official: true},
+	})
+	seed("active-no-stream", competition.MatchRunning, nil)
+	seed("active-finished", competition.MatchFinished, nil)
+
+	rows, err := scoringRepo.ActivePredictions(ctx, player, scoring.ActivePredictionsMax)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected only the unsettled matches, got %d", len(rows))
+	}
+	var withStream, withoutStream int
+	for _, row := range rows {
+		if row.PredictedScore.String() == "" {
+			t.Fatalf("a prediction without its call is not worth showing: %+v", row)
+		}
+		switch row.StreamURL {
+		case "https://twitch.tv/major_ru":
+			withStream++
+		case "":
+			withoutStream++
+		default:
+			t.Fatalf("stream = %q, want the chat's own language or none", row.StreamURL)
+		}
+	}
+	if withStream != 1 || withoutStream != 1 {
+		t.Fatalf("expected one match with a broadcast and one without, got %d/%d", withStream, withoutStream)
+	}
+}

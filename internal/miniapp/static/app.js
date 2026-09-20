@@ -107,7 +107,7 @@
    * what it does for an unranked team anyway.
    */
   async function loadLogos(game) {
-    if (logos.has(game)) return;
+    if (!game || logos.has(game)) return;
     logos.set(game, new Map());
     try {
       const body = await fetchJSON(`/api/miniapp/v1/teams?game=${encodeURIComponent(game)}&logos=${LOGO_SOURCE}`);
@@ -120,8 +120,24 @@
     }
   }
 
+  /**
+   * logoFor looks a crest up in the game's own map, then in every other
+   * loaded one.
+   *
+   * A feed mixes disciplines: the history screen shows CS2 and Dota 2 rows
+   * together, and looking only in the selected game's map is why those
+   * rows came out with initials where a crest belonged.
+   */
   function logoFor(game, teamName) {
-    return logos.get(game)?.get(teamName.toLowerCase()) || '';
+    if (!teamName) return '';
+    const key = teamName.toLowerCase();
+    const own = logos.get(game)?.get(key);
+    if (own) return own;
+    for (const byName of logos.values()) {
+      const found = byName.get(key);
+      if (found) return found;
+    }
+    return '';
   }
 
   /** initialsOf is the fallback mark: the first letters of a team's words. */
@@ -190,15 +206,20 @@
 
   // --- the real numbers ------------------------------------------------
   //
-  // Everything above is the prototype's own demo data. What follows is the
-  // person's actual record, read from the bot's database through a signed
-  // launch. When it arrives it replaces the demo figures; when it does not
-  // — no access yet, no network — the screen says so rather than leaving
-  // mock numbers on display as if they were real.
+  // Everything on these screens is the person's own record, read from the
+  // bot's database through a signed launch. Nothing is seeded, modelled or
+  // filled in: when a figure cannot be loaded — no access yet, no network
+  // — the screen says so instead of showing a number that means nothing.
 
   let dashboard = null;
   /** currentGame is the rail's selection, used when looking up crests. */
-  let currentGame = 'cs2';
+  let currentGame = '';
+  /**
+   * analyticsGame is the rail's selection as the analytics screen reads
+   * it: empty means every discipline together, which is what the rail's
+   * own "all" chip selects.
+   */
+  let analyticsGame = '';
 
   /**
    * GAME_LABELS names a discipline the way people say it. The API answers
@@ -228,9 +249,17 @@
     setText('#streakValue', data.form?.current_streak ?? 0);
     setText('#bestStreakValue', data.form?.best_streak ?? 0);
     renderFormStrip(data.form?.recent || []);
+    // The ring is the number: it used to be drawn at a fixed 82% whatever
+    // the figure inside it said.
+    const orbit = document.querySelector('#formOrbit');
     if (data.form?.recent?.length) {
       const wins = data.form.recent.filter(Boolean).length;
-      setText('#formScore', Math.round((wins / data.form.recent.length) * 100));
+      const share = Math.round((wins / data.form.recent.length) * 100);
+      setText('#formScore', share);
+      orbit?.style.setProperty('--form-fill', `${share}%`);
+    } else {
+      setText('#formScore', '—');
+      orbit?.style.setProperty('--form-fill', '0%');
     }
     const trend = data.trend;
     setText('#trendValue', trend
@@ -244,12 +273,25 @@
 
   // --- analytics --------------------------------------------------------
 
+  /**
+   * renderAnalytics draws the breakdown for whatever the rail has
+   * selected: one discipline, or all of them together.
+   *
+   * The rail used to change only which crests were fetched, so tapping
+   * Dota 2 left a Counter-Strike breakdown on screen — the numbers never
+   * moved, which is worse than not offering the filter at all.
+   */
   function renderAnalytics(data) {
-    const games = [...(data.games || [])].filter((g) => g.predictions > 0);
-    setText('#analyticsGameLabel', games.length ? games.map((g) => gameLabel(g.game)).join(' · ') : '—');
+    const all = [...(data.games || [])].filter((g) => g.predictions > 0);
+    const selected = analyticsGame ? all.filter((g) => g.game.toLowerCase() === analyticsGame) : all;
+    const games = selected.length ? selected : all;
+
+    setText('#analyticsGameLabel', analyticsGame && selected.length
+      ? gameLabel(selected[0].game)
+      : (all.length ? 'все игры' : '—'));
     setText('#analyticsGameCount', games.length || '—');
     const total = games.reduce((sum, g) => sum + g.predictions, 0);
-    setText('#analyticsCoverage', total ? `${total} прогнозов всего` : 'нет данных');
+    setText('#analyticsCoverage', total ? `${total} прогнозов` : 'нет данных');
 
     // Best and worst are only worth naming where the sample can support
     // the claim; below that a percentage is a coin toss with a label.
@@ -294,52 +336,220 @@
     }
   }
 
+  // --- active predictions ----------------------------------------------
+  //
+  // The half of somebody's record that has not happened yet: what they
+  // have riding right now. This is what the app is opened for on a match
+  // day, so it sits above the finished ones rather than behind a tab.
+
+  async function loadActive() {
+    const root = document.querySelector('#activeList');
+    if (!root) return;
+    try {
+      const body = await fetchJSON('/api/miniapp/v1/me/active', { signed: true });
+      renderActive(body.entries || []);
+      setText('#activeCount', body.count ? `${body.count}` : '');
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      console.warn('active predictions unavailable', error);
+      root.replaceChildren(emptyLine('Не удалось загрузить активные прогнозы.'));
+    }
+  }
+
+  function renderActive(entries) {
+    const root = document.querySelector('#activeList');
+    if (!root) return;
+    if (entries.length === 0) {
+      root.replaceChildren(emptyLine('Нет прогнозов в ожидании — они появятся, когда вы ответите на опрос.'));
+      return;
+    }
+    root.replaceChildren(...entries.map(activeRow));
+  }
+
+  function activeRow(entry) {
+    const row = el('article', 'match-row active-row');
+    const main = el('div', 'match-main');
+    const teams = el('div', 'match-teams');
+    const game = entry.game.toLowerCase();
+    teams.append(teamMark(game, entry.first_team), el('strong', null, entry.first_team),
+      el('span', 'vs', 'vs'), teamMark(game, entry.second_team), el('strong', null, entry.second_team));
+
+    const meta = el('div', 'match-meta');
+    meta.append(el('span', null, entry.event || gameLabel(entry.game)), el('span', null, '·'),
+      el('span', null, entry.live ? 'идёт сейчас' : startsAtText(entry.starts_at)));
+    main.append(teams, meta);
+
+    const side = el('div', 'match-result pending');
+    side.append(el('strong', null, entry.predicted), el('span', null, 'ваш прогноз'));
+    // The broadcast, when there is one: the single most useful thing to
+    // offer somebody looking at a match they have money on.
+    if (entry.stream) {
+      const watch = el('a', 'stream-link', 'Смотреть');
+      watch.href = entry.stream;
+      watch.target = '_blank';
+      watch.rel = 'noopener noreferrer';
+      side.append(watch);
+    }
+    row.append(main, side);
+    return row;
+  }
+
+  /** startsAtText says when, or says that nobody has published a time. */
+  function startsAtText(value) {
+    if (!value) return 'время уточняется';
+    const at = new Date(value);
+    const today = new Date();
+    const sameDay = at.toDateString() === today.toDateString();
+    const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    if (sameDay) return `сегодня ${time}`;
+    return `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })} ${time}`;
+  }
+
+  // --- chats -------------------------------------------------------------
+
+  async function loadChats() {
+    const root = document.querySelector('#chatStandings');
+    if (!root) return;
+    try {
+      const body = await fetchJSON('/api/miniapp/v1/me/chats', { signed: true });
+      renderChats(body.chats || []);
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      root.replaceChildren(emptyLine('Не удалось загрузить статистику по чатам.'));
+    }
+  }
+
+  function renderChats(chats) {
+    const root = document.querySelector('#chatStandings');
+    if (!root) return;
+    if (chats.length === 0) {
+      root.replaceChildren(emptyLine('Здесь появятся ваши чаты, как только в них завершатся прогнозы.'));
+      return;
+    }
+    chatMedalTotal = chats.reduce((sum, c) => sum + c.gold + c.silver + c.bronze, 0);
+    if (dashboard) renderAchievements(dashboard);
+    root.replaceChildren(...chats.map((chat) => {
+      const row = el('article', 'chat-row');
+      const copy = el('div', 'chat-copy');
+      copy.append(el('strong', null, chat.chat),
+        el('small', null, `${chat.predictions} прогнозов · ${percentText(chat.accuracy)} · ${chat.points} очков`));
+      row.append(copy);
+      const medals = el('div', 'medal-row');
+      // Only the medals actually won: a row of zeroes reads as a scoreboard
+      // of failures rather than as an empty cabinet.
+      for (const [icon, count] of [['🥇', chat.gold], ['🥈', chat.silver], ['🥉', chat.bronze]]) {
+        if (count > 0) medals.append(el('span', 'medal', `${icon} ${count}`));
+      }
+      if (!medals.childNodes.length) medals.append(el('span', 'medal muted', 'без медалей'));
+      row.append(medals);
+      return row;
+    }));
+  }
+
   // --- achievements -----------------------------------------------------
   //
   // Derived from the same figures, with the rule written on each card.
   // Nothing is invented: a badge is a threshold over a number the database
   // actually holds, and its progress is that number.
 
-  function achievementsFor(data) {
-    const summary = data.summary || {};
-    const form = data.form || {};
-    const strongGames = (data.games || []).filter((g) => g.predictions >= 25 && g.accuracy >= 65).length;
-    return [
-      { title: 'Сотня', rule: '100 верных прогнозов', value: summary.correct || 0, goal: 100 },
-      { title: 'Снайпер', rule: '25 точных счётов', value: summary.exact || 0, goal: 25 },
-      { title: 'Серия', rule: '5 верных подряд', value: form.best_streak || 0, goal: 5 },
-      { title: 'Мультигейм', rule: '≥65% в двух играх при n≥25', value: strongGames, goal: 2 },
-      { title: 'Турнирный стаж', rule: '10 турниров с прогнозами', value: summary.tournaments || 0, goal: 10 },
-    ];
+  /**
+   * ACHIEVEMENTS is the whole catalogue, always shown in full.
+   *
+   * A list that hides what somebody has not earned answers "what have I
+   * done" and never "what is there to do" — and the second question is the
+   * one a progress screen exists for. Each entry carries the rule it is
+   * measured by, so nothing here is a number without a reason.
+   */
+  const ACHIEVEMENTS = [
+    { title: 'Первый прогноз', rule: 'Сделать первый завершённый прогноз', goal: 1, of: (s) => s.summary.predictions },
+    { title: 'Полсотни', rule: '50 прогнозов', goal: 50, of: (s) => s.summary.predictions },
+    { title: 'Сотня верных', rule: '100 верных прогнозов', goal: 100, of: (s) => s.summary.correct },
+    { title: 'Снайпер', rule: '25 угаданных точных счётов', goal: 25, of: (s) => s.summary.exact },
+    { title: 'Серия', rule: '5 верных подряд', goal: 5, of: (s) => s.form.best_streak },
+    { title: 'Длинная серия', rule: '10 верных подряд', goal: 10, of: (s) => s.form.best_streak },
+    { title: 'Мультигейм', rule: '≥65% в двух дисциплинах при 25+ прогнозах', goal: 2, of: (s) => s.strongGames },
+    { title: 'Турнирный стаж', rule: 'Прогнозы в 10 турнирах', goal: 10, of: (s) => s.summary.tournaments },
+    { title: 'Медалист', rule: 'Призовое место в турнире чата', goal: 1, of: (s) => s.medals },
+    { title: 'Коллекция', rule: '5 призовых мест', goal: 5, of: (s) => s.medals },
+  ];
+
+  /** achievementInputs reduces everything loaded so far to the few numbers
+   * the catalogue measures against. */
+  function achievementInputs(data) {
+    return {
+      summary: data.summary || {},
+      form: data.form || {},
+      strongGames: (data.games || []).filter((g) => g.predictions >= 25 && g.accuracy >= 65).length,
+      medals: chatMedalTotal,
+    };
   }
 
-  function renderAchievements(data) {
-    const list = achievementsFor(data);
-    const earned = list.filter((a) => a.value >= a.goal).length;
+  function achievementsFor(data) {
+    const inputs = achievementInputs(data);
+    return ACHIEVEMENTS.map((item) => ({
+      title: item.title,
+      rule: item.rule,
+      goal: item.goal,
+      value: Math.max(0, item.of(inputs) || 0),
+    }));
+  }
 
-    const summary = document.querySelector('#achievementSummary');
-    if (summary) {
-      summary.replaceChildren(
-        summaryTile(String(earned), 'получено'),
-        summaryTile(String(list.length - earned), 'в прогрессе'),
-        summaryTile(String((data.games || []).length), 'дисциплины'),
-      );
-    }
+  /**
+   * RECENT_ON_DASHBOARD is how much of the feed the overview shows. The
+   * whole list lives one tap away on "История"; repeating it here would
+   * make the overview a second history screen rather than a summary.
+   */
+  const RECENT_ON_DASHBOARD = 5;
 
-    const root = document.querySelector('#achievementList');
+  /** recentEntries is the unfiltered history feed, kept for the overview. */
+  let recentEntries = [];
+
+  /** renderRecent fills the overview's "Завершённые" strip, honouring the
+   * discipline chosen in the rail. */
+  function renderRecent() {
+    const root = document.querySelector('#recentMatches');
     if (!root) return;
-    root.replaceChildren(...list.map((item) => {
+    const selected = analyticsGame
+      ? recentEntries.filter((entry) => entry.game.toLowerCase() === analyticsGame)
+      : recentEntries;
+    if (selected.length === 0) {
+      root.replaceChildren(emptyLine(analyticsGame
+        ? `Пока нет завершённых прогнозов в ${gameLabel(analyticsGame.toUpperCase())}.`
+        : 'Здесь появятся ваши прогнозы после первых завершённых матчей.'));
+      return;
+    }
+    root.replaceChildren(...selected.slice(0, RECENT_ON_DASHBOARD).map(matchRow));
+  }
+
+  /** renderAchievements shows the catalogue in full, earned or not, with
+   * the progress towards each entry's own rule. */
+  function renderAchievements(data) {
+    const list = document.querySelector('#achievementList');
+    const summary = document.querySelector('#achievementSummary');
+    if (!list || !summary) return;
+
+    const items = achievementsFor(data);
+    const earned = items.filter((item) => item.value >= item.goal).length;
+    summary.replaceChildren(
+      summaryTile(String(earned), 'получено'),
+      summaryTile(String(items.length - earned), 'в работе'),
+      summaryTile(percentText(Math.round((earned / items.length) * 100)), 'каталога'),
+    );
+
+    list.replaceChildren(...items.map((item) => {
       const done = item.value >= item.goal;
       const card = el('article', 'achievement-card' + (done ? ' earned' : ''));
-      card.append(el('div', 'achievement-medal', done ? '✓' : String(item.goal)));
+      card.append(el('div', 'achievement-medal', done ? '✓' : `${Math.min(item.value, item.goal)}`));
+
       const body = el('div');
       const head = el('div', 'achievement-head');
-      head.append(el('strong', null, item.title), el('span', null, done ? 'Получено' : 'В прогрессе'));
+      head.append(el('strong', null, item.title),
+        el('span', null, done ? 'получено' : `${Math.min(item.value, item.goal)} из ${item.goal}`));
       const bar = el('div', 'progress');
       const fill = el('i');
       fill.style.width = `${Math.min(100, Math.round((item.value / item.goal) * 100))}%`;
       bar.append(fill);
-      body.append(head, el('p', null, item.rule), bar, el('small', null, `${item.value} / ${item.goal}`));
+      body.append(head, el('p', null, item.rule), bar);
       card.append(body);
       return card;
     }));
@@ -357,7 +567,9 @@
     const user = data.user || {};
     const summary = data.summary || {};
     setText('#profile-title', user.display_name || '—');
-    setText('#profileAvatar', (user.display_name || '?').slice(0, 1).toUpperCase());
+    const initial = (user.display_name || '?').slice(0, 1).toUpperCase();
+    setText('#profileAvatar', initial);
+    setText('#profilePill', initial);
     setText('#profileSubtitle', summary.predictions
       ? `${summary.predictions} прогнозов в ${summary.tournaments} турнирах`
       : 'Здесь появится ваш профиль после первых прогнозов');
@@ -385,6 +597,9 @@
   }
 
   // --- history ----------------------------------------------------------
+
+  /** chatMedalTotal is every medal won across chats, for the catalogue. */
+  let chatMedalTotal = 0;
 
   let historyGame = '';
   let historyResult = '';
@@ -516,17 +731,35 @@
    * a dead end with a label on it.
    */
   function renderGameRail(games) {
+    const wrap = document.querySelector('#gameRailWrap');
     const rail = document.querySelector('#gameRail');
-    if (!rail || games.length === 0) return;
-    rail.replaceChildren(...games.map((entry) => {
-      const chip = el('button', 'game-chip');
-      chip.dataset.game = entry.game.toLowerCase();
-      chip.append(el('i', 'game-dot'), el('span', null, gameLabel(entry.game)),
-        el('small', null, percentText(entry.accuracy)));
-      chip.addEventListener('click', () => setGame(chip.dataset.game));
+    if (!rail || !wrap) return;
+    // One discipline is not a choice, and none is not a rail: in both
+    // cases the filter is furniture and the screens speak for themselves.
+    if (games.length < 2) {
+      wrap.hidden = true;
+      rail.replaceChildren();
+      analyticsGame = '';
+      currentGame = games[0]?.game.toLowerCase() || '';
+      if (currentGame) void loadLogos(currentGame);
+      return;
+    }
+    wrap.hidden = false;
+
+    const chips = [{ code: '', label: 'Все игры', accuracy: null },
+      ...games.map((g) => ({ code: g.game.toLowerCase(), label: gameLabel(g.game), accuracy: g.accuracy }))];
+    rail.replaceChildren(...chips.map((entry) => {
+      const chip = el('button', 'game-chip' + (entry.code === analyticsGame ? ' active' : ''));
+      chip.dataset.game = entry.code;
+      chip.setAttribute('aria-pressed', String(entry.code === analyticsGame));
+      chip.append(el('i', 'game-dot'), el('span', null, entry.label));
+      if (entry.accuracy !== null) chip.append(el('small', null, percentText(entry.accuracy)));
+      chip.addEventListener('click', () => setGame(entry.code));
       return chip;
     }));
-    void setGame(games[0].game.toLowerCase());
+    // Every game's crests, not just the selected one: the feeds below mix
+    // disciplines, and a row from another game would come out bare.
+    for (const game of games) void loadLogos(game.game.toLowerCase());
   }
 
   /** showAccessNotice replaces the screen with why it is empty. */
@@ -550,6 +783,8 @@
       applyDashboard(data);
       renderHistoryFilters(data.games || []);
       void loadHistory();
+      void loadActive();
+      void loadChats();
       const notice = document.querySelector('#accessNotice');
       if (notice) notice.hidden = true;
     } catch (error) {
@@ -569,18 +804,19 @@
    * fetched.
    */
   async function setGame(game) {
-    currentGame = game;
-    document.documentElement.dataset.game = game;
+    analyticsGame = game;
+    currentGame = game || currentGame;
+    document.documentElement.dataset.game = game || 'all';
     for (const chip of document.querySelectorAll('.game-chip')) {
-      const active = chip.dataset.game === game;
+      const active = (chip.dataset.game || '') === game;
       chip.classList.toggle('active', active);
       chip.setAttribute('aria-pressed', String(active));
     }
     haptic();
-    // Crests arrive after the first paint: the board is readable with
-    // initials, and re-rendering once they land avoids holding the screen
+    // Crests arrive after the first paint: the screens are readable with
+    // initials, and re-rendering once they land avoids holding anything
     // hostage to a network round trip.
-    await loadLogos(game);
+    if (game) await loadLogos(game);
     renderRecent();
     if (dashboard) renderAnalytics(dashboard);
   }

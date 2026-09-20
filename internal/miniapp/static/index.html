@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-game="cs2">
+<html lang="ru" data-game="all">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
@@ -16,18 +16,17 @@
         <div class="brand-copy"><strong>Predictor</strong><small>ANALYST HUB</small></div>
       </div>
       <div class="header-actions">
-        <button class="icon-button" aria-label="Уведомления"><span class="notification-dot"></span><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
-        <button class="profile-pill" data-go="profile" aria-label="Открыть профиль"><span>A</span></button>
+        <button class="profile-pill" data-go="profile" aria-label="Открыть профиль"><span id="profilePill">—</span></button>
       </div>
     </header>
 
-    <div class="game-rail-wrap" aria-label="Выбор дисциплины">
-      <div class="game-rail" id="gameRail">
-        <button class="game-chip active" data-game="cs2" aria-pressed="true"><i class="game-dot"></i><span>CS2</span><small>75%</small></button>
-        <button class="game-chip" data-game="dota2" aria-pressed="false"><i class="game-dot"></i><span>Dota 2</span><small>68%</small></button>
-        <button class="game-chip" data-game="valorant" aria-pressed="false"><i class="game-dot"></i><span>Valorant</span><small>72%</small></button>
-        <button class="game-chip" data-game="lol" aria-pressed="false"><i class="game-dot"></i><span>LoL</span><small>64%</small></button>
-      </div>
+    <!--
+      Пустой: дисциплины приходят из ответа API — те, в которых у человека
+      действительно есть прогнозы. Захардкоженный список показывал игры,
+      в которые человек не играл, с процентами, которых не существует.
+    -->
+    <div class="game-rail-wrap" aria-label="Выбор дисциплины" id="gameRailWrap" hidden>
+      <div class="game-rail" id="gameRail"></div>
     </div>
 
     <p class="access-notice" id="accessNotice" role="status" hidden></p>
@@ -41,7 +40,7 @@
       -->
       <section class="screen is-active" data-screen="dashboard" aria-labelledby="dashboard-title">
         <div class="section-heading hero-heading">
-          <div><div class="eyebrow" id="gameEyebrow">ТЕКУЩАЯ ФОРМА</div><h1 id="dashboard-title">Форма аналитика</h1></div>
+          <div><div class="eyebrow">ТЕКУЩАЯ ФОРМА</div><h1 id="dashboard-title">Форма аналитика</h1></div>
         </div>
 
         <article class="performance-card">
@@ -51,7 +50,7 @@
               <div class="metric-value"><span id="accuracyValue">—</span><small>%</small></div>
               <p id="accuracySub">нет завершённых прогнозов</p>
             </div>
-            <div class="rank-orbit" aria-label="Форма за последние прогнозы">
+            <div class="rank-orbit" id="formOrbit" aria-label="Форма за последние прогнозы" style="--form-fill:0%">
               <div class="rank-orbit-inner"><small>FORM</small><strong id="formScore">—</strong></div>
             </div>
           </div>
@@ -69,7 +68,12 @@
         </div>
 
         <section class="section-block">
-          <div class="section-title-row"><div><div class="eyebrow">ПОСЛЕДНИЕ</div><h2>Прогнозы</h2></div><button class="text-action" data-go="history">Вся история</button></div>
+          <div class="section-title-row"><div><div class="eyebrow">СЕЙЧАС</div><h2>Активные прогнозы</h2></div><span class="sample-chip" id="activeCount"></span></div>
+          <div class="match-list" id="activeList"></div>
+        </section>
+
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ПОСЛЕДНИЕ</div><h2>Завершённые</h2></div><button class="text-action" data-go="history">Вся история</button></div>
           <div class="match-list" id="recentMatches"></div>
         </section>
 
@@ -110,16 +114,26 @@
       </section>
 
       <section class="screen" data-screen="achievements" aria-labelledby="achievements-title">
-        <div class="section-heading"><div><div class="eyebrow">ПРОГРЕСС</div><h1 id="achievements-title">Достижения</h1></div></div>
-        <div class="achievement-summary" id="achievementSummary"></div>
-        <section class="achievement-group" id="achievementList"></section>
-        <p class="legal-note">Каждое достижение считается по вашим завершённым прогнозам; правило написано на карточке.</p>
+        <div class="section-heading"><div><div class="eyebrow">ПРОГРЕСС</div><h1 id="achievements-title">Награды</h1></div></div>
+
+        <!--
+          Медали принадлежат чату, а не человеку вообще: первое место среди
+          четверых друзей и среди сорока — разные достижения, и общая сумма
+          не расскажет ни про одно из них.
+        -->
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ПО ЧАТАМ</div><h2>Медали и результат</h2></div></div>
+          <div class="chat-list" id="chatStandings"></div>
+        </section>
+
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ВСЕ ДОСТИЖЕНИЯ</div><h2>Каталог и прогресс</h2></div></div>
+          <div class="achievement-summary" id="achievementSummary"></div>
+          <div class="achievement-group" id="achievementList"></div>
+          <p class="legal-note">Правило написано на карточке, прогресс считается по вашим завершённым прогнозам.</p>
+        </section>
       </section>
 
-      <!--
-        Профиль — это «кто я и сколько всего», а не второй разбор: итоги за
-        всё время, и ссылка туда, где эти итоги раскладываются.
-      -->
       <section class="screen" data-screen="profile" aria-labelledby="profile-title">
         <div class="profile-hero"><div class="profile-avatar" id="profileAvatar">—</div><div><div class="eyebrow">ANALYST PROFILE</div><h1 id="profile-title">—</h1><p id="profileSubtitle">—</p></div></div>
         <div class="profile-kpis" id="profileKpis"></div>
