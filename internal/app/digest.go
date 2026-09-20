@@ -38,6 +38,8 @@ type DigestScheduler struct {
 	Insights scoring.AnnualInsightsRepository
 	Store    ScheduledReportStore
 	Outbox   common.Outbox
+	// Switches decides which chats asked for these reports at all.
+	Switches common.NotifySwitchboard
 	Lock     common.ClusterLock
 	Clock    common.Clock
 	RunTx    TxRunner
@@ -353,6 +355,15 @@ func (d *DigestScheduler) enqueueAnnual(ctx context.Context, settings chat.Setti
 }
 
 func (d *DigestScheduler) claim(ctx context.Context, chatID common.ChatID, reportType, periodKey, eventType, payload string) error {
+	// Asked before the claim rather than after: a chat that does not want
+	// digests should not have this period marked as reported, or turning
+	// them on later would start from a month that never arrived.
+	if eventType != "" {
+		wanted, err := (NotifyGate{Switches: d.Switches}).ChatWants(ctx, chatID, common.ChatNotifyDigests)
+		if err != nil || !wanted {
+			return err
+		}
+	}
 	return d.RunTx(ctx, func(txCtx context.Context) error {
 		claimed, err := d.Store.Claim(txCtx, chatID, reportType, periodKey)
 		if err != nil || !claimed {

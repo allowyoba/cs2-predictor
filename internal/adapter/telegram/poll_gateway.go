@@ -580,8 +580,15 @@ func (g *PollGateway) announceStream(ctx context.Context, poll prediction.Poll) 
 	// Opt-in, and off by default: this is an extra message in the room
 	// every time a poll closes, which a busy chat feels. A chat that wants
 	// it asks in the settings.
-	if settings == nil || !settings.StreamAnnouncements {
+	if settings == nil {
 		return nil
+	}
+	switches, err := switchboardOf(g.chats)
+	if err != nil {
+		return err
+	}
+	if on, err := switches.NotifyEnabled(ctx, common.ScopeChat, poll.ChatID.Value, string(common.ChatNotifyStreams)); err != nil || !on {
+		return err
 	}
 	locale, preferred := settings.Locale, settings.StreamLocale()
 	stream, ok := match.StreamFor(preferred)

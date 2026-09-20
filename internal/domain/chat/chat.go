@@ -51,11 +51,6 @@ type Settings struct {
 	// thirty Counter-Strike teams — the well-known ones, which is exactly
 	// why some chats want them.
 	PreferHLTVLogos bool
-	// StreamAnnouncements lets a closing poll post the match's broadcast
-	// link ("the match is starting, watch here"). Off by default: it is an
-	// extra message in the room, and a chat that follows several
-	// tournaments at once notices the difference.
-	StreamAnnouncements bool
 	// StreamLanguage is the language this chat wants match broadcasts in.
 	// Empty — the default — means "follow the bot's language"; resolve it
 	// through StreamLocale rather than reading it directly.
@@ -296,22 +291,4 @@ type UserProfile struct {
 	UserID      common.UserID
 	Username    string
 	DisplayName string
-}
-
-// NotificationPrefs is one person's own opt-ins for the private nudges
-// the bot can send them. Both default to false: unsolicited private
-// messages from a bot are spam, so nothing is sent until the person turns
-// it on from their own DM settings.
-type NotificationPrefs struct {
-	ResultRecaps  bool
-	PollReminders bool
-}
-
-// NotificationPrefsRepository reads and writes those opt-ins. Kept
-// separate from Repository so the DM settings screen is the only consumer
-// that has to know about them; the jobs that send the nudges use the
-// narrower common.NotificationAudience instead.
-type NotificationPrefsRepository interface {
-	NotificationPrefs(ctx context.Context, userID common.UserID) (NotificationPrefs, error)
-	SetNotificationPref(ctx context.Context, userID common.UserID, kind common.NotificationKind, on bool) error
 }

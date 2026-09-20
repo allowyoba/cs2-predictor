@@ -43,14 +43,15 @@ func newDigestScheduler(t *testing.T, now time.Time, rows []scoring.UserStanding
 	t.Helper()
 	outbox, store := &fakeSyncOutbox{}, newFakeReportStore()
 	return &DigestScheduler{
-		Chats:   &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true, Timezone: chat.DefaultTimezone}}},
-		Scoring: &fakeScoringForCompletion{leaderboard: rows},
-		Store:   store,
-		Outbox:  outbox,
-		Lock:    fakeClusterLock{},
-		Clock:   fixedClock{now: now},
-		RunTx:   identityTx,
-		Log:     slog.Default(),
+		Chats:    &fakeSyncChats{active: []chat.Settings{{ChatID: common.ChatID{Value: -1}, Active: true, Timezone: chat.DefaultTimezone}}},
+		Scoring:  &fakeScoringForCompletion{leaderboard: rows},
+		Store:    store,
+		Outbox:   outbox,
+		Switches: allNotificationsOn{},
+		Lock:     fakeClusterLock{},
+		Clock:    fixedClock{now: now},
+		RunTx:    identityTx,
+		Log:      slog.Default(),
 	}, outbox, store
 }
 

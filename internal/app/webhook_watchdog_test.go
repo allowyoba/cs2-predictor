@@ -35,7 +35,7 @@ func newWatchdog(t *testing.T, answers []common.WebhookInfo) (*WebhookWatchdog, 
 	outbox := &fakeSyncOutbox{}
 	return &WebhookWatchdog{
 		Inspector: &fakeInspector{answers: answers},
-		Alerter:   &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Log: slog.Default()},
+		Alerter:   &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Switches: allNotificationsOn{}, Log: slog.Default()},
 		Metrics:   newTestMetrics(), Clock: common.SystemUTCClock(), Log: slog.Default(),
 		PendingThreshold: 100,
 	}, outbox
@@ -128,7 +128,7 @@ func TestWebhookWatchdog_StaysQuietWhenItCannotAsk(t *testing.T) {
 	outbox := &fakeSyncOutbox{}
 	w := &WebhookWatchdog{
 		Inspector: &fakeInspector{err: errors.New("api unreachable")},
-		Alerter:   &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Log: slog.Default()},
+		Alerter:   &AdminAlerter{Outbox: outbox, ChatIDs: []int64{1}, Switches: allNotificationsOn{}, Log: slog.Default()},
 		Metrics:   newTestMetrics(), Clock: common.SystemUTCClock(), Log: slog.Default(),
 	}
 
