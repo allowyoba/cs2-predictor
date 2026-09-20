@@ -109,6 +109,23 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	}}}) {
 		emitted[key] = true
 	}
+	// The two screens that are not about the past.
+	// starts_at is omitempty and legitimately absent for an unscheduled
+	// match, so the sample carries one — otherwise this check would call a
+	// field the API does emit a mistake.
+	startsAt := time.Now()
+	for key := range jsonKeys(t, activeDTO{Entries: []activeEntryDTO{{
+		Game: "CS2", Event: "IEM", Chat: "c", First: "G2", Second: "NAVI",
+		Predicted: "2:0", StartsAt: &startsAt, ClosesAt: time.Now(), Stream: "u", Live: true,
+	}}}) {
+		emitted[key] = true
+	}
+	for key := range jsonKeys(t, chatsDTO{Chats: []chatStandingDTO{{
+		Chat: "c", Predictions: 1, Accuracy: 1, Points: 1, Tournaments: 1, Gold: 1, Silver: 1, Bronze: 1,
+	}}}) {
+		emitted[key] = true
+	}
+
 	// Access is the one payload the page reads before it has anything else.
 	for key := range jsonKeys(t, accessDTO{Status: "PENDING", Operator: false}) {
 		emitted[key] = true
@@ -116,7 +133,7 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 
 	// Every property read off an API object. The receivers are the names
 	// the page gives those objects.
-	pattern := regexp.MustCompile(`\b(?:entry|data|summary|user|team|body|game)\.([a-z][a-z_]*)\b`)
+	pattern := regexp.MustCompile(`\b(?:entry|data|summary|user|team|body|game|chat)\.([a-z][a-z_]*)\b`)
 	// Properties of our own JavaScript objects rather than of an API
 	// payload: listed explicitly so the check stays about the contract.
 	local := map[string]bool{
