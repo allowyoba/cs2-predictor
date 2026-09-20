@@ -81,6 +81,10 @@ const (
 	// LogoMirrorMatchWindow is how far ahead a match counts as "about to
 	// be played" for the purpose of re-checking a crest.
 	LogoMirrorMatchWindow = 48 * time.Hour
+	// LogoMirrorMeasurePerRun bounds the local measurement half of a pass.
+	// Decoding a 2 KB crest is cheap, but a job that decodes the whole
+	// table on one tick is a job that can surprise somebody.
+	LogoMirrorMeasurePerRun = 50
 	// LogoMirrorRecheckPerRun bounds the revalidation half of a pass,
 	// separately from and smaller than the first-fetch half: these are
 	// requests for something we already have, so they should never crowd
@@ -111,6 +115,12 @@ func (m *LogoMirror) Dispatch(ctx context.Context) {
 }
 
 func (m *LogoMirror) run(ctx context.Context) error {
+	// Before anything goes out: measure what is already here. A crest
+	// mirrored before the measurement existed would otherwise never be
+	// measured, because fetching is what triggers it and nothing will
+	// fetch an image it already has.
+	m.measureStored(ctx)
+
 	pending, err := m.Cache.PendingLogos(ctx, m.maxPerRun())
 	if err != nil {
 		return err
@@ -164,6 +174,34 @@ func (m *LogoMirror) run(ctx context.Context) error {
 		m.Log.Info("team crests mirrored", "stored", stored, "unchanged", unchanged, "considered", len(pending))
 	}
 	return nil
+}
+
+// measureStored decides the chip for crests already held. No network at
+// all: the bytes are in the database, and re-downloading them to look at
+// them would be exactly the traffic this whole mirror exists to avoid.
+func (m *LogoMirror) measureStored(ctx context.Context) {
+	stored, err := m.Cache.UnmeasuredLogos(ctx, LogoMirrorMeasurePerRun)
+	if err != nil {
+		m.Log.Warn("crest measurement skipped", "error", err)
+		return
+	}
+	var measured int
+	for _, logo := range stored {
+		light, ok := logoIsLight(logo.Bytes)
+		if !ok {
+			// Unmeasurable — an SVG, most likely. Left unrecorded rather
+			// than guessed at: a wrong chip is what this is here to avoid.
+			continue
+		}
+		if err := m.Cache.SetLogoLightness(ctx, logo.TeamID, logo.Source, light); err != nil {
+			m.Log.Warn("crest measurement not recorded", "team", logo.TeamID.Value, "error", err)
+			continue
+		}
+		measured++
+	}
+	if measured > 0 {
+		m.Log.Info("team crests measured", "measured", measured, "considered", len(stored))
+	}
 }
 
 // fetch performs exactly one request, and refuses anything that does not

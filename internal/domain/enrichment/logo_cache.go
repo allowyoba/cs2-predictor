@@ -86,4 +86,17 @@ type TeamLogoCache interface {
 	// TouchLogo records that a crest was checked and had not changed, so
 	// an unchanged answer is not mistaken for one never asked about.
 	TouchLogo(ctx context.Context, teamID common.TeamID, source Source, at time.Time) error
+	// UnmeasuredLogos returns stored crests nothing has measured yet, with
+	// their bytes, so the measurement can be made from what is already
+	// held rather than by fetching anything again.
+	//
+	// It exists because measuring happens when a crest is fetched, and a
+	// crest is only fetched when it is missing or has moved. Every image
+	// mirrored before the measurement existed would therefore never be
+	// measured at all — the same shape of gap as the one migration 0049's
+	// appearance backfill closed, and worth closing the same way: from
+	// local bytes, with no request to anybody.
+	UnmeasuredLogos(ctx context.Context, limit int) ([]TeamLogo, error)
+	// SetLogoLightness records a measurement without touching the bytes.
+	SetLogoLightness(ctx context.Context, teamID common.TeamID, source Source, light bool) error
 }

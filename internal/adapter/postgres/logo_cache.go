@@ -141,6 +141,41 @@ func (r *EnrichmentRepository) FindLogo(ctx context.Context, teamID common.TeamI
 	return &logo, nil
 }
 
+// UnmeasuredLogos reads stored crests nothing has measured yet.
+func (r *EnrichmentRepository) UnmeasuredLogos(ctx context.Context, limit int) ([]enrichment.TeamLogo, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT team_id, source, content_type, bytes
+		   FROM team_logo_cache WHERE is_light IS NULL LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []enrichment.TeamLogo
+	for rows.Next() {
+		var logo enrichment.TeamLogo
+		var source string
+		if err := rows.Scan(&logo.TeamID.Value, &source, &logo.ContentType, &logo.Bytes); err != nil {
+			return nil, err
+		}
+		logo.Source = enrichment.Source(source)
+		out = append(out, logo)
+	}
+	return out, rows.Err()
+}
+
+// SetLogoLightness records a measurement made from bytes already stored.
+// checked_at is deliberately untouched: nothing was asked of anybody.
+func (r *EnrichmentRepository) SetLogoLightness(ctx context.Context, teamID common.TeamID, source enrichment.Source, light bool) error {
+	_, err := executor(ctx, r.pool).Exec(ctx,
+		`UPDATE team_logo_cache SET is_light = $3 WHERE team_id = $1 AND source = $2`,
+		teamID.Value, string(source), light)
+	return err
+}
+
 // LogoChips reports which marks are light, for the chip behind them. Only
 // the measured ones appear: an absent entry means "not measured", which
 // the app renders as it always did rather than as a guess.
