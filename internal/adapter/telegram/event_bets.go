@@ -45,7 +45,7 @@ func (h *UpdateHandler) renderEventBets(ctx context.Context, target replyTarget,
 	var b strings.Builder
 	b.WriteString(bold(title))
 	for _, bet := range bets {
-		b.WriteString("\n\n" + h.betLine(bet, settings.Locale, true))
+		b.WriteString("\n\n" + h.betLine(bet, settings.Locale, true, chatZone(settings)))
 	}
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{{back}}}
 	return h.respond(ctx, target, managedScreenContext(target, settings, b.String()), &kb)

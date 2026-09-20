@@ -38,6 +38,13 @@ type Settings struct {
 	// still pick its other games' tournaments by hand. Read-only here;
 	// change it via Repository.SetAutoSubscribeGame, not Save.
 	AutoSubscribeGames []competition.GameCode
+	// QuietFromMinute/QuietToMinute bound the chat's quiet hours as
+	// minutes since local midnight; nil on both means the chat has not set
+	// any. A window may wrap past midnight (22:00–08:00), which is the
+	// shape almost every chat that sets one actually wants — read it
+	// through IsQuiet/QuietUntil rather than comparing the fields.
+	QuietFromMinute *int
+	QuietToMinute   *int
 	// StreamAnnouncements lets a closing poll post the match's broadcast
 	// link ("the match is starting, watch here"). Off by default: it is an
 	// extra message in the room, and a chat that follows several
@@ -81,6 +88,52 @@ func (s Settings) AutoSubscribesTo(game competition.GameCode) bool {
 		}
 	}
 	return false
+}
+
+// QuietHoursSet reports whether this chat has a window at all.
+func (s Settings) QuietHoursSet() bool {
+	return s.QuietFromMinute != nil && s.QuietToMinute != nil
+}
+
+// QuietUntil answers the only question the delivery path asks: may this
+// chat be posted to right now, and if not, when may it be.
+//
+// The message is held, never dropped. A chat that asked for silence
+// overnight still wants its tournament announcement — at breakfast, not at
+// three in the morning — and a notification quietly discarded is a bug
+// nobody can see.
+//
+// An empty window (from == to) is treated as no window rather than as
+// silence forever: the latter would mean a chat could mute itself
+// permanently by tapping the same hour twice.
+func (s Settings) QuietUntil(now time.Time) (time.Time, bool) {
+	if !s.QuietHoursSet() || *s.QuietFromMinute == *s.QuietToMinute {
+		return time.Time{}, false
+	}
+	local := now.In(ZoneOrDefault(s.Timezone))
+	minute := local.Hour()*60 + local.Minute()
+	from, to := *s.QuietFromMinute, *s.QuietToMinute
+
+	midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
+	end := midnight.Add(time.Duration(to) * time.Minute)
+	if from < to {
+		// An ordinary window inside one day, e.g. 01:00–08:00.
+		if minute < from || minute >= to {
+			return time.Time{}, false
+		}
+		return end, true
+	}
+	// A window that wraps past midnight, e.g. 23:00–08:00: before the end
+	// it is still last night's window, after the start it is tonight's and
+	// ends tomorrow morning.
+	switch {
+	case minute < to:
+		return end, true
+	case minute >= from:
+		return end.AddDate(0, 0, 1), true
+	default:
+		return time.Time{}, false
+	}
 }
 
 // StreamLocale resolves which language's broadcast to link for this chat,
@@ -203,6 +256,12 @@ type Repository interface {
 	// independent setting on Settings).
 	UserLocale(ctx context.Context, userID common.UserID) (*common.LocaleCode, error)
 	SetUserLocale(ctx context.Context, userID common.UserID, locale common.LocaleCode) error
+	// UserTimezone returns the person's own timezone for everything shown
+	// in their private chat, or nil when they have never chosen one — in
+	// which case the caller falls back to the chat's zone, which is what
+	// every private screen used before this existed.
+	UserTimezone(ctx context.Context, userID common.UserID) (*string, error)
+	SetUserTimezone(ctx context.Context, userID common.UserID, timezone string) error
 
 	// SetDMReachable records whether the bot may message this user
 	// privately. Telegram forbids a bot's first message to someone who has

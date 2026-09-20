@@ -105,6 +105,7 @@ func (f *fakeOutbox) Enqueue(_ context.Context, _, _, eventType, payload string)
 func (f *fakeOutbox) Pending(context.Context, int) ([]common.OutboxMessage, error) { return nil, nil }
 func (f *fakeOutbox) Published(context.Context, uuid.UUID, time.Time) error        { return nil }
 func (f *fakeOutbox) Failed(context.Context, uuid.UUID, time.Time, string) error   { return nil }
+func (f *fakeOutbox) Defer(context.Context, uuid.UUID, time.Time, time.Time) error { return nil }
 
 func setupUnsubscribeTest(t *testing.T, admins []common.UserID, unreachable map[int64]bool, eventID common.EventID, chatID common.ChatID) (*UpdateHandler, *fakeChats, *fakePendingApprovals, *[]map[string]any) {
 	t.Helper()

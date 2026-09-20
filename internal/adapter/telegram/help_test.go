@@ -22,8 +22,10 @@ func TestHelpCommand_GroupRendersReferenceInLocale(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := findSendMessageText(t, *calls)
-	if !strings.Contains(body, ru(t, "help.text")) {
-		t.Fatalf("expected the RU help text, got %q", body)
+	// A group is shown the commands that work in a group; the private-chat
+	// half of the old combined page was always about somewhere else.
+	if !strings.Contains(body, ru(t, "help.group")) {
+		t.Fatalf("expected the RU group help text, got %q", body)
 	}
 }
 
@@ -38,8 +40,8 @@ func TestHelpCommand_PrivateWorksWithNoActiveSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := findSendMessageText(t, *calls)
-	if !strings.Contains(body, ru(t, "help.text")) {
-		t.Fatalf("expected the RU help text, got %q", body)
+	if !strings.Contains(body, ru(t, "help.private")) {
+		t.Fatalf("expected the RU private help text, got %q", body)
 	}
 }
 
@@ -65,15 +67,17 @@ func TestMenuHelpCallback_RendersAndBacksToMainMenu(t *testing.T) {
 		t.Fatal("expected an editMessageText call for menu:help")
 	}
 	text, _ := edited["text"].(string)
-	if !strings.Contains(text, ru(t, "help.text")) {
-		t.Fatalf("expected help text, got %q", text)
+	if !strings.Contains(text, ru(t, "help.group")) {
+		t.Fatalf("expected the group help text, got %q", text)
 	}
 	kb, _ := edited["reply_markup"].(map[string]any)
 	rows, _ := kb["inline_keyboard"].([]any)
-	if len(rows) != 1 {
-		t.Fatalf("expected exactly one back button row, got %+v", rows)
+	// Two rows: the rules shortcut — the question people ask right after
+	// "what are the commands" — and the back button beneath it.
+	if len(rows) != 2 {
+		t.Fatalf("expected a rules row and a back row, got %+v", rows)
 	}
-	row, _ := rows[0].([]any)
+	row, _ := rows[len(rows)-1].([]any)
 	btn, _ := row[0].(map[string]any)
 	if btn["callback_data"] != "menu:main" {
 		t.Fatalf("expected the back button to point at menu:main, got %+v", btn)
@@ -99,10 +103,12 @@ func TestPstatsHelpCallback_RendersAndBacksToPersonalMenu(t *testing.T) {
 	if edited == nil {
 		t.Fatal("expected an editMessageText call for pstats:help")
 	}
+	// The back button is the last row on every screen; the rules shortcut
+	// sits above it.
 	kb, _ := edited["reply_markup"].(map[string]any)
 	rows, _ := kb["inline_keyboard"].([]any)
-	row, _ := rows[0].([]any)
-	btn, _ := row[0].(map[string]any)
+	lastRow, _ := rows[len(rows)-1].([]any)
+	btn, _ := lastRow[0].(map[string]any)
 	if btn["callback_data"] != "pstats:menu" {
 		t.Fatalf("expected the back button to point at pstats:menu, got %+v", btn)
 	}

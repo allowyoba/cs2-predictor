@@ -24,6 +24,9 @@ type fakeOutbox struct {
 	pending   []common.OutboxMessage
 	published []uuid.UUID
 	failed    map[uuid.UUID]string
+	// deferred records what was held and until when — the distinction
+	// between "not now" and "failed" is the whole point of Defer.
+	deferred map[uuid.UUID]time.Time
 }
 
 func newFakeOutbox(messages ...common.OutboxMessage) *fakeOutbox {
@@ -31,6 +34,13 @@ func newFakeOutbox(messages ...common.OutboxMessage) *fakeOutbox {
 }
 func (o *fakeOutbox) Enqueue(context.Context, string, string, string, string) (uuid.UUID, error) {
 	return uuid.New(), nil
+}
+func (o *fakeOutbox) Defer(_ context.Context, id uuid.UUID, _ time.Time, until time.Time) error {
+	if o.deferred == nil {
+		o.deferred = map[uuid.UUID]time.Time{}
+	}
+	o.deferred[id] = until
+	return nil
 }
 func (o *fakeOutbox) Pending(context.Context, int) ([]common.OutboxMessage, error) {
 	return o.pending, nil
@@ -148,5 +158,38 @@ func TestOutboxDispatcher_DoesNotRecordExhaustedBeforeTheFinalAttempt(t *testing
 
 	if got := testutil.ToFloat64(metrics.OutboxEvents.WithLabelValues("exhausted", msg.Type)); got != 0 {
 		t.Fatalf("exhausted metric = %v, want 0 (not yet at the retry cap)", got)
+	}
+}
+
+// "Not now" and "failed" must stay different things. A chat's quiet hours
+// can easily be nine hours long; counting each check as a failed attempt
+// would exhaust the retry budget overnight and lose the message for good.
+func TestDispatch_HeldMessageIsRescheduledWithoutSpendingAnAttempt(t *testing.T) {
+	message := common.OutboxMessage{ID: uuid.New(), Type: "telegram.big-event-discovered", OccurredAt: time.Now()}
+	outbox := newFakeOutbox(message)
+	until := time.Now().Add(6 * time.Hour)
+	dispatcher := &OutboxDispatcher{
+		Outbox: outbox,
+		Publishers: []common.OutboxPublisher{&fakePublisher{
+			eventType: "telegram.big-event-discovered",
+			err:       common.Deferred(until, "quiet hours"),
+		}},
+		Lock: fakeClusterLock{}, BatchSize: 10, Metrics: newTestMetrics(), Log: slog.Default(),
+	}
+
+	dispatcher.Dispatch(context.Background())
+
+	if len(outbox.failed) != 0 {
+		t.Fatalf("a held message must not be marked failed, got %v", outbox.failed)
+	}
+	if len(outbox.published) != 0 {
+		t.Fatal("a held message was not published")
+	}
+	got, ok := outbox.deferred[message.ID]
+	if !ok {
+		t.Fatalf("expected the message to be deferred, got %v", outbox.deferred)
+	}
+	if !got.Equal(until) {
+		t.Fatalf("deferred until %s, want %s", got, until)
 	}
 }

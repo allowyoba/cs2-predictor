@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"cs2predictor/internal/platform/common"
@@ -64,6 +65,21 @@ func (d *OutboxDispatcher) dispatchOne(ctx context.Context, message common.Outbo
 	}
 
 	if err := publisher.Publish(ctx, message); err != nil {
+		// "Not now" is not a failure: the message is fine, the moment is
+		// not (a chat's quiet hours). Counting it as an attempt would let
+		// a long enough night exhaust the retry budget and lose the
+		// message for good.
+		var deferred *common.DeferredError
+		if errors.As(err, &deferred) {
+			if deferErr := d.Outbox.Defer(ctx, message.ID, message.OccurredAt, deferred.Until); deferErr != nil {
+				d.Log.Error("could not defer outbox message", "eventId", message.ID, "error", deferErr)
+				return
+			}
+			d.Metrics.OutboxEvents.WithLabelValues("deferred", message.Type).Inc()
+			d.Log.Info("outbox message held", "eventId", message.ID, "type", message.Type,
+				"until", deferred.Until, "reason", deferred.Reason)
+			return
+		}
 		_ = d.Outbox.Failed(ctx, message.ID, message.OccurredAt, err.Error())
 		d.Metrics.OutboxEvents.WithLabelValues("failed", message.Type).Inc()
 		d.Log.Error("outbox publish failed", "eventId", message.ID, "type", message.Type, "error", err, "attempts", message.Attempts+1)

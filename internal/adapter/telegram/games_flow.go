@@ -53,6 +53,15 @@ func (h *UpdateHandler) setGameEnabled(ctx context.Context, settings chat.Settin
 	if err := h.sendText(ctx, settings.ChatID, text, settings.DefaultTopicID); err != nil {
 		loggerFrom(ctx, h.Log).Warn("game toggle announcement failed", "chatId", settings.ChatID.Value, "error", err)
 	}
+	// Turning on the first game is half of what a new chat needs; without
+	// a tournament to follow it still produces nothing. Point at the next
+	// step exactly then — not on later games, and not for a chat that is
+	// already following something.
+	if enabled && h.onboardingNeedsTournament(ctx, settings) {
+		if err := h.sendOnboardingStep(ctx, settings, "onboarding.pick_tournament", "events:add", "events.add"); err != nil {
+			return settings, err
+		}
+	}
 	return settings, nil
 }
 

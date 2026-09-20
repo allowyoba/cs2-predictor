@@ -77,6 +77,16 @@ func (o *Outbox) Failed(ctx context.Context, id uuid.UUID, occurredAt time.Time,
 	return err
 }
 
+// Defer pushes a message's next attempt out to a given time without
+// touching its attempt count — see common.Outbox.Defer for why the two are
+// different things.
+func (o *Outbox) Defer(ctx context.Context, id uuid.UUID, occurredAt time.Time, until time.Time) error {
+	_, err := executor(ctx, o.pool).Exec(ctx,
+		`UPDATE outbox_event SET next_attempt_at = $3 WHERE id = $1 AND occurred_at = $2`,
+		id, occurredAt, until)
+	return err
+}
+
 // DeadLetters and ReplayDeadLetters are the operator's view of the
 // messages Pending has given up on: attempts at the ceiling, never
 // published, and invisible to every other query here.

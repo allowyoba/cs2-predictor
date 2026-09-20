@@ -50,6 +50,29 @@ type Outbox interface {
 	Pending(ctx context.Context, limit int) ([]OutboxMessage, error)
 	Published(ctx context.Context, id uuid.UUID, occurredAt time.Time) error
 	Failed(ctx context.Context, id uuid.UUID, occurredAt time.Time, errText string) error
+	// Defer holds a message until the given time without spending one of
+	// its delivery attempts. It exists for the case where the message is
+	// perfectly fine and the moment is not — a chat's quiet hours — which
+	// must not look like a failure, or a long enough night would exhaust
+	// the retry budget and lose the message outright.
+	Defer(ctx context.Context, id uuid.UUID, occurredAt time.Time, until time.Time) error
+}
+
+// DeferredError is what a publisher returns to say "not now, try at this
+// time". The dispatcher reschedules the message instead of counting a
+// failed attempt.
+type DeferredError struct {
+	Until  time.Time
+	Reason string
+}
+
+func (e *DeferredError) Error() string {
+	return "delivery deferred until " + e.Until.Format(time.RFC3339) + ": " + e.Reason
+}
+
+// Deferred builds the error above, for the publishers that hold messages.
+func Deferred(until time.Time, reason string) error {
+	return &DeferredError{Until: until, Reason: reason}
 }
 
 // WebhookInfo is Telegram's own account of how delivery to this bot is
@@ -305,6 +328,31 @@ type SuggestionNotification struct {
 	DisplayName  string `json:"displayName"`
 	Username     string `json:"username,omitempty"`
 	Text         string `json:"text"`
+}
+
+// EventRecapNotification is the payload for the
+// "telegram.event-recap-personal" outbox event type: one person's own
+// result in a tournament that just finished, sent to their DM.
+//
+// The chat gets a leaderboard; this is the half of it that is about the
+// reader — where they finished, out of how many, and what they got right.
+// It rides on the same opt-in as the per-match recap rather than
+// introducing a second switch that means almost the same thing.
+type EventRecapNotification struct {
+	UserID    int64  `json:"userId"`
+	ChatTitle string `json:"chatTitle"`
+	EventName string `json:"eventName"`
+	Rank      int    `json:"rank"`
+	// Participants is how many people predicted in this tournament, so a
+	// placing reads as "3rd of 12" rather than a bare number.
+	Participants       int `json:"participants"`
+	Points             int `json:"points"`
+	Predictions        int `json:"predictions"`
+	ExactPredictions   int `json:"exactPredictions"`
+	CorrectPredictions int `json:"correctPredictions"`
+	// Award is the nomination this person won, if any (see
+	// scoring.PickEventAwards) — the part of a recap people screenshot.
+	Award string `json:"award,omitempty"`
 }
 
 // ReleaseAnnouncementStore records which releases have already been
