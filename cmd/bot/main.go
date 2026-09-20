@@ -372,7 +372,7 @@ func run() error {
 		Metrics: metrics, Log: log, WebhookRateLimit: cfg.WebhookRateLimit, Teams: catalog,
 		MiniAppHistory: scoringRepo,
 		MiniApp: httpapi.MiniAppDeps{
-			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats,
+			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats,
 			Operators: cfg.TeamMatchOperatorChatIDs, Clock: clock, Log: log,
 		},
 		Version: version, Commit: commit, BuildTime: buildTime,

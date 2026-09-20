@@ -442,13 +442,16 @@
       el('small', null, entry.points > 0 ? `+${entry.points}` : '0'),
     );
 
+    // first_team/second_team, exactly as the API names them: reading
+    // entry.first here is how this screen rendered blank team names.
     const matchup = el('div', 'matchup');
+    const game = entry.game.toLowerCase();
     const left = el('div', 'team-side');
-    left.append(teamMark(entry.game.toLowerCase(), entry.first), el('strong', null, entry.first));
+    left.append(teamMark(game, entry.first_team), el('strong', null, entry.first_team));
     const versus = el('div', 'versus');
     versus.append(el('b', null, entry.actual), el('span', null, `прогноз ${entry.predicted}`));
     const right = el('div', 'team-side right');
-    right.append(teamMark(entry.game.toLowerCase(), entry.second), el('strong', null, entry.second));
+    right.append(teamMark(game, entry.second_team), el('strong', null, entry.second_team));
     matchup.append(left, versus, right);
 
     const foot = el('div', 'history-foot');

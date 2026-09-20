@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -257,5 +258,62 @@ func TestMiniappAccess_CanBeAskedForWithoutHavingIt(t *testing.T) {
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/miniapp/v1/me/access", nil))
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+}
+
+// stubNames is the bot's own idea of what to call somebody.
+type stubNames struct {
+	nickname string
+	stored   string
+}
+
+func (s stubNames) Nickname(context.Context, common.UserID) (*string, error) {
+	if s.nickname == "" {
+		return nil, nil
+	}
+	return &s.nickname, nil
+}
+func (s stubNames) UserProfile(_ context.Context, userID common.UserID) (*chat.UserProfile, error) {
+	if s.stored == "" {
+		return nil, nil
+	}
+	return &chat.UserProfile{UserID: userID, DisplayName: s.stored}, nil
+}
+
+// The app sits next to leaderboards that call somebody by the name they
+// chose. Greeting them by their Telegram first name instead makes the app
+// look like it is about somebody else.
+func TestMiniappDashboard_UsesTheNameTheBotShowsEverywhereElse(t *testing.T) {
+	now := time.Now()
+	initData := signInitData(t, `{"id":42,"first_name":"Telegram","last_name":"Name"}`, now)
+	access := &stubAccess{access: map[int64]chat.MiniAppStatus{42: chat.MiniAppGranted}}
+
+	nameFrom := func(names MiniAppNames) string {
+		deps := miniAppTestDeps(access, &stubMiniAppStats{standing: &scoring.UserStanding{}})
+		deps.Names = names
+		recorder := httptest.NewRecorder()
+		dashboardHandler(deps).ServeHTTP(recorder, miniAppRequest(t, "/api/miniapp/v1/me/dashboard", initData))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
+		}
+		var body dashboardDTO
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.User.DisplayName
+	}
+
+	if got := nameFrom(stubNames{nickname: "Аня", stored: "Anna S"}); got != "Аня" {
+		t.Fatalf("display name = %q, want the chosen nickname", got)
+	}
+	if got := nameFrom(stubNames{stored: "Anna S"}); got != "Anna S" {
+		t.Fatalf("display name = %q, want the stored name when no nickname was chosen", got)
+	}
+	// Nothing stored at all — a first launch — still greets them properly.
+	if got := nameFrom(stubNames{}); got != "Telegram Name" {
+		t.Fatalf("display name = %q, want the Telegram profile as the last resort", got)
+	}
+	if got := nameFrom(nil); got != "Telegram Name" {
+		t.Fatalf("display name = %q, want the launch profile when no name store is wired", got)
 	}
 }
