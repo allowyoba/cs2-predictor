@@ -103,6 +103,29 @@ func (a *AdminAlerter) WebhookRecovered(ctx context.Context) {
 	})
 }
 
+// HostPressure and HostRecovered report the machine running out of
+// something, and getting it back. Separate from the provider alerts
+// because the cause is different in kind: a provider being down is
+// somebody else's outage, a disk filling up is ours, and only one of them
+// is fixed by waiting.
+func (a *AdminAlerter) HostPressure(ctx context.Context, resource, value, limit string) {
+	a.fanOut(ctx, "HOST", resource+":pressure", func(chatID int64) common.AdminAlertNotification {
+		return common.AdminAlertNotification{
+			ChatID: chatID, Kind: common.AdminAlertHostPressure,
+			Provider: resource, Detail: value + " / " + limit,
+		}
+	})
+}
+
+func (a *AdminAlerter) HostRecovered(ctx context.Context, resource, value string) {
+	a.fanOut(ctx, "HOST", resource+":recovered", func(chatID int64) common.AdminAlertNotification {
+		return common.AdminAlertNotification{
+			ChatID: chatID, Kind: common.AdminAlertHostRecovered,
+			Provider: resource, Detail: value,
+		}
+	})
+}
+
 // fanOut enqueues one message per administrator chat. Best effort by
 // design: an alert that cannot be enqueued is logged and dropped rather
 // than propagated, since every caller is either a background job or a

@@ -70,6 +70,9 @@ type Config struct {
 	// Telegram will open it. Empty hides the button that opens it: a
 	// deployment that does not host the page must not offer one.
 	MiniAppURL string
+	// HostLimits are the machine-resource levels that raise an alert. See
+	// DefaultHostLimits for why they fire with room to spare.
+	HostLimits HostLimits
 	// WatchdogInterval paces the two health watchers (the Telegram webhook
 	// and the outbox's dead letters). Both are cheap — one API call and
 	// one grouped count — and both cover failures that are otherwise
@@ -464,6 +467,9 @@ func LoadConfig() (Config, error) {
 	if cfg.WatchdogInterval, err = envDuration("WATCHDOG_INTERVAL", 5*time.Minute); err != nil {
 		return Config{}, err
 	}
+	if cfg.HostLimits, err = loadHostLimits(); err != nil {
+		return Config{}, err
+	}
 	if cfg.Feedback, err = loadFeedbackPolicy(); err != nil {
 		return Config{}, err
 	}
@@ -594,4 +600,27 @@ func loadFeedbackPolicy() (feedback.Policy, error) {
 		return feedback.Policy{}, fmt.Errorf("every FEEDBACK_* limit must be positive: %+v", policy)
 	}
 	return policy, nil
+}
+
+// loadHostLimits reads the machine-resource alert levels. Each is a
+// fraction (0..1) except load, which is per CPU; zero switches that one
+// alert off, which is a deliberate choice rather than an accident — unlike
+// the feedback limits, a missing host alert costs visibility, not safety.
+func loadHostLimits() (HostLimits, error) {
+	limits := DefaultHostLimits()
+	var err error
+	if limits.Memory, err = envFloat("HOST_ALERT_MEMORY", limits.Memory); err != nil {
+		return HostLimits{}, err
+	}
+	if limits.Disk, err = envFloat("HOST_ALERT_DISK", limits.Disk); err != nil {
+		return HostLimits{}, err
+	}
+	if limits.Load, err = envFloat("HOST_ALERT_LOAD_PER_CPU", limits.Load); err != nil {
+		return HostLimits{}, err
+	}
+	if limits.Memory > 1 || limits.Disk > 1 {
+		return HostLimits{}, fmt.Errorf("HOST_ALERT_MEMORY and HOST_ALERT_DISK are fractions of 1, got %.2f and %.2f",
+			limits.Memory, limits.Disk)
+	}
+	return limits, nil
 }

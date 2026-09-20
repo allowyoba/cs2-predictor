@@ -53,6 +53,10 @@ services:
       # Where the Mini App is served from (Caddy serves /app/ from disk).
       # Empty hides its button; Telegram only accepts an https:// address.
       MINIAPP_URL: ${MINIAPP_URL:-}
+      # Machine-resource alert levels; see .env.example for the units.
+      HOST_ALERT_MEMORY: ${HOST_ALERT_MEMORY:-}
+      HOST_ALERT_DISK: ${HOST_ALERT_DISK:-}
+      HOST_ALERT_LOAD_PER_CPU: ${HOST_ALERT_LOAD_PER_CPU:-}
       # Optional team-data enrichment. Every one of these is safe to leave
       # unset: an empty ${VAR:-} substitution reaches the bot as an empty
       # string, and internal/app/config.go's env* helpers treat "" as

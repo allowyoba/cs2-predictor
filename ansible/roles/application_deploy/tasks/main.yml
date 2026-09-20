@@ -151,6 +151,9 @@
           EVENT_EVE_LEAD={{ lookup('env', 'EVENT_EVE_LEAD') | default('') }}
           DATABASE_POOL_SIZE={{ lookup('env', 'DATABASE_POOL_SIZE') | default('') }}
           MINIAPP_URL={{ lookup('env', 'MINIAPP_URL') | default('https://' ~ lookup('env', 'CADDY_DOMAIN') ~ '/app/', true) }}
+          HOST_ALERT_MEMORY={{ lookup('env', 'HOST_ALERT_MEMORY') | default('') }}
+          HOST_ALERT_DISK={{ lookup('env', 'HOST_ALERT_DISK') | default('') }}
+          HOST_ALERT_LOAD_PER_CPU={{ lookup('env', 'HOST_ALERT_LOAD_PER_CPU') | default('') }}
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
         mode: '0600'

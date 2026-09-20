@@ -702,6 +702,10 @@ func NewAdminAlertPublisher(client *Client, chats chat.Repository, texts *Texts,
 				}
 			case common.AdminAlertWebhookRecovered:
 				text = texts.Get("admin.alert_webhook_recovered", locale)
+			case common.AdminAlertHostPressure:
+				text = texts.Get("admin.alert_host_pressure", locale, escapeHTML(n.Provider), escapeHTML(n.Detail))
+			case common.AdminAlertHostRecovered:
+				text = texts.Get("admin.alert_host_recovered", locale, escapeHTML(n.Provider), escapeHTML(n.Detail))
 			case common.AdminAlertDeadLetters:
 				text = texts.Get("admin.alert_dead_letters", locale, n.Count)
 				if detail := strings.TrimSpace(n.Detail); detail != "" {
@@ -744,6 +748,67 @@ func NewSuggestionPublisher(client *Client, chats chat.Repository, texts *Texts,
 		},
 	}
 }
+
+// NewMiniAppAccessPublisher delivers both halves of the access
+// conversation: the request an operator has to decide, and the answer the
+// person who asked receives. One publisher, because they are two messages
+// in one exchange and splitting them would let the pair drift apart.
+func NewMiniAppAccessPublisher(client *Client, chats chat.Repository, texts *Texts, metrics AdminMetrics) common.OutboxPublisher {
+	return &miniAppAccessPublisher{client: client, chats: chats, texts: texts, metrics: metrics}
+}
+
+type miniAppAccessPublisher struct {
+	client  *Client
+	chats   chat.Repository
+	texts   *Texts
+	metrics AdminMetrics
+}
+
+func (p *miniAppAccessPublisher) Supports(eventType string) bool {
+	return eventType == "telegram.miniapp-access-request" || eventType == "telegram.miniapp-access-decision"
+}
+
+func (p *miniAppAccessPublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
+	var n common.MiniAppAccessNotification
+	if err := json.Unmarshal([]byte(message.Payload), &n); err != nil {
+		return err
+	}
+	locale := resolveLocale(ctx, p.chats, common.ChatID{Value: n.ChatID})
+	payload := map[string]any{"chat_id": n.ChatID, "parse_mode": "HTML"}
+
+	if n.Decision {
+		key := "miniapp.denied"
+		if n.Granted {
+			key = "miniapp.granted"
+		}
+		payload["text"] = p.texts.Get(key, locale)
+	} else {
+		who := bold(escapeHTML(n.DisplayName))
+		if n.Username != "" {
+			who += " " + code("@"+escapeHTML(n.Username))
+		}
+		payload["text"] = p.texts.Get("admin.miniapp_request", locale, who)
+		// The two decisions, on the message itself: an operator should not
+		// have to go looking for a screen to answer a yes/no question.
+		payload["reply_markup"] = InlineKeyboard{InlineKeyboard: [][]InlineButton{{
+			button(p.texts.Get("admin.miniapp_grant", locale), "miniapp:grant:"+itoa64(n.UserID)),
+			button(p.texts.Get("admin.miniapp_deny", locale), "miniapp:deny:"+itoa64(n.UserID)),
+		}}}
+	}
+
+	err := sendToChat(ctx, p.client, p.chats, payload)
+	if p.metrics != nil {
+		result := "sent"
+		if err != nil {
+			result = "failed"
+		}
+		p.metrics.RecordDMDelivery(result)
+	}
+	return err
+}
+
+// itoa64 renders a Telegram id for callback data.
+func itoa64(v int64) string { return strconv.FormatInt(v, 10) }
 
 // shortCommit trims a full SHA to the usual seven characters, leaving
 // anything shorter (or already short) alone.
