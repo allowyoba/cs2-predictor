@@ -232,6 +232,43 @@ func (r *CompetitionRepository) FindEvent(ctx context.Context, id common.EventID
 	return &e, nil
 }
 
+// TeamsForGame implements httpapi.TeamCatalog: one game's teams, most
+// recently seen in a match first.
+//
+// Recency rather than name order, because the Mini App shows a capped list
+// and the teams somebody is following right now are the ones worth the
+// space. A team that has never appeared in a match still sorts in, just
+// last — it is in the catalogue for a reason.
+func (r *CompetitionRepository) TeamsForGame(ctx context.Context, game competition.GameCode, limit int) ([]competition.Team, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx, `
+		SELECT t.id, t.name, t.external_id, COALESCE(t.location, ''),
+		       COALESCE(t.logo_url, ''), COALESCE(t.hltv_logo_url, '')
+		  FROM team t
+		  JOIN game g ON g.id = t.game_id
+		  LEFT JOIN LATERAL (
+		      SELECT MAX(COALESCE(m.actual_started_at, m.scheduled_at)) AS last_seen
+		        FROM match_team mt
+		        JOIN esport_match m ON m.id = mt.match_id
+		       WHERE mt.team_id = t.id
+		  ) seen ON true
+		 WHERE g.code = $1
+		 ORDER BY seen.last_seen DESC NULLS LAST, t.name ASC
+		 LIMIT $2`, string(game), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []competition.Team
+	for rows.Next() {
+		var t competition.Team
+		if err := rows.Scan(&t.ID.Value, &t.Name, &t.ExternalID, &t.Location, &t.LogoURL, &t.HLTVLogoURL); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // FindEvents batch-fetches events by id in one round trip (see the Catalog
 // doc comment for why: avoids an N+1 query pattern in list renderers).
 func (r *CompetitionRepository) FindEvents(ctx context.Context, ids []common.EventID) ([]competition.Event, error) {
@@ -281,8 +318,8 @@ const matchSelect = `
 	SELECT m.id, m.event_id, m.external_id, m.status, m.series_kind, m.series_size,
 	       m.scheduled_at, m.actual_started_at, m.first_score, m.second_score, m.streams,
 	       es.name, es.external_id,
-	       t1.id, t1.name, t1.external_id, t1.location,
-	       t2.id, t2.name, t2.external_id, t2.location
+	       t1.id, t1.name, t1.external_id, t1.location, t1.logo_url, t1.hltv_logo_url,
+	       t2.id, t2.name, t2.external_id, t2.location, t2.logo_url, t2.hltv_logo_url
 	  FROM esport_match m
 	  LEFT JOIN event_stage es ON es.id = m.stage_id
 	  LEFT JOIN match_team mt1 ON mt1.match_id = m.id AND mt1.position = 1
@@ -298,13 +335,14 @@ func scanMatch(row interface {
 	var streamsRaw []byte
 	var stageName, stageExternalID *string
 	var t1ID, t2ID *[16]byte
-	var t1Name, t1ExternalID, t1Location, t2Name, t2ExternalID, t2Location *string
+	var t1Name, t1ExternalID, t1Location, t1Logo, t1HLTVLogo *string
+	var t2Name, t2ExternalID, t2Location, t2Logo, t2HLTVLogo *string
 
 	if err := row.Scan(&m.ID.Value, &m.EventID.Value, &m.ExternalID, &m.Status, &m.Format.Kind, &m.Format.Size,
 		&m.ScheduledAt, &m.ActualStartedAt, &firstScore, &secondScore, &streamsRaw,
 		&stageName, &stageExternalID,
-		&t1ID, &t1Name, &t1ExternalID, &t1Location,
-		&t2ID, &t2Name, &t2ExternalID, &t2Location); err != nil {
+		&t1ID, &t1Name, &t1ExternalID, &t1Location, &t1Logo, &t1HLTVLogo,
+		&t2ID, &t2Name, &t2ExternalID, &t2Location, &t2Logo, &t2HLTVLogo); err != nil {
 		return nil, err
 	}
 	if firstScore != nil && secondScore != nil {
@@ -324,11 +362,23 @@ func scanMatch(row interface {
 		if t1Location != nil {
 			m.FirstTeam.Location = *t1Location
 		}
+		if t1Logo != nil {
+			m.FirstTeam.LogoURL = *t1Logo
+		}
+		if t1HLTVLogo != nil {
+			m.FirstTeam.HLTVLogoURL = *t1HLTVLogo
+		}
 	}
 	if t2ID != nil {
 		m.SecondTeam = &competition.Team{ID: common.TeamID{Value: *t2ID}, Name: *t2Name, ExternalID: *t2ExternalID}
 		if t2Location != nil {
 			m.SecondTeam.Location = *t2Location
+		}
+		if t2Logo != nil {
+			m.SecondTeam.LogoURL = *t2Logo
+		}
+		if t2HLTVLogo != nil {
+			m.SecondTeam.HLTVLogoURL = *t2HLTVLogo
 		}
 	}
 	return &m, nil
@@ -535,10 +585,18 @@ func (r *CompetitionRepository) SaveMatch(ctx context.Context, m competition.Mat
 
 func (r *CompetitionRepository) saveTeam(ctx context.Context, gameID, providerID int16, t competition.Team) error {
 	_, err := executor(ctx, r.pool).Exec(ctx,
-		`INSERT INTO team(id, game_id, provider_id, external_id, name, location, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), now(), now())
-		 ON CONFLICT (id) DO UPDATE SET name = excluded.name, location = COALESCE(excluded.location, team.location), updated_at = now()`,
-		t.ID.Value, gameID, providerID, t.ExternalID, t.Name, t.Location)
+		// COALESCE on both optional columns: a later sync that happens not
+		// to carry a location or a crest must not erase the one already
+		// stored. Providers are inconsistent about including them, and a
+		// logo that disappears from the Mini App every other sync would
+		// look like a bug in the Mini App.
+		`INSERT INTO team(id, game_id, provider_id, external_id, name, location, logo_url, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), now(), now())
+		 ON CONFLICT (id) DO UPDATE SET name = excluded.name,
+		   location = COALESCE(excluded.location, team.location),
+		   logo_url = COALESCE(excluded.logo_url, team.logo_url),
+		   updated_at = now()`,
+		t.ID.Value, gameID, providerID, t.ExternalID, t.Name, t.Location, t.LogoURL)
 	return err
 }
 

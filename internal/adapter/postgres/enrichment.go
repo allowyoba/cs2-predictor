@@ -71,6 +71,25 @@ func (r *EnrichmentRepository) ListTeams(ctx context.Context, games ...competiti
 	return out, rows.Err()
 }
 
+// SetRankingLogo implements enrichment.TeamLogoWriter: it stores a ranking
+// feed's own crest, in its own column, leaving the match provider's
+// untouched — which of the two is shown is a display preference, decided
+// per chat, not something a sync job gets to overwrite.
+//
+// Only HLTV publishes one today; a source that does not is ignored rather
+// than quietly writing into a column that is not its own. IS DISTINCT FROM
+// keeps the weekly refresh from rewriting rows that already match, and
+// treats a NULL logo as different from a real one.
+func (r *EnrichmentRepository) SetRankingLogo(ctx context.Context, teamID common.TeamID, source enrichment.Source, logoURL string) error {
+	if logoURL == "" || source != enrichment.SourceHLTV {
+		return nil
+	}
+	_, err := executor(ctx, r.pool).Exec(ctx,
+		`UPDATE team SET hltv_logo_url = $2, updated_at = now()
+		  WHERE id = $1 AND hltv_logo_url IS DISTINCT FROM $2`, teamID.Value, logoURL)
+	return err
+}
+
 // --- enrichment.RankingRepository ---
 
 func (r *EnrichmentRepository) SaveRanking(ctx context.Context, ranking enrichment.TeamRanking) error {

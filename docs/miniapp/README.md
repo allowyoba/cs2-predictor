@@ -1,0 +1,42 @@
+# Predictor — Multi-Game Analyst / deliverables
+
+Актуальная версия дизайна Mini App переработана из CS2-only концепции в multi-gaming интерфейс. CS2 остаётся первой полностью поддержанной дисциплиной, но информационная архитектура, токены, компоненты, фильтры и профиль рассчитаны на несколько игр.
+
+## Что входит
+
+- `TECH_SPEC_v2.md` — продуктово-техническая спецификация с multi-game расширением и ограничениями текущего backend.
+- `DESIGN_SYSTEM.md` — обновлённая дизайн-система, игровые accent themes, адаптивность и правила data UI.
+- `FIGMA_HANDOFF.md` — структура Figma, variables/components/Auto Layout и правила handoff.
+- `../../miniapp-prototype/` — интерактивный HTML/CSS/JS прототип пяти основных вкладок.
+- `../../figma/predictor-multigame-board.png` — обзор пяти мобильных экранов 390×844.
+- `../../figma/v2/screens/` — длинные render-проверки экранов.
+- `../../figma/v2/viewport-final/` — viewport-превью 390×844.
+- `TEAM_LOGOS.md` — источники логотипов команд, приоритет и фолбэки.
+
+## Запуск прототипа
+
+```bash
+cd miniapp-prototype
+python -m http.server 8765
+```
+
+Открыть `http://localhost:8765`. Логотипы подтягиваются с того же origin;
+чтобы открыть прототип локально против развёрнутого бота, добавьте
+`?api=https://<домен>` (и `&logos=hltv`, чтобы посмотреть вариант с HLTV). Telegram WebApp bridge подключается штатно; в обычном браузере platform calls имеют safe fallback.
+
+## Multi-game модель
+
+Глобальный переключатель дисциплины поддерживает CS2, Dota 2, Valorant и League of Legends. Визуальный accent меняется на уровне semantic token, а сама структура компонентов не зависит от конкретной игры. Dashboard содержит cross-game portfolio, History объединяет прогнозы разных дисциплин, Achievements поддерживает universal и game-specific достижения.
+
+## Логотипы команд
+
+Прототип больше не хранит захардкоженный список URL. Логотипы приходят из
+собственного API бота — `GET /api/miniapp/v1/teams?game=<code>` — куда они
+попадают из PandaScore (все игры, вместе с обычной синхронизацией матчей)
+и из рейтинга HLTV (только CS2, вместе с еженедельным запросом рейтинга).
+Какой из двух показывать для CS2, решает настройка чата; команда без
+логотипа рисуется инициалами. Подробнее — `TEAM_LOGOS.md`.
+
+## Ограничения данных
+
+Дизайн не выдаёт за реальные метрики данные, которых текущий backend не хранит надёжно: карты, market/model probability, roster-change event, LAN/Online и формальный difficulty factor. Для новых дисциплин необходимо расширить domain model через `game_id`, game-specific match metadata и segment adapters.

@@ -196,6 +196,9 @@ type rankingItem struct {
 	Place int `json:"place"`
 	Team  struct {
 		Name string `json:"name"`
+		// Logo is HLTV's own crest URL for this team — the feed carries it
+		// next to the name, and it is the canonical Counter-Strike source.
+		Logo string `json:"logo"`
 	} `json:"team"`
 	Points int `json:"points"`
 	// Players is HLTV's reported roster for this team at scrape time — a
@@ -458,7 +461,7 @@ func (p *Provider) readRunOutput(ctx context.Context, run runInfo) ([]enrichment
 		}
 		rank, points := item.Place, item.Points
 		out = append(out, enrichment.RankedTeam{
-			Identity:    enrichment.TeamIdentity{Name: item.Team.Name, Roster: item.Players},
+			Identity:    enrichment.TeamIdentity{Name: item.Team.Name, Roster: item.Players, LogoURL: item.Team.Logo},
 			GlobalRank:  &rank,
 			Points:      &points,
 			PublishedAt: publishedAt,

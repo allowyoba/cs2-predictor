@@ -161,6 +161,7 @@ func mapTeam(dto namedDTO, game competition.GameCode) competition.Team {
 		Name:       dto.Name,
 		ExternalID: strconv.FormatInt(dto.ID, 10),
 		Location:   strings.ToUpper(strings.TrimSpace(dto.Location)),
+		LogoURL:    strings.TrimSpace(dto.ImageURL),
 	}
 }
 

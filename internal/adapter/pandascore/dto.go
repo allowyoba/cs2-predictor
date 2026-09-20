@@ -6,6 +6,11 @@ type namedDTO struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	Location string `json:"location"`
+	// ImageURL is the team's crest on PandaScore's own CDN. It is the only
+	// logo source that covers every game this bot follows — HLTV's ranking
+	// covers Counter-Strike alone — so it is the baseline, and a better
+	// per-game source overrides it where one exists.
+	ImageURL string `json:"image_url"`
 }
 
 type seriesDTO struct {

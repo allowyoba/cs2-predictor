@@ -45,6 +45,12 @@ type Settings struct {
 	// through IsQuiet/QuietUntil rather than comparing the fields.
 	QuietFromMinute *int
 	QuietToMinute   *int
+	// PreferHLTVLogos switches Counter-Strike crests to HLTV's own
+	// pictures where it has them. Off by default: the match provider's
+	// logos cover every game and every team, while HLTV's ranking covers
+	// thirty Counter-Strike teams — the well-known ones, which is exactly
+	// why some chats want them.
+	PreferHLTVLogos bool
 	// StreamAnnouncements lets a closing poll post the match's broadcast
 	// link ("the match is starting, watch here"). Off by default: it is an
 	// extra message in the room, and a chat that follows several

@@ -170,9 +170,32 @@ type Team struct {
 	ID         common.TeamID
 	Name       string
 	ExternalID string
+	// LogoURL is the crest the match provider published — PandaScore, the
+	// one source that covers every game here, collected as a by-product of
+	// the match sync. Empty when the provider published none.
+	LogoURL string
+	// HLTVLogoURL is the crest HLTV publishes in its own ranking:
+	// Counter-Strike only, ranked teams only, and the picture that
+	// audience recognises. Read through LogoFor rather than directly.
+	HLTVLogoURL string
 	// Location is the provider's ISO-3166 alpha-2 country code when known
 	// (PandaScore exposes it on team/opponent objects, e.g. "DE", "RU").
 	Location string
+}
+
+// LogoFor picks the crest to show. preferHLTV asks for HLTV's picture and
+// falls back to the provider's when HLTV has none — which is most teams,
+// since its ranking lists thirty and a qualifier field is much larger.
+// Without a crest from either source the caller renders the team's
+// initials instead, the way the Mini App already does.
+func (t Team) LogoFor(preferHLTV bool) string {
+	if preferHLTV && t.HLTVLogoURL != "" {
+		return t.HLTVLogoURL
+	}
+	if t.LogoURL != "" {
+		return t.LogoURL
+	}
+	return t.HLTVLogoURL
 }
 
 // EventTier is the provider-reported prestige tier of a tournament
