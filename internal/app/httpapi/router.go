@@ -9,6 +9,7 @@ import (
 
 	"cs2predictor/internal/app"
 	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/miniapp"
 )
 
 // Package httpapi is the bot's HTTP surface: the Telegram webhook route
@@ -80,5 +81,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 		miniappTeams = withObservability("miniapp_teams", miniappTeams, deps.Metrics, deps.Log)
 	}
 	mux.Handle("GET /api/miniapp/v1/teams", miniappTeams)
+	// The Mini App's own page, served from the binary. See
+	// internal/miniapp for why it is embedded rather than deployed as
+	// files next to the reverse proxy.
+	if page, err := miniapp.Handler("/app/"); err == nil {
+		mux.Handle("GET /app/", page)
+	} else if deps.Log != nil {
+		deps.Log.Error("mini app assets unavailable, its page will 404", "error", err)
+	}
 	return mux
 }

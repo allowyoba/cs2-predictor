@@ -2,25 +2,12 @@
 # for CADDY_DOMAIN on its own; ports 80 and 443 have to be reachable from
 # the internet for both the ACME challenge and the Telegram webhook.
 #
-# Four path groups are proxied, the Mini App is served from disk, and
-# everything else gets a 404. The bot serves
+# Four path groups are proxied — including the Mini App, whose page the bot
+# serves from its own binary — and everything else gets a 404. The bot serves
 # more than that — /metrics and /healthz/live among them — and none of it
 # belongs on a public address.
 {$CADDY_DOMAIN} {
-	@public path /telegram/webhook /healthz/ready /version /api/miniapp/*
-
-	# The Mini App itself: static files, served straight from disk. It is
-	# the one thing here that is not the bot — a Telegram Mini App is a web
-	# page Telegram opens in its own WebView, so it needs a real HTTPS
-	# address of its own before it can be attached to the bot at all.
-	handle_path /app/* {
-		root * /srv/miniapp
-		file_server
-		# A Mini App is reloaded on every open; the API it calls carries
-		# its own caching, and stale markup against a fresh API is the
-		# confusing half of that pair.
-		header Cache-Control "public, max-age=60"
-	}
+	@public path /telegram/webhook /healthz/ready /version /api/miniapp/* /app /app/*
 
 	route {
 		reverse_proxy @public bot:8080
