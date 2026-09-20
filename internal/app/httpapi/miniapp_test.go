@@ -8,7 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"strings"
+
 	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/platform/common"
 )
 
@@ -39,14 +42,38 @@ func decodeTeams(t *testing.T, body []byte) teamsResponse {
 	return parsed
 }
 
-func TestMiniappTeams_ServesTheProvidersCrestByDefaultAndHLTVOnRequest(t *testing.T) {
+// stubLogos stands for the mirrored crests. Only digests matter here: the
+// endpoint builds URLs, it does not serve bytes.
+type stubLogos struct {
+	digests map[common.TeamID]map[enrichment.Source]string
+}
+
+func (s *stubLogos) FindLogo(context.Context, common.TeamID, enrichment.Source) (*enrichment.TeamLogo, error) {
+	return nil, nil
+}
+
+func (s *stubLogos) LogoDigests(context.Context) (map[common.TeamID]map[enrichment.Source]string, error) {
+	return s.digests, nil
+}
+
+// Every crest URL the app is handed points back at this bot. The whole
+// reason the images are mirrored is that a viewer's browser must never
+// fetch one from HLTV's or PandaScore's CDN, and an endpoint that hands
+// out their URLs would undo that on its own.
+func TestMiniappTeams_ServesCrestsFromThisOriginNeverTheProvidersCDN(t *testing.T) {
+	vitality := common.NewTeamID()
+	qualifier := common.NewTeamID()
 	teams := &stubTeams{teams: []competition.Team{
-		{ID: common.NewTeamID(), Name: "Vitality", Location: "FR",
+		{ID: vitality, Name: "Vitality", Location: "FR", HLTVLocation: "DE",
 			LogoURL: "https://cdn-api.pandascore.co/vitality.png", HLTVLogoURL: "https://img-cdn.hltv.org/vitality.png"},
 		// A team HLTV's ranking has never listed — most of them.
-		{ID: common.NewTeamID(), Name: "Qualifier Five", LogoURL: "https://cdn-api.pandascore.co/five.png"},
+		{ID: qualifier, Name: "Qualifier Five", LogoURL: "https://cdn-api.pandascore.co/five.png"},
 	}}
-	handler := teamsHandler(teams)
+	logos := &stubLogos{digests: map[common.TeamID]map[enrichment.Source]string{
+		vitality:  {"PANDASCORE": "aaaa1111", enrichment.SourceHLTV: "bbbb2222"},
+		qualifier: {"PANDASCORE": "cccc3333"},
+	}}
+	handler := teamsHandler(teams, logos)
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=CS2", nil))
@@ -57,30 +84,67 @@ func TestMiniappTeams_ServesTheProvidersCrestByDefaultAndHLTVOnRequest(t *testin
 	if teams.game != competition.GameCS2 {
 		t.Fatalf("asked the catalogue for %q, want CS2 — the code is case-insensitive", teams.game)
 	}
-	if body.LogoSrc != "provider" || body.Teams[0].Logo != "https://cdn-api.pandascore.co/vitality.png" {
-		t.Fatalf("default must be the provider's crest, got %+v", body.Teams[0])
+
+	// Nothing anywhere in the payload may name a third-party host.
+	raw := recorder.Body.String()
+	for _, host := range []string{"pandascore.co", "hltv.org"} {
+		if strings.Contains(raw, host) {
+			t.Fatalf("the payload hands out %s URLs, which is the traffic the mirror exists to stop: %s", host, raw)
+		}
+	}
+
+	if body.LogoSrc != "provider" {
+		t.Fatalf("default source = %q, want the provider's", body.LogoSrc)
+	}
+	wantProvider := "/api/miniapp/v1/teams/" + vitality.Value.String() + "/logo?src=provider&v=aaaa1111"
+	if body.Teams[0].Logo != wantProvider {
+		t.Fatalf("crest = %q, want %q", body.Teams[0].Logo, wantProvider)
 	}
 
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2&logos=hltv", nil))
 	body = decodeTeams(t, recorder.Body.Bytes())
-	if body.LogoSrc != "hltv" || body.Teams[0].Logo != "https://img-cdn.hltv.org/vitality.png" {
+	wantHLTV := "/api/miniapp/v1/teams/" + vitality.Value.String() + "/logo?src=hltv&v=bbbb2222"
+	if body.LogoSrc != "hltv" || body.Teams[0].Logo != wantHLTV {
 		t.Fatalf("asked for HLTV, got %+v", body.Teams[0])
+	}
+	// The flag follows the same preference as the crest.
+	if body.Teams[0].Location != "DE" {
+		t.Fatalf("location = %q, want HLTV's answer when HLTV was asked for", body.Teams[0].Location)
 	}
 	// HLTV lists thirty teams; everybody else still needs a crest, so the
 	// preference falls back rather than blanking them.
-	if body.Teams[1].Logo != "https://cdn-api.pandascore.co/five.png" {
+	if !strings.Contains(body.Teams[1].Logo, "src=provider&v=cccc3333") {
 		t.Fatalf("a team HLTV never ranked must keep the provider's crest, got %+v", body.Teams[1])
 	}
-	// Both raw sources travel with the row, so a client can offer the same
-	// switch without asking again.
+	// Both sources travel with the row, so a client can offer the same
+	// switch without asking again — as our URLs, not theirs.
 	if body.Teams[0].LogoProvider == "" || body.Teams[0].LogoHLTV == "" {
 		t.Fatalf("expected both sources on the row, got %+v", body.Teams[0])
 	}
 }
 
+// Nothing mirrored yet is not a broken board: the app draws initials for a
+// team with no crest, which is already what it does for teams nobody
+// published one for.
+func TestMiniappTeams_LeavesCrestsEmptyUntilTheyAreMirrored(t *testing.T) {
+	teams := &stubTeams{teams: []competition.Team{
+		{ID: common.NewTeamID(), Name: "Vitality", LogoURL: "https://cdn-api.pandascore.co/vitality.png"},
+	}}
+	recorder := httptest.NewRecorder()
+	teamsHandler(teams, &stubLogos{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2", nil))
+
+	body := decodeTeams(t, recorder.Body.Bytes())
+	if body.Teams[0].Logo != "" {
+		t.Fatalf("crest = %q, want empty until the mirror has the bytes", body.Teams[0].Logo)
+	}
+	if strings.Contains(recorder.Body.String(), "pandascore.co") {
+		t.Fatal("falling back to the provider's own URL is exactly the traffic being avoided")
+	}
+}
+
 func TestMiniappTeams_RefusesAGameItDoesNotFollow(t *testing.T) {
-	handler := teamsHandler(&stubTeams{})
+	handler := teamsHandler(&stubTeams{}, nil)
 	for _, query := range []string{"", "?game=", "?game=chess", "?game=cs2&limit=0", "?game=cs2&limit=nope"} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams"+query, nil))
@@ -93,7 +157,7 @@ func TestMiniappTeams_RefusesAGameItDoesNotFollow(t *testing.T) {
 // The cap is the endpoint's own, not the caller's to raise.
 func TestMiniappTeams_CapsTheListWhateverWasAskedFor(t *testing.T) {
 	teams := &stubTeams{}
-	handler := teamsHandler(teams)
+	handler := teamsHandler(teams, nil)
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2&limit=100000", nil))
@@ -107,7 +171,7 @@ func TestMiniappTeams_CapsTheListWhateverWasAskedFor(t *testing.T) {
 }
 
 func TestMiniappTeams_ReportsFailuresRatherThanAnEmptyBoard(t *testing.T) {
-	handler := teamsHandler(&stubTeams{err: errors.New("database down")})
+	handler := teamsHandler(&stubTeams{err: errors.New("database down")}, nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2", nil))
 	if recorder.Code != http.StatusInternalServerError {
@@ -117,7 +181,7 @@ func TestMiniappTeams_ReportsFailuresRatherThanAnEmptyBoard(t *testing.T) {
 	// Not wired at all is a different answer from broken: a deployment
 	// without the catalogue says so instead of 404-ing a path that exists.
 	recorder = httptest.NewRecorder()
-	teamsHandler(nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2", nil))
+	teamsHandler(nil, nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2", nil))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", recorder.Code)
 	}

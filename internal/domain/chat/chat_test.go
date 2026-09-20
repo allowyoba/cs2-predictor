@@ -396,3 +396,7 @@ func TestZoneOrDefault(t *testing.T) {
 		t.Fatalf("ZoneOrDefault(garbage) = %v, want the default %s", got, DefaultTimezone)
 	}
 }
+
+func (r fakeRepo) PrefersHLTVLogos(context.Context, common.UserID) (bool, error) { return false, nil }
+
+func (r fakeRepo) SetPrefersHLTVLogos(context.Context, common.UserID, bool) error { return nil }

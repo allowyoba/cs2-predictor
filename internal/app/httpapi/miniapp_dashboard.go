@@ -39,6 +39,13 @@ type MiniAppNames interface {
 	UserProfile(ctx context.Context, userID common.UserID) (*chat.UserProfile, error)
 }
 
+// MiniAppPrefs reads the personal settings the app honours. Only the crest
+// source so far, and it is a person's choice rather than a chat's because
+// the app is a private surface — see chat.Repository.PrefersHLTVLogos.
+type MiniAppPrefs interface {
+	PrefersHLTVLogos(ctx context.Context, userID common.UserID) (bool, error)
+}
+
 // MiniAppAccessChecker answers whether this person may open the app at
 // all.
 type MiniAppAccessChecker interface {
@@ -55,6 +62,8 @@ type MiniAppDeps struct {
 	Access   MiniAppAccessChecker
 	// Names resolves the display name the rest of the bot uses.
 	Names MiniAppNames
+	// Prefs is this person's own settings; nil leaves the defaults.
+	Prefs MiniAppPrefs
 	// Operators are the root administrators (DEPLOY_NOTIFY_CHAT_IDS).
 	// They are exempt from the access grant: they are who approves it.
 	Operators []int64
@@ -120,6 +129,11 @@ type dashboardDTO struct {
 		ID          int64  `json:"id"`
 		DisplayName string `json:"display_name"`
 		PhotoURL    string `json:"photo_url,omitempty"`
+		// LogoSource is "provider" or "hltv": which crests this person
+		// asked for. The app sends it back when it fetches the team list,
+		// which keeps that endpoint public and cacheable while the
+		// preference still belongs to the person.
+		LogoSource string `json:"logo_source"`
 	} `json:"user"`
 	Summary summaryDTO `json:"summary"`
 	Form    formDTO    `json:"form"`
@@ -175,6 +189,12 @@ func dashboardHandler(deps MiniAppDeps, active MiniAppActive) http.Handler {
 		body.User.ID = user.ID.Value
 		body.User.DisplayName = deps.displayName(r.Context(), user)
 		body.User.PhotoURL = user.Profile.PhotoURL
+		body.User.LogoSource = "provider"
+		if deps.Prefs != nil {
+			if prefer, err := deps.Prefs.PrefersHLTVLogos(r.Context(), user.ID); err == nil && prefer {
+				body.User.LogoSource = "hltv"
+			}
+		}
 		if overall != nil {
 			body.Summary = summaryDTO{
 				Predictions: overall.Predictions, Correct: overall.CorrectPredictions,

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"cs2predictor/internal/domain/competition"
+	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/platform/common"
 )
 
 // The Mini App's first endpoint: the teams of one game, with their crests.
@@ -61,7 +63,7 @@ type teamsResponse struct {
 const miniappTeamsLimit = 100
 
 // teamsHandler serves GET /api/miniapp/v1/teams?game=<code>&logos=hltv.
-func teamsHandler(catalog TeamCatalog) http.Handler {
+func teamsHandler(catalog TeamCatalog, logos MiniAppLogos) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if catalog == nil {
 			http.Error(w, "team catalog is not configured", http.StatusServiceUnavailable)
@@ -92,10 +94,27 @@ func teamsHandler(catalog TeamCatalog) http.Handler {
 		if preferHLTV {
 			body.LogoSrc = "hltv"
 		}
+		// Every crest the app renders points back here, never at the CDN
+		// it came from: the bot fetched these once so that nobody's
+		// browser has to — see enrichment.TeamLogoCache.
+		digests := map[common.TeamID]map[enrichment.Source]string{}
+		if logos != nil {
+			if found, err := logos.LogoDigests(r.Context()); err == nil {
+				digests = found
+			}
+		}
 		for _, t := range teams {
+			provider := logoURL(t.ID, "PANDASCORE", digests[t.ID]["PANDASCORE"])
+			hltv := logoURL(t.ID, enrichment.SourceHLTV, digests[t.ID][enrichment.SourceHLTV])
+			chosen := provider
+			if preferHLTV && hltv != "" {
+				chosen = hltv
+			} else if chosen == "" {
+				chosen = hltv
+			}
 			body.Teams = append(body.Teams, miniappTeam{
-				ID: t.ID.Value.String(), Name: t.Name, Location: t.Location,
-				Logo: t.LogoFor(preferHLTV), LogoProvider: t.LogoURL, LogoHLTV: t.HLTVLogoURL,
+				ID: t.ID.Value.String(), Name: t.Name, Location: t.LocationFor(preferHLTV),
+				Logo: chosen, LogoProvider: provider, LogoHLTV: hltv,
 			})
 		}
 
