@@ -61,3 +61,34 @@ main{padding:0 16px calc(84px + var(--safe-bottom))}.screen{display:none;animati
   font-size: 14px;
   line-height: 1.45;
 }
+
+/* The form strip: the last results as a shape rather than a number. Marks
+   differ by more than colour — a filled square against an outlined one —
+   so the run reads the same without colour vision. */
+.form-strip { display: flex; gap: 6px; margin-top: 14px; }
+.form-mark {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .18);
+}
+.form-mark.won { background: var(--success, #3ddc97); border-color: transparent; }
+.form-mark.lost { background: transparent; border-color: var(--danger, #ff6b6b); }
+
+/* One full-width link to the screen that goes deeper, instead of copying
+   that screen's content here. */
+.wide-link {
+  display: flex;
+  width: calc(100% - 32px);
+  margin: 16px;
+  padding: 14px 16px;
+  justify-content: space-between;
+  align-items: center;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .06);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}

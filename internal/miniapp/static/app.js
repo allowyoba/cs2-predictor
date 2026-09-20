@@ -49,58 +49,6 @@
 
   // --- data -----------------------------------------------------------
 
-  /**
-   * DEMO is the prototype's own figures. Clearly separated from anything
-   * fetched, so nobody mistakes a mock for a metric — the tech spec's
-   * first rule is not to show a number the backend cannot produce.
-   */
-  const DEMO = {
-    cs2: {
-      label: 'CS2', accuracy: 75, sub: '63 верных из 84 прогнозов', form: 82, trend: '↗ +8 п.п.',
-      streak: 4, sample: 84, best: 'BO3', bestSub: '78% · n=86', analyticsAccuracy: '71%',
-      coachTitle: 'BO1 остаётся вашей слабой зоной',
-      coachText: '52% на 21 прогнозе — на 19 п.п. ниже вашей общей точности в CS2.',
-      matches: [
-        { a: 'NAVI', b: 'Spirit', meta: 'ESL Pro League · BO3', score: '2:0', result: 'correct' },
-        { a: 'Vitality', b: 'G2', meta: 'BLAST Open · BO1', score: '0:1', result: 'wrong' },
-        { a: 'MOUZ', b: 'Falcons', meta: 'IEM · BO3', score: '2:1', result: 'correct' },
-      ],
-    },
-    dota2: {
-      label: 'Dota 2', accuracy: 68, sub: '35 верных из 51 прогноза', form: 74, trend: '↗ +2 п.п.',
-      streak: 3, sample: 51, best: 'BO3', bestSub: '72% · n=32', analyticsAccuracy: '68%',
-      coachTitle: 'Патч-дни дают больше ошибок',
-      coachText: 'На матчах в первые 72 часа после патча точность ниже на 11 п.п. при n=13.',
-      matches: [
-        { a: 'Spirit', b: 'Tundra', meta: 'The International · BO3', score: '2:1', result: 'correct' },
-        { a: 'BetBoom', b: 'PARIVISION', meta: 'FISSURE Universe · BO3', score: '1:2', result: 'wrong' },
-        { a: 'Liquid', b: 'Falcons', meta: 'DreamLeague · BO3', score: '2:0', result: 'correct' },
-      ],
-    },
-    valorant: {
-      label: 'Valorant', accuracy: 72, sub: '28 верных из 39 прогнозов', form: 79, trend: '↗ +5 п.п.',
-      streak: 5, sample: 39, best: 'BO3', bestSub: '76% · n=29', analyticsAccuracy: '72%',
-      coachTitle: 'Плей-офф прогнозируете сильнее групп',
-      coachText: 'В playoff точность 79% против 66% в group stage при сопоставимой выборке.',
-      matches: [
-        { a: 'Fnatic', b: 'Sentinels', meta: 'VCT Masters · BO3', score: '1:2', result: 'wrong' },
-        { a: 'G2', b: 'Paper Rex', meta: 'VCT Champions · BO3', score: '2:0', result: 'correct' },
-        { a: 'NRG', b: 'Gen.G', meta: 'VCT Masters · BO3', score: '2:1', result: 'correct' },
-      ],
-    },
-    lol: {
-      label: 'LoL', accuracy: 64, sub: '18 верных из 28 прогнозов', form: 69, trend: '↘ −3 п.п.',
-      streak: 2, sample: 28, best: 'BO3', bestSub: '69% · n=16', analyticsAccuracy: '64%',
-      coachTitle: 'Маленькая выборка — не переоценивайте тренд',
-      coachText: 'По LoL пока только 28 прогнозов; выводы по отдельным турнирам считаются низкой уверенности.',
-      matches: [
-        { a: 'T1', b: 'Gen.G', meta: 'LCK · BO3', score: '1:2', result: 'wrong' },
-        { a: 'G2', b: 'Fnatic', meta: 'LEC · BO3', score: '2:0', result: 'correct' },
-        { a: 'BLG', b: 'TES', meta: 'LPL · BO3', score: '2:1', result: 'correct' },
-      ],
-    },
-  };
-
   const RESULT_TEXT = { correct: '✓ Верно', wrong: '× Ошибка' };
 
   const params = new URLSearchParams(location.search);
@@ -216,26 +164,23 @@
     return wrap;
   }
 
-  function matchRow(game, match) {
+  function matchRow(entry) {
     const row = el('article', 'match-row');
     const main = el('div', 'match-main');
     const teams = el('div', 'match-teams');
-    teams.append(teamMark(game, match.a), el('strong', null, match.a), el('span', 'vs', 'vs'),
-      teamMark(game, match.b), el('strong', null, match.b));
+    const game = entry.game.toLowerCase();
+    teams.append(teamMark(game, entry.first_team), el('strong', null, entry.first_team),
+      el('span', 'vs', 'vs'), teamMark(game, entry.second_team), el('strong', null, entry.second_team));
     const meta = el('div', 'match-meta');
-    meta.append(el('span', null, match.meta), el('span', null, '·'), el('span', null, 'сегодня'));
+    meta.append(el('span', null, entry.event || gameLabel(entry.game)), el('span', null, '·'),
+      el('span', null, new Date(entry.played_at).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })));
     main.append(teams, meta);
 
-    const result = el('div', `match-result ${match.result}`);
-    result.append(el('strong', null, match.score), el('span', null, RESULT_TEXT[match.result] || ''));
+    const result = el('div', `match-result ${entry.correct ? 'correct' : 'wrong'}`);
+    result.append(el('strong', null, entry.actual),
+      el('span', null, entry.correct ? RESULT_TEXT.correct : RESULT_TEXT.wrong));
     row.append(main, result);
     return row;
-  }
-
-  function renderMatches(game, data) {
-    const root = document.querySelector('#recentMatches');
-    if (!root) return;
-    root.replaceChildren(...data.matches.map((m) => matchRow(game, m)));
   }
 
   const setText = (selector, value) => {
@@ -266,6 +211,13 @@
   /** percentText renders a share the way every screen here shows one. */
   const percentText = (value) => `${value}%`;
 
+  /**
+   * MIN_SEGMENT_SAMPLE is how many predictions a segment needs before its
+   * percentage is worth naming as best or worst. Below it the number is a
+   * coin toss with a label on it.
+   */
+  const MIN_SEGMENT_SAMPLE = 10;
+
   /** applyDashboard overwrites the headline figures with real ones. */
   function applyDashboard(data) {
     dashboard = data;
@@ -274,6 +226,8 @@
     setText('#accuracySub', `${summary.correct ?? 0} верных из ${summary.predictions ?? 0} прогнозов`);
     setText('#sampleValue', summary.predictions ?? 0);
     setText('#streakValue', data.form?.current_streak ?? 0);
+    setText('#bestStreakValue', data.form?.best_streak ?? 0);
+    renderFormStrip(data.form?.recent || []);
     if (data.form?.recent?.length) {
       const wins = data.form.recent.filter(Boolean).length;
       setText('#formScore', Math.round((wins / data.form.recent.length) * 100));
@@ -291,22 +245,26 @@
   // --- analytics --------------------------------------------------------
 
   function renderAnalytics(data) {
-    const summary = data.summary || {};
-    setText('#analyticsGameLabel', 'все игры');
-    setText('#analyticsAccuracy', summary.predictions ? percentText(summary.accuracy) : '—');
-    setText('#analyticsSample', summary.predictions ? `n=${summary.predictions}` : 'нет данных');
+    const games = [...(data.games || [])].filter((g) => g.predictions > 0);
+    setText('#analyticsGameLabel', games.length ? games.map((g) => gameLabel(g.game)).join(' · ') : '—');
+    setText('#analyticsGameCount', games.length || '—');
+    const total = games.reduce((sum, g) => sum + g.predictions, 0);
+    setText('#analyticsCoverage', total ? `${total} прогнозов всего` : 'нет данных');
 
-    const trend = data.trend;
-    setText('#analyticsTrend', trend ? `${trend.delta_pp > 0 ? '+' : ''}${trend.delta_pp} п.п.` : '—');
-    setText('#analyticsTrendNote', trend
-      ? `${trend.current_sample} против ${trend.previous_sample} прогнозов`
-      : 'нужно два окна подряд');
-    setText('#analyticsStreak', data.form?.current_streak ?? '—');
-    setText('#analyticsBestStreak', `лучшая ${data.form?.best_streak ?? 0}`);
+    // Best and worst are only worth naming where the sample can support
+    // the claim; below that a percentage is a coin toss with a label.
+    const ranked = games.filter((g) => g.predictions >= MIN_SEGMENT_SAMPLE)
+      .sort((a, b) => b.accuracy - a.accuracy);
+    const best = ranked[0];
+    const worst = ranked.length > 1 ? ranked[ranked.length - 1] : null;
+    setText('#analyticsBest', best ? gameLabel(best.game) : '—');
+    setText('#analyticsBestNote', best ? `${percentText(best.accuracy)} на ${best.predictions}` : `нужно ${MIN_SEGMENT_SAMPLE}+ прогнозов`);
+    setText('#analyticsWorst', worst ? gameLabel(worst.game) : '—');
+    setText('#analyticsWorstNote', worst ? `${percentText(worst.accuracy)} на ${worst.predictions}` : 'пока не с чем сравнивать');
 
-    const games = document.querySelector('#analyticsGames');
-    if (games) {
-      games.replaceChildren(...(data.games || []).map((entry) => {
+    const gamesRoot = document.querySelector('#analyticsGames');
+    if (gamesRoot) {
+      gamesRoot.replaceChildren(...games.map((entry) => {
         const row = el('div', 'segment-row' + (entry.accuracy < 50 ? ' is-warning' : ''));
         const copy = el('div', 'segment-copy');
         copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
@@ -317,7 +275,7 @@
         row.append(copy, meter, el('b', null, percentText(entry.accuracy)));
         return row;
       }));
-      if (!(data.games || []).length) games.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
+      if (!games.length) gamesRoot.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
     }
 
     const teams = document.querySelector('#analyticsTeams');
@@ -413,21 +371,6 @@
       );
     }
 
-    const games = document.querySelector('#profileGames');
-    if (!games) return;
-    games.replaceChildren(...(data.games || []).map((entry) => {
-      const row = el('article');
-      row.append(el('span', 'game-symbol', gameLabel(entry.game).slice(0, 2).toUpperCase()));
-      const copy = el('div');
-      copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
-      row.append(copy, el('b', null, percentText(entry.accuracy)));
-      if (entry.trend) {
-        row.append(el('em', entry.trend.delta_pp >= 0 ? 'positive-text' : 'negative-text',
-          `${entry.trend.delta_pp > 0 ? '+' : ''}${entry.trend.delta_pp}`));
-      }
-      return row;
-    }));
-    if (!(data.games || []).length) games.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
   }
 
   function kpiTile(label, value, note) {
@@ -444,15 +387,25 @@
   // --- history ----------------------------------------------------------
 
   let historyGame = '';
+  let historyResult = '';
 
   async function loadHistory() {
     const feed = document.querySelector('#historyFeed');
     if (!feed) return;
     feed.replaceChildren(emptyLine('Загружаем…'));
     try {
-      const query = historyGame ? `?game=${encodeURIComponent(historyGame)}` : '';
-      const body = await fetchJSON(`/api/miniapp/v1/me/history${query}`, { signed: true });
+      const query = new URLSearchParams();
+      if (historyGame) query.set('game', historyGame);
+      if (historyResult) query.set('result', historyResult);
+      const suffix = query.toString() ? `?${query}` : '';
+      const body = await fetchJSON(`/api/miniapp/v1/me/history${suffix}`, { signed: true });
       renderHistory(body.entries || []);
+      // The dashboard's "latest" strip is the same feed, unfiltered — so
+      // it is filled here rather than fetched a second time.
+      if (!historyGame && !historyResult) {
+        recentEntries = body.entries || [];
+        renderRecent();
+      }
     } catch (error) {
       if (error instanceof ForbiddenError) showAccessNotice('forbidden');
       else if (error instanceof UnauthenticatedError) showAccessNotice('unauthenticated');
@@ -499,13 +452,28 @@
     matchup.append(left, versus, right);
 
     const foot = el('div', 'history-foot');
-    foot.append(el('span', null, entry.event || ''), el('span', null, entry.chat || ''));
+    const where = entry.chats > 1 ? `${entry.chat} и ещё ${entry.chats - 1}` : entry.chat || '';
+    foot.append(el('span', null, entry.event || ''), el('span', null, where));
     card.append(status, matchup, foot);
     return card;
   }
 
-  /** renderHistoryFilters builds one chip per game the person plays. */
+  /**
+   * renderHistoryFilters builds one chip per game the person plays — and
+   * fills the sheet's own game select from the same list, so the two
+   * controls can never offer different games.
+   */
   function renderHistoryFilters(games) {
+    const select = document.querySelector('#filterGame');
+    if (select) {
+      select.replaceChildren(el('option', null, 'Все игры'),
+        ...games.map((g) => {
+          const option = el('option', null, gameLabel(g.game));
+          option.value = g.game;
+          return option;
+        }));
+      select.querySelector('option').value = '';
+    }
     const rail = document.querySelector('#historyFilters');
     if (!rail) return;
     const chips = [{ code: '', label: 'Все' }, ...games.map((g) => ({ code: g.game, label: gameLabel(g.game) }))];
@@ -514,11 +482,28 @@
       button.dataset.filterGame = chip.code;
       button.addEventListener('click', () => {
         historyGame = chip.code;
+        const select = document.querySelector('#filterGame');
+        if (select) select.value = chip.code;
         for (const other of rail.querySelectorAll('.chip')) other.classList.remove('selected');
         button.classList.add('selected');
         void loadHistory();
       });
       return button;
+    }));
+  }
+
+  /**
+   * renderFormStrip draws the last results as a row of marks — the form
+   * guide a sports page uses, and the one place on this screen where the
+   * recent run is visible as a shape rather than a number.
+   */
+  function renderFormStrip(recent) {
+    const strip = document.querySelector('#formStrip');
+    if (!strip) return;
+    strip.replaceChildren(...recent.map((won) => {
+      const mark = el('i', won ? 'form-mark won' : 'form-mark lost');
+      mark.setAttribute('aria-label', won ? 'верно' : 'ошибка');
+      return mark;
     }));
   }
 
@@ -533,13 +518,12 @@
     rail.replaceChildren(...games.map((entry) => {
       const chip = el('button', 'game-chip');
       chip.dataset.game = entry.game.toLowerCase();
-      chip.append(el('i', 'game-dot'), el('span', null, DEMO[entry.game.toLowerCase()]?.label || entry.game),
-        el('small', null, `${entry.accuracy}%`));
+      chip.append(el('i', 'game-dot'), el('span', null, gameLabel(entry.game)),
+        el('small', null, percentText(entry.accuracy)));
       chip.addEventListener('click', () => setGame(chip.dataset.game));
       return chip;
     }));
-    const first = games[0].game.toLowerCase();
-    if (DEMO[first]) void setGame(first);
+    void setGame(games[0].game.toLowerCase());
   }
 
   /** showAccessNotice replaces the screen with why it is empty. */
@@ -575,9 +559,13 @@
     }
   }
 
+  /**
+   * setGame switches which discipline the screens are about. There is no
+   * data of its own to load: the dashboard already carries every game's
+   * record, and this only changes what is highlighted and which crests are
+   * fetched.
+   */
   async function setGame(game) {
-    const data = DEMO[game];
-    if (!data) return;
     currentGame = game;
     document.documentElement.dataset.game = game;
     for (const chip of document.querySelectorAll('.game-chip')) {
@@ -585,27 +573,13 @@
       chip.classList.toggle('active', active);
       chip.setAttribute('aria-pressed', String(active));
     }
-    setText('#gameEyebrow', `${data.label.toUpperCase()} · ПОСЛЕДНИЕ 30 ДНЕЙ`);
-    setText('#accuracyValue', data.accuracy);
-    setText('#accuracySub', data.sub);
-    setText('#formScore', data.form);
-    setText('#trendValue', data.trend);
-    setText('#streakValue', data.streak);
-    setText('#sampleValue', data.sample);
-    setText('#bestSegment', data.best);
-    setText('#bestSegmentSub', data.bestSub);
-    setText('#coachTitle', data.coachTitle);
-    setText('#coachText', data.coachText);
-    setText('#analyticsGameLabel', data.label);
-    setText('#analyticsAccuracy', data.analyticsAccuracy);
-
-    renderMatches(game, data);
     haptic();
     // Crests arrive after the first paint: the board is readable with
     // initials, and re-rendering once they land avoids holding the screen
     // hostage to a network round trip.
     await loadLogos(game);
-    renderMatches(game, data);
+    renderRecent();
+    if (dashboard) renderAnalytics(dashboard);
   }
 
   // --- navigation -----------------------------------------------------
@@ -668,7 +642,17 @@
     };
     document.querySelector('#filterButton')?.addEventListener('click', open);
     document.querySelector('#closeSheet')?.addEventListener('click', close);
-    document.querySelector('#applyFilters')?.addEventListener('click', close);
+    document.querySelector('#applyFilters')?.addEventListener('click', () => {
+      historyGame = document.querySelector('#filterGame')?.value || '';
+      historyResult = document.querySelector('#filterResult')?.value || '';
+      // The chips and the sheet are two views of one filter: whichever was
+      // touched last, both end up showing the same thing.
+      for (const chip of document.querySelectorAll('#historyFilters .chip')) {
+        chip.classList.toggle('selected', (chip.dataset.filterGame || '') === historyGame);
+      }
+      void loadHistory();
+      close();
+    });
     backdrop.addEventListener('click', (event) => {
       if (event.target === backdrop) close();
     });
@@ -709,7 +693,6 @@
     initFilters();
     initSheet();
 
-    void setGame(params.get('game') || 'cs2');
     void loadDashboard();
     const screen = params.get('screen');
     if (screen) showScreen(screen);
