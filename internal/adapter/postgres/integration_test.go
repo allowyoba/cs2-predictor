@@ -3333,3 +3333,61 @@ func TestFeedbackRepository_RecordsAttemptsAndFindsDuplicates(t *testing.T) {
 		t.Fatal("the duplicate check has to respect its window")
 	}
 }
+
+// Teams are per game, and so are the rankings that may be attached to
+// them: the ranking sync asks for the games its feed covers, and this is
+// the query that has to honour that.
+func TestEnrichmentRepository_ListTeamsFiltersByGame(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+	enrich := pg.NewEnrichmentRepository(pool)
+
+	cs2Event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "CS Cup", ExternalID: "cs-cup", Status: competition.EventUpcoming, Provider: "PANDASCORE"}
+	dotaEvent := competition.Event{ID: common.NewEventID(), Game: competition.GameDota2, Name: "Dota Cup", ExternalID: "dota-cup", Status: competition.EventUpcoming, Provider: "PANDASCORE"}
+	for _, e := range []competition.Event{cs2Event, dotaEvent} {
+		if _, err := catalog.SaveEvent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	// The same organisation in both games, which is exactly the case that
+	// used to produce a wrong ranking.
+	cs2Team := competition.Team{ID: common.NewTeamID(), Name: "BetBoom Team", ExternalID: "bb-cs2"}
+	dotaTeam := competition.Team{ID: common.NewTeamID(), Name: "BetBoom Team", ExternalID: "bb-dota"}
+	other := competition.Team{ID: common.NewTeamID(), Name: "Spirit", ExternalID: "spirit-cs2"}
+	if _, err := catalog.SaveMatch(ctx, competition.Match{
+		ID: common.NewMatchID(), EventID: cs2Event.ID, ExternalID: "cs-m1", Status: competition.MatchNotStarted,
+		Format: format, FirstTeam: &cs2Team, SecondTeam: &other,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.SaveMatch(ctx, competition.Match{
+		ID: common.NewMatchID(), EventID: dotaEvent.ID, ExternalID: "dota-m1", Status: competition.MatchNotStarted,
+		Format: format, FirstTeam: &dotaTeam, SecondTeam: &competition.Team{ID: common.NewTeamID(), Name: "Falcons", ExternalID: "falcons-dota"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cs2Teams, err := enrich.ListTeams(ctx, competition.GameCS2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[common.TeamID]bool{}
+	for _, team := range cs2Teams {
+		found[team.ID] = true
+	}
+	if !found[cs2Team.ID] {
+		t.Fatal("expected the Counter-Strike team in a CS2-scoped listing")
+	}
+	if found[dotaTeam.ID] {
+		t.Fatal("a Dota 2 team must never be offered to a Counter-Strike ranking feed")
+	}
+
+	all, err := enrich.ListTeams(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) <= len(cs2Teams) {
+		t.Fatalf("an unscoped listing still returns every team, got %d vs %d", len(all), len(cs2Teams))
+	}
+}

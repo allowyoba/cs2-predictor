@@ -57,7 +57,7 @@ func TestSend_FallsBackToTheMainThreadWhenTheTopicIsGone(t *testing.T) {
 	}
 	scheduledAt := time.Now().Add(time.Hour)
 	catalog := &dataCatalog{
-		events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}},
+		events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}},
 		unstartedMatches: map[common.EventID][]competition.Match{eventID: {{
 			ID: matchID, EventID: eventID, Format: format, Status: competition.MatchNotStarted,
 			FirstTeam:   &competition.Team{ID: common.NewTeamID(), Name: "G2"},

@@ -39,11 +39,23 @@ var (
 
 // --- enrichment.TeamLister ---
 
-// ListTeams returns every known team — the enrichment sync jobs need the
-// whole catalog to match an external ranking feed against, unlike the
-// regular per-match Catalog lookups, which are always scoped to one match.
-func (r *EnrichmentRepository) ListTeams(ctx context.Context) ([]competition.Team, error) {
-	rows, err := executor(ctx, r.pool).Query(ctx, `SELECT id, name, external_id, COALESCE(location, '') FROM team`)
+// ListTeams returns the known teams of the given games — the whole catalog
+// when none are named. A ranking sync passes the games its feed actually
+// covers: "BetBoom Team" exists in both CS2 and Dota 2, and matching the
+// Counter-Strike rankings against the whole table attaches a CS2 ranking
+// to a Dota 2 roster that shares nothing with it but a sponsor.
+func (r *EnrichmentRepository) ListTeams(ctx context.Context, games ...competition.GameCode) ([]competition.Team, error) {
+	query := `SELECT t.id, t.name, t.external_id, COALESCE(t.location, '') FROM team t`
+	var args []any
+	if len(games) > 0 {
+		codes := make([]string, len(games))
+		for i, g := range games {
+			codes[i] = string(g)
+		}
+		query += ` JOIN game g ON g.id = t.game_id WHERE g.code = ANY($1)`
+		args = append(args, codes)
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

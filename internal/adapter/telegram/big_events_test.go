@@ -335,7 +335,7 @@ func TestSubscribedEvents_OffersTopicButtonOnlyInsideAnActualTopic(t *testing.T)
 	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{role: chat.RoleAdministrator})
 
 	eventID := common.NewEventID()
-	handler.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major"}}}
+	handler.Catalog = &dataCatalog{events: map[common.EventID]competition.Event{eventID: {ID: eventID, Name: "Major", Game: competition.GameCS2}}}
 	subDataSubs := &dataSubsForTopicButtonTest{subs: []subscription.EventSubscription{{ChatID: chatID, EventID: eventID, Active: true}}}
 	handler.Subscriptions = subDataSubs
 

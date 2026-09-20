@@ -155,6 +155,20 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 		return prediction.SentPoll{}, fmt.Errorf("%w: %s", competition.ErrEventNotFound, match.EventID.Value)
 	}
 
+	// The rankings are fetched above without knowing the game, because the
+	// event that carries it is loaded in the same batch of concurrent
+	// reads. Dropping them here is what keeps a Counter-Strike ranking out
+	// of a Dota 2 poll — the two rosters behind "BetBoom Team" share a
+	// sponsor and nothing else. The sync no longer writes such a row at
+	// all (see enrichment.RanksGame), and this makes sure the ones written
+	// before it learned better are never shown either.
+	if !enrichment.RanksGame(enrichment.SourceValveVRS, event.Game) {
+		rankings = nil
+	}
+	if !enrichment.RanksGame(enrichment.SourceHLTV, event.Game) {
+		hltvRankings = nil
+	}
+
 	locale, zoneName := common.LocaleRU, chat.DefaultTimezone
 	if settings != nil {
 		locale = settings.Locale
