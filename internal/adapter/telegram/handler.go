@@ -395,8 +395,14 @@ func (h *UpdateHandler) handleMyChatMember(ctx context.Context, update *ChatMemb
 		return err
 	}
 	if settings == nil {
-		// A chat the bot never exchanged a message in (e.g. added and
-		// removed before anyone typed anything) has nothing to update.
+		// No row yet. Being added is the one case worth acting on: that is
+		// the bot's first moment in this room, and saying nothing leaves a
+		// group waiting for polls that will never come (see
+		// welcomeNewChat). Anything else — added and removed before anyone
+		// typed — has nothing to update.
+		if update.NewChatMember.Status == "member" || update.NewChatMember.Status == "administrator" {
+			return h.welcomeNewChat(ctx, update)
+		}
 		return nil
 	}
 	switch update.NewChatMember.Status {
