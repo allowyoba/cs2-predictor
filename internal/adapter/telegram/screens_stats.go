@@ -248,6 +248,10 @@ func statsBackCode(backData string) string {
 }
 
 func leaderboardPageData(period scoring.StatsPeriod, page int, backData string) string {
+	return appendGame(leaderboardPageBase(period, page, backData), period.Game)
+}
+
+func leaderboardPageBase(period scoring.StatsPeriod, page int, backData string) string {
 	switch period.Kind {
 	case scoring.PeriodYear:
 		return fmt.Sprintf("stats:p:y:%d:%d:%s", period.Year, page, statsBackCode(backData))
@@ -261,19 +265,23 @@ func leaderboardPageData(period scoring.StatsPeriod, page int, backData string) 
 }
 
 func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scoring.StatsPeriod, backData string, page, totalPages int) *InlineKeyboard {
+	// Switching period keeps whichever game is selected: the two filters
+	// are independent, and losing one because the other was touched is the
+	// classic way a filter bar becomes untrustworthy.
 	monthData, yearData := "stats:years", "stats:years"
 	switch period.Kind {
 	case scoring.PeriodMonth:
-		monthData = fmt.Sprintf("stats:month:%04d-%02d:menu", period.Year, period.Month)
-		yearData = fmt.Sprintf("stats:year:%d:menu", period.Year)
+		monthData = appendGame(fmt.Sprintf("stats:month:%04d-%02d:menu", period.Year, period.Month), period.Game)
+		yearData = appendGame(fmt.Sprintf("stats:year:%d:menu", period.Year), period.Game)
 	case scoring.PeriodYear:
-		yearData = fmt.Sprintf("stats:year:%d:menu", period.Year)
+		yearData = appendGame(fmt.Sprintf("stats:year:%d:menu", period.Year), period.Game)
 	}
+	allTimeData := appendGame("stats:all", period.Game)
 	rows := [][]InlineButton{
 		{
 			button(statsFilterLabel(period.Kind == scoring.PeriodMonth, h.Texts.Get("stats.month_short", settings.Locale)), monthData),
 			button(statsFilterLabel(period.Kind == scoring.PeriodYear, h.Texts.Get("stats.year_short", settings.Locale)), yearData),
-			button(statsFilterLabel(period.Kind == scoring.PeriodAllTime, h.Texts.Get("stats.all_time_short", settings.Locale)), "stats:all"),
+			button(statsFilterLabel(period.Kind == scoring.PeriodAllTime, h.Texts.Get("stats.all_time_short", settings.Locale)), allTimeData),
 		},
 		{button(statsFilterLabel(period.Kind == scoring.PeriodEvent, h.Texts.Get("stats.event", settings.Locale)), "stats:events")},
 	}
@@ -285,6 +293,14 @@ func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scori
 			button(h.Texts.Get("evbets.mine_button", settings.Locale), eventBetsMineCallback(period.EventID)),
 			button(h.Texts.Get("evbets.pick_button", settings.Locale), eventParticipantPickerCallback(period.EventID, 0)),
 		})
+	}
+	// The game filter sits directly under the period filter: both answer
+	// "which slice of this chat am I looking at", and splitting them
+	// across the screen would read as two unrelated controls.
+	if row := h.statsGameFilterRow(settings, period, func(p scoring.StatsPeriod) string {
+		return leaderboardPageData(p, 0, backData)
+	}); row != nil {
+		rows = append(rows, row)
 	}
 	rows = append(rows, []InlineButton{
 		button(h.Texts.Get("chart.button", settings.Locale), chartCallbackData(period)),
@@ -351,6 +367,10 @@ func (h *UpdateHandler) renderLeaderboard(ctx context.Context, target replyTarge
 	if err != nil {
 		return err
 	}
+	// A board narrowed to one game must say so in its own title: the rows
+	// look identical either way, and "first place" means something
+	// different in each.
+	periodName += h.statsGameSuffix(settings, period)
 	var text string
 	if target.chatID != settings.ChatID {
 		text = h.Texts.Get("stats.managed_title", settings.Locale, escapeHTML(settings.Title), escapeHTML(periodName)) + "\n\n" + body

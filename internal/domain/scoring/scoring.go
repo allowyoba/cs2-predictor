@@ -48,6 +48,20 @@ type StatsPeriod struct {
 	Month   time.Month     // PeriodMonth (with Year)
 	EventID common.EventID // PeriodEvent
 	Day     time.Time      // PeriodDay (date components only)
+	// Game narrows every figure to one game's matches; empty means all of
+	// them, which is what a chat following a single game always sees. A
+	// chat following two games is really keeping two different contests at
+	// once — somebody who predicts every Dota 2 match and no CS2 one is
+	// not "mid-table", they are first at what they actually play — and one
+	// merged table hides exactly that.
+	Game competition.GameCode
+}
+
+// ForGame narrows a period to one game; an empty code widens it back to
+// all of them, which is what the "all games" choice on the screen does.
+func (p StatsPeriod) ForGame(game competition.GameCode) StatsPeriod {
+	p.Game = game
+	return p
 }
 
 func AllTime() StatsPeriod      { return StatsPeriod{Kind: PeriodAllTime} }

@@ -3391,3 +3391,97 @@ func TestEnrichmentRepository_ListTeamsFiltersByGame(t *testing.T) {
 		t.Fatalf("an unscoped listing still returns every team, got %d vs %d", len(all), len(cs2Teams))
 	}
 }
+
+// The game filter has to reach the SQL, and it has to compose with a date
+// range rather than fight it for placeholders — hand-numbered $2/$3 is
+// exactly what would break there.
+func TestScoringRepository_LeaderboardNarrowsToOneGame(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	playedAt := time.Now().UTC().Add(-2 * time.Hour)
+	chatID := common.ChatID{Value: -200796}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Two games", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	var options []prediction.Option
+	for i, score := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: score})
+	}
+	player := common.UserID{Value: 8401}
+
+	// One finished match per game, each worth a different number of points
+	// so the two slices cannot be confused for one another.
+	seed := func(game competition.GameCode, external string, points int) {
+		event := competition.Event{
+			ID: common.NewEventID(), Game: game, Name: string(game) + " Cup",
+			ExternalID: external + "-event", Status: competition.EventRunning, Provider: "PANDASCORE",
+		}
+		if _, err := catalog.SaveEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+		score := competition.MatchScore{First: 2, Second: 0}
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: external + "-match",
+			FirstTeam:   &competition.Team{ID: common.NewTeamID(), Name: "A", ExternalID: external + "-a"},
+			SecondTeam:  &competition.Team{ID: common.NewTeamID(), Name: "B", ExternalID: external + "-b"},
+			ScheduledAt: &playedAt, ActualStartedAt: &playedAt, Status: competition.MatchFinished,
+			Format: format, Score: &score,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := external + "-poll"
+		messageID := int64(len(external))
+		saved, err := predictions.SavePoll(ctx, prediction.Poll{
+			ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID,
+			TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: playedAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: player, OptionIndex: 0, DisplayName: "Player", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := scoringRepo.ReplaceAwards(ctx, saved.ID, []scoring.Award{{
+			ChatID: chatID, EventID: event.ID, MatchID: match.ID, PollID: saved.ID, UserID: player,
+			Points: points, Kind: scoring.AwardExactScore, MatchStartedAt: playedAt, AwardedAt: playedAt,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed(competition.GameCS2, "cs2", 3)
+	seed(competition.GameDota2, "dota", 5)
+
+	points := func(period scoring.StatsPeriod) int {
+		rows, err := scoringRepo.Leaderboard(ctx, chatID, period)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := 0
+		for _, row := range rows {
+			sum += row.Points
+		}
+		return sum
+	}
+
+	if got := points(scoring.AllTime()); got != 8 {
+		t.Fatalf("the unfiltered board = %d points, want both games (8)", got)
+	}
+	if got := points(scoring.AllTime().ForGame(competition.GameCS2)); got != 3 {
+		t.Fatalf("the CS2 board = %d points, want 3", got)
+	}
+	if got := points(scoring.AllTime().ForGame(competition.GameDota2)); got != 5 {
+		t.Fatalf("the Dota 2 board = %d points, want 5", got)
+	}
+	// Composed with a date range — the case that needs the placeholders to
+	// be numbered as they are appended rather than assumed.
+	if got := points(scoring.ForYear(playedAt.Year()).ForGame(competition.GameDota2)); got != 5 {
+		t.Fatalf("this year's Dota 2 board = %d points, want 5", got)
+	}
+}
