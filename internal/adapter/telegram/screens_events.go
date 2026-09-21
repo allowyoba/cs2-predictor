@@ -563,7 +563,9 @@ func (h *UpdateHandler) upcoming(ctx context.Context, target replyTarget, settin
 		upcoming = append(upcoming, upcomingMatch{
 			eventName: eventName,
 			when:      m.ScheduledAt.In(loc), match: m,
-			preferHLTVFlags: settings.PreferHLTVFlags,
+			// HLTV's countries cover Counter-Strike only; elsewhere the
+			// provider's answer is the only one there is.
+			preferHLTVFlags: settings.PreferHLTVFlags && gameOf(byEvent, m.EventID) == competition.GameCS2,
 		})
 	}
 	sort.Slice(upcoming, func(i, j int) bool {
@@ -652,6 +654,15 @@ func (h *UpdateHandler) renderUpcomingGroups(upcoming []upcomingMatch, settings 
 		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+// gameOf answers which discipline a match belongs to, or empty when the
+// event is not in hand.
+func gameOf(byEvent map[common.EventID]competition.Event, eventID common.EventID) competition.GameCode {
+	if event, ok := byEvent[eventID]; ok {
+		return event.Game
+	}
+	return ""
 }
 
 // upcomingMatchLines renders one match under its day heading. Time and teams

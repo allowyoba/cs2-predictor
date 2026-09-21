@@ -20,7 +20,6 @@ type stubSettings struct {
 	locale   *common.LocaleCode
 	zone     *string
 	nickname *string
-	hltv     bool
 	games    map[int64][]competition.GameCode
 	auto     map[[2]string]bool
 }
@@ -84,15 +83,6 @@ func (s *stubSettings) Nickname(context.Context, common.UserID) (*string, error)
 
 func (s *stubSettings) SetNickname(_ context.Context, _ common.UserID, name string) error {
 	s.nickname = &name
-	return nil
-}
-
-func (s *stubSettings) PrefersHLTVLogos(context.Context, common.UserID) (bool, error) {
-	return s.hltv, nil
-}
-
-func (s *stubSettings) SetPrefersHLTVLogos(_ context.Context, _ common.UserID, prefer bool) error {
-	s.hltv = prefer
 	return nil
 }
 
@@ -242,7 +232,6 @@ func TestMiniappSettings_RefusesValuesItDoesNotUnderstand(t *testing.T) {
 		"a language that does not exist": map[string]any{"locale": "KL"},
 		"a timezone that does not load":  map[string]any{"timezone": "Middle/Earth"},
 		"an unknown notification":        map[string]any{"notify": map[string]any{"kind": "everything", "on": true}},
-		"a crest source that is neither": map[string]any{"logo_source": "wikipedia"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()

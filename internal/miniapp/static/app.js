@@ -1376,11 +1376,30 @@
     }
   }
 
+  /**
+   * knownGames is every discipline this person has been seen to play.
+   *
+   * The rail is built from the current scope, and picking a chat narrows
+   * that scope — so a chat that follows one game would collapse the rail
+   * to nothing and the whole page would jump up under the finger that had
+   * just tapped. The rail is a control, and a control that disappears
+   * because you used it is worse than one that shows an option leading
+   * nowhere.
+   */
+  const knownGames = new Map();
+
   function renderGameRail(games) {
     const rail = document.querySelector('#gameRail');
     const row = document.querySelector('#gameRailRow');
     if (!rail || !row) return;
-    if (games.length < 2) {
+
+    // Remembered by code, refreshed by the current scope: a game keeps its
+    // place on the rail, and its percentage is whatever the current filter
+    // makes it — or absent, when this chat has no predictions in it.
+    for (const game of games) knownGames.set(game.game, game);
+    const current = new Map(games.map((g) => [g.game, g]));
+
+    if (knownGames.size < 2) {
       row.hidden = true;
       rail.replaceChildren();
       scope.game = '';
@@ -1391,7 +1410,13 @@
     row.hidden = false;
 
     const options = [{ code: '', label: 'Все игры', accuracy: null },
-      ...games.map((g) => ({ code: g.game.toLowerCase(), label: gameLabel(g.game), accuracy: g.accuracy }))];
+      ...[...knownGames.keys()].map((code) => ({
+        code: code.toLowerCase(),
+        label: gameLabel(code),
+        // Null rather than zero: "no predictions here" and "0% here" are
+        // different statements and only one of them is true.
+        accuracy: current.has(code) ? current.get(code).accuracy : null,
+      }))];
     rail.replaceChildren(...options.map((entry) => {
       const chip = el('button', 'game-chip' + (entry.code === scope.game ? ' active' : ''));
       chip.dataset.game = entry.code;
@@ -1403,7 +1428,7 @@
     }));
     // Every game's crests, not just the selected one: the feeds below mix
     // disciplines, and a row from another game would come out bare.
-    for (const game of games) void loadLogos(game.game.toLowerCase());
+    for (const code of knownGames.keys()) void loadLogos(code.toLowerCase());
   }
 
   function renderChatRail(chats) {
@@ -1544,8 +1569,11 @@
       personal.replaceChildren(
         choiceRow('Язык', data.personal.locale === 'EN' ? 'English' : 'Русский',
           () => patchPersonal({ locale: data.personal.locale === 'EN' ? 'RU' : 'EN' })),
-        choiceRow('Логотипы команд', data.personal.logo_source === 'hltv' ? 'HLTV' : 'провайдер',
-          () => patchPersonal({ logo_source: data.personal.logo_source === 'hltv' ? 'provider' : 'hltv' })),
+        // Источник логотипов — решение всей установки, его принимает
+        // оператор бота: одна и та же команда должна выглядеть одинаково
+        // у всех, кто её видит. Здесь он показан, но не редактируется.
+        choiceRow('Логотипы команд (CS2)', logoSource === 'hltv' ? 'HLTV' : 'провайдер', null,
+          'Общая настройка бота — меняет оператор'),
         choiceRow('Часовой пояс', data.personal.timezone || 'как в чате', null,
           'Меняется в боте: /timezone Area/City'),
         choiceRow('Имя в списках', data.personal.nickname || 'из Telegram', null,
@@ -1557,6 +1585,7 @@
 
     const block = document.querySelector('#chatSettingsBlock');
     const chats = document.querySelector('#chatSettings');
+    const heading = document.querySelector('#chatSettingsHeading');
     if (!block || !chats) return;
     // Nothing to manage is not an empty section: it is a section that does
     // not belong on this person's screen at all.
@@ -1565,7 +1594,25 @@
       return;
     }
     block.hidden = false;
-    chats.replaceChildren(...data.chats.map(chatSettingsCard));
+
+    // The bar at the top narrows this screen too. Somebody who has picked
+    // one chat is looking at that chat everywhere else in the app, and a
+    // settings list that keeps showing all four is the one place where a
+    // tap lands somewhere other than where they are looking.
+    const shown = scope.chat === null ? data.chats : data.chats.filter((c) => c.id === scope.chat);
+    if (heading) {
+      heading.textContent = scope.chat === null
+        ? 'ЧАТЫ, КОТОРЫМИ ВЫ УПРАВЛЯЕТЕ'
+        : 'ВЫБРАННЫЙ ЧАТ';
+    }
+
+    // Picked a chat they play in but do not manage: say so, rather than
+    // showing an empty block that reads as a loading failure.
+    if (shown.length === 0) {
+      chats.replaceChildren(emptyLine('В выбранном чате у вас нет прав на настройки. Снимите фильтр наверху, чтобы увидеть остальные.'));
+      return;
+    }
+    chats.replaceChildren(...shown.map(chatSettingsCard));
   }
 
   function chatSettingsCard(chat) {
@@ -1578,8 +1625,9 @@
         () => patch({ locale: chat.locale === 'EN' ? 'RU' : 'EN' })),
       choiceRow('Язык трансляций', chat.stream_language === 'EN' ? 'English' : 'Русский',
         () => patch({ stream_language: chat.stream_language === 'EN' ? 'RU' : 'EN' })),
-      choiceRow('Флаги команд', chat.prefer_hltv_flags ? 'HLTV' : 'провайдер',
-        () => patch({ prefer_hltv_flags: !chat.prefer_hltv_flags })),
+      ...(hasCS2(chat) ? [choiceRow('Флаги команд (CS2)', chat.prefer_hltv_flags ? 'HLTV' : 'провайдер',
+        () => patch({ prefer_hltv_flags: !chat.prefer_hltv_flags }),
+        'Для остальных игр всегда используется провайдер матчей')] : []),
       choiceRow('Турниры по умолчанию', chat.top_tier_only ? 'только топ' : 'все',
         () => patch({ top_tier_only: !chat.top_tier_only })),
       choiceRow('Тихие часы', quietText(chat), null, 'Меняются в боте: Настройки → Тихие часы'),
@@ -1601,6 +1649,12 @@
       card.append(switchRow(entry, (on) => patch({ notify: { kind: entry.kind, on } })));
     }
     return card;
+  }
+
+  /** hasCS2 reports whether a chat follows Counter-Strike, which is the
+   * only game HLTV has an answer for. */
+  function hasCS2(chat) {
+    return (chat.games || []).some((g) => g.game === 'CS2' && g.enabled);
   }
 
   function quietText(chat) {
@@ -1652,13 +1706,6 @@
   async function patchPersonal(body) {
     settings = await fetchJSON('/api/miniapp/v1/me/settings', { signed: true, method: 'PATCH', body });
     renderSettings(settings);
-    // The crest source is one of these, and it decides which pictures the
-    // rest of the app asks for.
-    if (settings.personal.logo_source && settings.personal.logo_source !== logoSource) {
-      logoSource = settings.personal.logo_source;
-      logos.clear();
-      await refresh();
-    }
   }
 
   async function patchChat(chatID, body) {
@@ -1685,11 +1732,27 @@
    */
   const screenStack = [];
 
-  function showScreen(name, { deeper = false } = {}) {
+  function showScreen(name, { deeper = false, back = false } = {}) {
     const current = screens.find((screen) => screen.classList.contains('is-active'))?.dataset.screen;
     if (deeper && current && current !== name) screenStack.push(current);
     else if (!deeper) screenStack.length = 0;
-    for (const screen of screens) screen.classList.toggle('is-active', screen.dataset.screen === name);
+    for (const screen of screens) {
+      const active = screen.dataset.screen === name;
+      screen.classList.toggle('is-active', active);
+      screen.classList.remove('is-entering', 'from-back');
+      if (!active) continue;
+      // Re-triggered by hand: a CSS animation does not replay because an
+      // element went from display:none to block, so without this a screen
+      // animates the first time it is opened and snaps in for ever after.
+      // Reading offsetWidth forces the reflow that makes the restart take.
+      void screen.offsetWidth;
+      screen.classList.add('is-entering');
+      // Direction carries meaning: going deeper comes in from the right,
+      // coming back from the left, the way the screens are stacked in
+      // somebody's head. A tab is neither — it is a fresh start — and
+      // takes the forward motion without claiming to be one.
+      if (back) screen.classList.add('from-back');
+    }
     for (const button of navButtons) {
       const active = button.dataset.target === name;
       button.classList.toggle('active', active);
@@ -1774,7 +1837,7 @@
     }
     try {
       // One step back, to wherever this screen was opened from.
-      tg?.BackButton?.onClick?.(() => showScreen(screenStack.pop() || 'dashboard'));
+      tg?.BackButton?.onClick?.(() => showScreen(screenStack.pop() || 'dashboard', { back: true }));
     } catch (_) {
       /* older clients have no BackButton */
     }

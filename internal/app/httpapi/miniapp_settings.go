@@ -41,8 +41,6 @@ type MiniAppSettings interface {
 	SetUserTimezone(ctx context.Context, userID common.UserID, timezone string) error
 	Nickname(ctx context.Context, userID common.UserID) (*string, error)
 	SetNickname(ctx context.Context, userID common.UserID, nickname string) error
-	PrefersHLTVLogos(ctx context.Context, userID common.UserID) (bool, error)
-	SetPrefersHLTVLogos(ctx context.Context, userID common.UserID, prefer bool) error
 }
 
 // MiniAppAuthorizer answers whether this person may change that chat.
@@ -68,9 +66,8 @@ type personalSettingsDTO struct {
 	Timezone string `json:"timezone"`
 	// Nickname is the name leaderboards use; empty means their Telegram
 	// name is used as-is.
-	Nickname   string      `json:"nickname"`
-	LogoSource string      `json:"logo_source"`
-	Notify     []switchDTO `json:"notify"`
+	Nickname string      `json:"nickname"`
+	Notify   []switchDTO `json:"notify"`
 }
 
 // chatSettingsDTO is what a manager sets for one chat.
@@ -133,10 +130,6 @@ func readSettings(ctx context.Context, store MiniAppSettings, switches common.No
 	}
 	if nickname, err := store.Nickname(ctx, userID); err == nil && nickname != nil {
 		body.Personal.Nickname = *nickname
-	}
-	body.Personal.LogoSource = "provider"
-	if prefer, err := store.PrefersHLTVLogos(ctx, userID); err == nil && prefer {
-		body.Personal.LogoSource = "hltv"
 	}
 	body.Personal.Notify = readSwitches(ctx, switches, common.ScopeUser, userID.Value, personalNotifyKinds())
 
@@ -211,11 +204,10 @@ func readSwitches(ctx context.Context, switches common.NotifySwitchboard, scope 
 // everything else, so two screens open at once cannot overwrite each
 // other's untouched fields.
 type personalPatch struct {
-	Locale     *string `json:"locale"`
-	Timezone   *string `json:"timezone"`
-	Nickname   *string `json:"nickname"`
-	LogoSource *string `json:"logo_source"`
-	Notify     *struct {
+	Locale   *string `json:"locale"`
+	Timezone *string `json:"timezone"`
+	Nickname *string `json:"nickname"`
+	Notify   *struct {
 		Kind string `json:"kind"`
 		On   bool   `json:"on"`
 	} `json:"notify"`
@@ -253,14 +245,6 @@ func patchSettingsHandler(deps MiniAppDeps, store MiniAppSettings, switches comm
 func applyPersonalPatch(ctx context.Context, store MiniAppSettings, switches common.NotifySwitchboard, userID common.UserID, patch personalPatch) error {
 	if err := applyPersonalIdentity(ctx, store, userID, patch); err != nil {
 		return err
-	}
-	if patch.LogoSource != nil {
-		if *patch.LogoSource != "provider" && *patch.LogoSource != "hltv" {
-			return errInvalidSetting
-		}
-		if err := store.SetPrefersHLTVLogos(ctx, userID, *patch.LogoSource == "hltv"); err != nil {
-			return err
-		}
 	}
 	if patch.Notify != nil {
 		kind := common.NotificationKind(patch.Notify.Kind)

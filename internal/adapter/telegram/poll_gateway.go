@@ -174,7 +174,10 @@ func (g *PollGateway) Send(ctx context.Context, poll prediction.Poll) (predictio
 	if settings != nil {
 		locale = settings.Locale
 		zoneName = settings.Timezone
-		preferHLTV = settings.PreferHLTVFlags
+		// Only Counter-Strike: HLTV publishes a country for the teams it
+		// ranks, and it ranks nothing else. For every other game the
+		// setting has no second source to switch to.
+		preferHLTV = settings.PreferHLTVFlags && event != nil && event.Game == competition.GameCS2
 	}
 	loc := chat.ZoneOrDefault(zoneName)
 

@@ -33,19 +33,26 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 	topTierLabel := h.Texts.Get("settings.tournaments_label", settings.Locale, tournamentMode)
 	autoSubscribeLabel := h.Texts.Get("settings.auto_subscribe_label", settings.Locale, h.autoSubscribeState(settings))
 	streamLanguageLabel := h.Texts.Get("settings.stream_language_label", settings.Locale, h.localeName(settings.StreamLocale(), settings.Locale))
-	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
+	rows := [][]InlineButton{
 		{button(languageLabel, "settings:locale")},
 		{button(timezoneLabel, "settings:timezone")},
 		{button(streamLanguageLabel, "settings:stream_language")},
 		{button(h.Texts.Get("settings.notifications", settings.Locale), "settings:notify")},
 		{button(h.quietHoursLabel(settings), "settings:quiet")},
-		{button(h.flagSourceLabel(settings), "settings:flags")},
 		{button(topTierLabel, "settings:top_tier")},
 		{button(autoSubscribeLabel, "settings:auto_subscribe")},
 		{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
 		{button(h.Texts.Get("settings.moderators", settings.Locale), "settings:moderators")},
 		{button(h.Texts.Get("settings.history", settings.Locale), "settings:history")},
-	}}
+	}
+	// The flag source is offered only where it can do anything: HLTV
+	// publishes a country for the Counter-Strike teams it ranks and for
+	// nothing else, so a chat that does not follow CS2 would be choosing
+	// between the provider's answer and the provider's answer.
+	if settings.GameEnabled(competition.GameCS2) {
+		rows = append(rows[:5], append([][]InlineButton{{button(h.flagSourceLabel(settings), "settings:flags")}}, rows[5:]...)...)
+	}
+	kb := InlineKeyboard{InlineKeyboard: rows}
 	// Copying settings between chats only makes sense from the DM panel,
 	// where "the chats you manage" is the frame the user is already in; in
 	// a group it would silently reach into chats nobody in this room can

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 
 	"cs2predictor/internal/platform/common"
 )
@@ -48,6 +49,55 @@ func (h *UpdateHandler) modeHub(ctx context.Context, target replyTarget, locale 
 	return h.respond(ctx, target, bold(h.Texts.Get("hub.title", locale)), &InlineKeyboard{InlineKeyboard: rows})
 }
 
+// crestSourceLabel is the operator row for which team crests this
+// deployment shows.
+//
+// A deployment-wide answer rather than a personal or a per-chat one: which
+// pictures the bot uses is a decision about the product, and the same team
+// has to look the same to everybody who sees it.
+func (h *UpdateHandler) crestSourceLabel(ctx context.Context, locale common.LocaleCode) string {
+	state := h.Texts.Get("settings.logos_provider", locale)
+	if h.crestSourceIsHLTV(ctx) {
+		state = h.Texts.Get("settings.logos_hltv", locale)
+	}
+	return h.Texts.Get("settings.logos_label", locale, state)
+}
+
+// crestSourceIsHLTV reads the stored choice; anything unreadable is the
+// default, because a settings row that errors is worse than one that shows
+// what the app is actually rendering.
+func (h *UpdateHandler) crestSourceIsHLTV(ctx context.Context) bool {
+	store, ok := h.Chats.(common.BotSettings)
+	if !ok {
+		return false
+	}
+	value, err := store.BotSetting(ctx, common.CrestSourceKey)
+	if err != nil {
+		h.Log.Warn("crest source lookup failed", "error", err)
+		return false
+	}
+	return value == common.CrestSourceHLTV
+}
+
+// toggleCrestSource flips it for the whole deployment.
+func (h *UpdateHandler) toggleCrestSource(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+	if !h.isRootTeamMatchOperator(userID) {
+		return h.refuse(ctx, target, locale, "hub:system")
+	}
+	store, ok := h.Chats.(common.BotSettings)
+	if !ok {
+		return fmt.Errorf("chat repository does not support deployment settings")
+	}
+	next := common.CrestSourceHLTV
+	if h.crestSourceIsHLTV(ctx) {
+		next = "provider"
+	}
+	if err := store.SetBotSetting(ctx, common.CrestSourceKey, next, userID); err != nil {
+		return err
+	}
+	return h.systemToolsMenu(ctx, target, userID, locale)
+}
+
 // systemToolsMenu is the root/delegated-operator panel: a discoverable
 // home for surfaces that used to be command-only. Denies anyone else the
 // same way every other operator-only screen in this package does.
@@ -63,6 +113,7 @@ func (h *UpdateHandler) systemToolsMenu(ctx context.Context, target replyTarget,
 			[]InlineButton{button(h.Texts.Get("hub.provider_status", locale), "hub:provider_status")},
 			[]InlineButton{button(h.Texts.Get("hub.outbox", locale), "hub:outbox")},
 			[]InlineButton{button(h.Texts.Get("notify.alert.title", locale), "hub:alerts")},
+			[]InlineButton{button(h.crestSourceLabel(ctx, locale), "hub:crest_source")},
 			[]InlineButton{button(h.Texts.Get("hub.team_match_operators", locale), "hub:team_match_operators")},
 		)
 	}

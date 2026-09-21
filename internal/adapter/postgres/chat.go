@@ -427,27 +427,6 @@ func (r *ChatRepository) UserTimezone(ctx context.Context, userID common.UserID)
 	return zone, err
 }
 
-// PrefersHLTVLogos reads one person's crest source; an unknown person
-// takes the default, which is the match provider.
-func (r *ChatRepository) PrefersHLTVLogos(ctx context.Context, userID common.UserID) (bool, error) {
-	var prefer bool
-	err := executor(ctx, r.pool).QueryRow(ctx,
-		`SELECT prefer_hltv_logos FROM telegram_user WHERE id = $1`, userID.Value).Scan(&prefer)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	return prefer, err
-}
-
-func (r *ChatRepository) SetPrefersHLTVLogos(ctx context.Context, userID common.UserID, prefer bool) error {
-	if err := r.ensureUser(ctx, userID); err != nil {
-		return err
-	}
-	_, err := executor(ctx, r.pool).Exec(ctx,
-		`UPDATE telegram_user SET prefer_hltv_logos = $2, updated_at = now() WHERE id = $1`, userID.Value, prefer)
-	return err
-}
-
 func (r *ChatRepository) SetUserTimezone(ctx context.Context, userID common.UserID, timezone string) error {
 	if err := r.ensureUser(ctx, userID); err != nil {
 		return err
