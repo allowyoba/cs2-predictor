@@ -38,7 +38,10 @@ import (
 // a crest is decoration, and the fallback — a team's initials — is already
 // what the app draws for teams nobody published a picture for.
 type LogoMirror struct {
-	Cache  enrichment.TeamLogoCache
+	Cache enrichment.TeamLogoCache
+	// Games mirrors each discipline's own logo from its publisher, on the
+	// same terms as the crests; nil leaves the app naming games in words.
+	Games  enrichment.GameLogoCache
 	Client *http.Client
 	Clock  common.Clock
 	Lock   common.ClusterLock
@@ -64,8 +67,10 @@ const (
 	// slower than anything a person browsing the same site would produce,
 	// which is the bar worth clearing.
 	LogoMirrorPause = 2 * time.Second
-	// LogoMirrorMaxBytes rejects anything larger than a crest could
-	// reasonably be. These are 50-pixel PNGs.
+	// LogoMirrorMaxBytes rejects anything larger than a logo could
+	// reasonably be. Team crests are 50-pixel PNGs; a publisher's own game
+	// logo runs to a few tens of kilobytes, and half a megabyte is still
+	// far above both.
 	LogoMirrorMaxBytes = 512 * 1024
 	// LogoMirrorTimeout bounds one fetch.
 	LogoMirrorTimeout = 15 * time.Second
@@ -115,6 +120,8 @@ func (m *LogoMirror) Dispatch(ctx context.Context) {
 }
 
 func (m *LogoMirror) run(ctx context.Context) error {
+	m.mirrorGames(ctx)
+
 	// Before anything goes out: measure what is already here. A crest
 	// mirrored before the measurement existed would otherwise never be
 	// measured, because fetching is what triggers it and nothing will
@@ -174,6 +181,49 @@ func (m *LogoMirror) run(ctx context.Context) error {
 		m.Log.Info("team crests mirrored", "stored", stored, "unchanged", unchanged, "considered", len(pending))
 	}
 	return nil
+}
+
+// mirrorGames fetches each game's logo once, from the publisher's own
+// CDN. There are two of them and they change about as often as a game is
+// rebranded, so this does nothing on all but the first pass.
+func (m *LogoMirror) mirrorGames(ctx context.Context) {
+	if m.Games == nil {
+		return
+	}
+	pending, err := m.Games.PendingGameLogos(ctx)
+	if err != nil {
+		m.Log.Warn("game logo mirror skipped", "error", err)
+		return
+	}
+	for i, need := range pending {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(m.pause()):
+			}
+		}
+		fetched, err := m.fetch(ctx, enrichment.TeamLogoNeed{SourceURL: need.SourceURL})
+		if err != nil || fetched == nil {
+			if err != nil {
+				m.Log.Warn("game logo fetch skipped", "game", need.Game, "error", err)
+			}
+			continue
+		}
+		var isLight *bool
+		if light, ok := logoIsLight(fetched.Bytes); ok {
+			isLight = &light
+		}
+		if err := m.Games.SaveGameLogo(ctx, enrichment.GameLogo{
+			Game: need.Game, SourceURL: need.SourceURL, ContentType: fetched.ContentType,
+			Bytes: fetched.Bytes, Digest: fetched.Digest, ETag: fetched.ETag,
+			LastModified: fetched.LastModified, IsLight: isLight, FetchedAt: fetched.FetchedAt,
+		}); err != nil {
+			m.Log.Error("game logo save failed", "game", need.Game, "error", err)
+			continue
+		}
+		m.Log.Info("game logo mirrored", "game", need.Game)
+	}
 }
 
 // measureStored decides the chip for crests already held. No network at

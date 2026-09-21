@@ -45,12 +45,22 @@ func decodeTeams(t *testing.T, body []byte) teamsResponse {
 // stubLogos stands for the mirrored crests. Only digests matter here: the
 // endpoint builds URLs, it does not serve bytes.
 type stubLogos struct {
-	digests map[common.TeamID]map[enrichment.Source]string
-	chips   map[common.TeamID]map[enrichment.Source]bool
+	digests     map[common.TeamID]map[enrichment.Source]string
+	chips       map[common.TeamID]map[enrichment.Source]bool
+	gameLogo    *enrichment.GameLogo
+	gameDigests map[competition.GameCode]string
 }
 
 func (s *stubLogos) LogoChips(context.Context) (map[common.TeamID]map[enrichment.Source]bool, error) {
 	return s.chips, nil
+}
+
+func (s *stubLogos) FindGameLogo(context.Context, competition.GameCode) (*enrichment.GameLogo, error) {
+	return s.gameLogo, nil
+}
+
+func (s *stubLogos) GameLogoDigests(context.Context) (map[competition.GameCode]string, error) {
+	return s.gameDigests, nil
 }
 
 func (s *stubLogos) FindLogo(context.Context, common.TeamID, enrichment.Source) (*enrichment.TeamLogo, error) {
@@ -269,5 +279,76 @@ func TestMiniappTeams_HLTVIsACounterStrikeSourceOnly(t *testing.T) {
 	}
 	if body.Teams[0].Location != "DE" {
 		t.Fatalf("location = %q, want HLTV's country on CS2", body.Teams[0].Location)
+	}
+}
+
+// A game's logo is served from here, from bytes the bot fetched once — the
+// same rule as a team crest, for the same reason: opening the app must not
+// send anybody's browser to somebody else's CDN.
+func TestMiniappGameLogo_ServedFromHereAndCachedForever(t *testing.T) {
+	logos := &stubLogos{gameLogo: &enrichment.GameLogo{
+		Game: competition.GameCS2, ContentType: "image/png",
+		Bytes: []byte("\x89PNG\r\n\x1a\nfake"), Digest: "abc123",
+	}}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/miniapp/v1/games/{code}/logo", gameLogoHandler(logos))
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/games/cs2/logo?v=abc123", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("Cache-Control = %q — the digest is in the URL, so these bytes are safe to keep", got)
+	}
+
+	// A digest that has not changed costs a header exchange, not an image.
+	revalidate := httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/games/cs2/logo?v=abc123", nil)
+	revalidate.Header.Set("If-None-Match", `"abc123"`)
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, revalidate)
+	if recorder.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", recorder.Code)
+	}
+
+	// A game this bot does not follow is a bad request, not an empty image.
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/games/chess/logo", nil))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+
+	// Nothing mirrored yet: the app names the game in words instead.
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/games/dota2/logo", nil))
+	if empty := (&stubLogos{}); true {
+		bare := http.NewServeMux()
+		bare.Handle("GET /api/miniapp/v1/games/{code}/logo", gameLogoHandler(empty))
+		missing := httptest.NewRecorder()
+		bare.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/games/dota2/logo", nil))
+		if missing.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 when nothing is mirrored", missing.Code)
+		}
+	}
+}
+
+// The logos come from the publishers themselves, over https, and every
+// game the bot follows has one configured — a game added without a source
+// would silently lose its logo.
+func TestGameLogoSourcesAreOfficialAndComplete(t *testing.T) {
+	for _, game := range competition.Games {
+		url, ok := enrichment.GameLogoSources[game]
+		if !ok {
+			t.Errorf("%s has no logo source; the rail will name it in words for ever", game)
+			continue
+		}
+		if !strings.HasPrefix(url, "https://") {
+			t.Errorf("%s: %q is not https", game, url)
+		}
+		// Valve publishes both of these games and serves their artwork
+		// itself; anything else would not be the official source.
+		if !strings.Contains(url, "steamstatic.com") {
+			t.Errorf("%s: %q is not the publisher's own CDN", game, url)
+		}
 	}
 }
