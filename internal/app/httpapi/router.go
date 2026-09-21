@@ -111,6 +111,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	}
 	miniappTeams := instrument("miniapp_teams", teamsHandler(deps.Teams, deps.Logos))
 	mux.Handle("GET /api/miniapp/v1/teams", miniappTeams)
+	mux.Handle("GET /api/miniapp/v1/games/{code}/logo", instrument("miniapp_game_logo", gameLogoHandler(deps.Logos)))
 	mux.Handle("GET /api/miniapp/v1/teams/{id}/logo", instrument("miniapp_logo", logoHandler(deps.Logos)))
 	mux.Handle("GET /api/miniapp/v1/me/dashboard", instrument("miniapp_dashboard", dashboardHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/active", instrument("miniapp_active", activeHandler(deps.MiniApp, deps.MiniAppActive)))

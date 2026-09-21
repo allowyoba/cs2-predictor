@@ -316,7 +316,7 @@ func run() error {
 	deadLetters := &app.DeadLetterWatch{Store: outbox, Alerter: adminAlerter, Metrics: metrics, Log: log}
 
 	logoMirror := &app.LogoMirror{
-		Cache: enrichmentRepo, Client: httpClient, Clock: clock, Lock: clusterLock, Log: log,
+		Cache: enrichmentRepo, Games: enrichmentRepo, Client: httpClient, Clock: clock, Lock: clusterLock, Log: log,
 	}
 
 	// backgroundJobs tracks every scheduler goroutine so shutdown can wait
@@ -385,6 +385,7 @@ func run() error {
 		MiniAppActive:  scoringRepo,
 		MiniApp: httpapi.MiniAppDeps{
 			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats, Prefs: chats,
+			Logos:     enrichmentRepo,
 			Operators: cfg.TeamMatchOperatorChatIDs, Clock: clock, Log: log,
 		},
 		MiniAppFacts:    scoringRepo,

@@ -8,6 +8,11 @@ out/
 *.test
 *.prof
 coverage.out
+# A stray `go build ./cmd/x` drops the binary in the repo root, where
+# `git add -A` will happily commit fifteen megabytes of it.
+/cs2predictor
+/backfill-team-order
+/segtest
 coverage.html
 
 # Local Ansible controller and release checkout

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cs2predictor/internal/domain/chat"
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
@@ -65,6 +66,8 @@ type MiniAppDeps struct {
 	BotToken string
 	Stats    MiniAppStats
 	Access   MiniAppAccessChecker
+	// Logos serves the mirrored game logos the rail draws.
+	Logos MiniAppLogos
 	// Names resolves the display name the rest of the bot uses.
 	Names MiniAppNames
 	// Prefs is this person's own settings; nil leaves the defaults.
@@ -106,7 +109,10 @@ type trendDTO struct {
 
 // gameDTO is one game's own record, for somebody who plays more than one.
 type gameDTO struct {
-	Game          string    `json:"game"`
+	Game string `json:"game"`
+	// Logo is the publisher's own logo, mirrored here; empty until it has
+	// been, and the app names the game in words instead.
+	Logo          string    `json:"logo,omitempty"`
 	Predictions   int       `json:"predictions"`
 	Accuracy      int       `json:"accuracy"`
 	CurrentStreak int       `json:"current_streak"`
@@ -237,6 +243,9 @@ func dashboardHandler(deps MiniAppDeps, active MiniAppActive) http.Handler {
 		}
 		body.Trend = trendOf(insights)
 		body.Games = gameBreakdown(all, selected, now)
+		if active != nil {
+			attachGameLogos(r.Context(), deps, body.Games)
+		}
 		body.Best, body.Worst = teamExtremes(scoped)
 		body.Teams = teamSpread(scoped)
 		body.Bias = teamBias(r.Context(), deps, user.ID, selected)
@@ -267,6 +276,22 @@ func gameBreakdown(all []scoring.UserPrediction, selected scope, now time.Time) 
 		out = append(out, game)
 	}
 	return out
+}
+
+// attachGameLogos fills in each discipline's own logo. Best effort: a
+// missing picture leaves the game named in words, which is what the rail
+// showed before any of this existed.
+func attachGameLogos(ctx context.Context, deps MiniAppDeps, games []gameDTO) {
+	if deps.Logos == nil {
+		return
+	}
+	digests, err := deps.Logos.GameLogoDigests(ctx)
+	if err != nil {
+		return
+	}
+	for i := range games {
+		games[i].Logo = gameLogoURL(competition.GameCode(games[i].Game), digests[competition.GameCode(games[i].Game)])
+	}
 }
 
 // teamExtremes names the teams somebody reads best and worst, from the
