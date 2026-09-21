@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// decodesWebP reports whether the WebP decoder is registered. The bytes
+// are a minimal lossy WebP of a solid block — enough to reach the decoder,
+// which is the thing under test.
+func decodesWebP(t *testing.T) bool {
+	t.Helper()
+	webpBytes := []byte{
+		'R', 'I', 'F', 'F', 0x1a, 0, 0, 0, 'W', 'E', 'B', 'P',
+		'V', 'P', '8', 'L', 0x0d, 0, 0, 0,
+		0x2f, 0x00, 0x00, 0x00, 0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xfe, 0x07, 0x00,
+	}
+	_, format, err := image.Decode(bytes.NewReader(webpBytes))
+	return err == nil && format == "webp"
+}
+
 // crestPNG draws a mark of one colour on a transparent field, which is how
 // essentially every team crest is published.
 func crestPNG(t *testing.T, mark color.NRGBA) []byte {
@@ -53,6 +67,13 @@ func TestLogoIsLight(t *testing.T) {
 	// judged on the pixels that are actually drawn.
 	if light, ok := logoIsLight(crestPNG(t, color.NRGBA{R: 240, G: 240, B: 240, A: 255})); !ok || !light {
 		t.Fatalf("a near-white mark on a transparent field measured as light=%v, ok=%v", light, ok)
+	}
+
+	// WebP is not in the standard library and a provider can serve it, so
+	// it has to be registered explicitly — otherwise these crests measure
+	// as "unknown" and get the neutral chip this exists to avoid.
+	if !decodesWebP(t) {
+		t.Error("WebP does not decode; a crest served in it would never get a chip")
 	}
 
 	// Nothing to measure is said out loud rather than guessed: an SVG, or
