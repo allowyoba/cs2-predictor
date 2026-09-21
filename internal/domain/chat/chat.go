@@ -264,15 +264,6 @@ type Repository interface {
 	// every private screen used before this existed.
 	UserTimezone(ctx context.Context, userID common.UserID) (*string, error)
 	SetUserTimezone(ctx context.Context, userID common.UserID, timezone string) error
-	// PrefersHLTVLogos is this person's crest source for the Mini App.
-	//
-	// A person's setting rather than a chat's: crests are only rendered in
-	// the Mini App, which one person opens in their own private chat. It
-	// used to live on the chat, where nothing ever read it — see migration
-	// 0052. Country flags are the opposite and stay on the chat: those are
-	// rendered in the poll, in the room, for everybody.
-	PrefersHLTVLogos(ctx context.Context, userID common.UserID) (bool, error)
-	SetPrefersHLTVLogos(ctx context.Context, userID common.UserID, prefer bool) error
 
 	// SetDMReachable records whether the bot may message this user
 	// privately. Telegram forbids a bot's first message to someone who has

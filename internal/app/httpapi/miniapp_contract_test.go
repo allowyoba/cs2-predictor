@@ -125,7 +125,7 @@ func sampleChats() chatsDTO {
 func sampleSettings() settingsDTO {
 	return settingsDTO{
 		Personal: personalSettingsDTO{
-			Locale: "RU", Timezone: "Europe/Moscow", Nickname: "Аня", LogoSource: "hltv",
+			Locale: "RU", Timezone: "Europe/Moscow", Nickname: "Аня",
 			Notify: []switchDTO{{Kind: "recaps", On: true}},
 		},
 		Chats: []chatSettingsDTO{{

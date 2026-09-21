@@ -41,11 +41,14 @@ type MiniAppNames interface {
 	UserProfile(ctx context.Context, userID common.UserID) (*chat.UserProfile, error)
 }
 
-// MiniAppPrefs reads the personal settings the app honours. Only the crest
-// source so far, and it is a person's choice rather than a chat's because
-// the app is a private surface — see chat.Repository.PrefersHLTVLogos.
+// MiniAppPrefs reads the deployment-wide settings the app honours.
+//
+// The crest source is one answer for everybody, set by an operator: which
+// pictures this bot shows is a decision about the product, and the same
+// team looking different depending on who opened the app is not a
+// preference, it is an inconsistency.
 type MiniAppPrefs interface {
-	PrefersHLTVLogos(ctx context.Context, userID common.UserID) (bool, error)
+	BotSetting(ctx context.Context, key common.BotSettingKey) (string, error)
 }
 
 // MiniAppAccessChecker answers whether this person may open the app at
@@ -147,10 +150,10 @@ type dashboardDTO struct {
 		ID          int64  `json:"id"`
 		DisplayName string `json:"display_name"`
 		PhotoURL    string `json:"photo_url,omitempty"`
-		// LogoSource is "provider" or "hltv": which crests this person
-		// asked for. The app sends it back when it fetches the team list,
-		// which keeps that endpoint public and cacheable while the
-		// preference still belongs to the person.
+		// LogoSource is "provider" or "hltv": which crests this
+		// deployment shows. The app sends it back when it fetches the team
+		// list, which keeps that endpoint public and cacheable while the
+		// decision stays in one place.
 		LogoSource string `json:"logo_source"`
 	} `json:"user"`
 	Summary summaryDTO `json:"summary"`
@@ -217,8 +220,8 @@ func dashboardHandler(deps MiniAppDeps, active MiniAppActive) http.Handler {
 		body.User.PhotoURL = user.Profile.PhotoURL
 		body.User.LogoSource = "provider"
 		if deps.Prefs != nil {
-			if prefer, err := deps.Prefs.PrefersHLTVLogos(r.Context(), user.ID); err == nil && prefer {
-				body.User.LogoSource = "hltv"
+			if value, err := deps.Prefs.BotSetting(r.Context(), common.CrestSourceKey); err == nil && value == common.CrestSourceHLTV {
+				body.User.LogoSource = common.CrestSourceHLTV
 			}
 		}
 		if overall != nil {

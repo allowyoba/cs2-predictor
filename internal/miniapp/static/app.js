@@ -1569,12 +1569,11 @@
       personal.replaceChildren(
         choiceRow('Язык', data.personal.locale === 'EN' ? 'English' : 'Русский',
           () => patchPersonal({ locale: data.personal.locale === 'EN' ? 'RU' : 'EN' })),
-        // HLTV ранжирует только Counter-Strike, поэтому его картинки есть
-        // для CS2 и больше ни для чего: подпись говорит об этом прямо,
-        // вместо настройки, которая делает вид, что влияет на всё.
-        choiceRow('Логотипы команд (CS2)', data.personal.logo_source === 'hltv' ? 'HLTV' : 'провайдер',
-          () => patchPersonal({ logo_source: data.personal.logo_source === 'hltv' ? 'provider' : 'hltv' }),
-          'Для остальных игр всегда используется провайдер матчей'),
+        // Источник логотипов — решение всей установки, его принимает
+        // оператор бота: одна и та же команда должна выглядеть одинаково
+        // у всех, кто её видит. Здесь он показан, но не редактируется.
+        choiceRow('Логотипы команд (CS2)', logoSource === 'hltv' ? 'HLTV' : 'провайдер', null,
+          'Общая настройка бота — меняет оператор'),
         choiceRow('Часовой пояс', data.personal.timezone || 'как в чате', null,
           'Меняется в боте: /timezone Area/City'),
         choiceRow('Имя в списках', data.personal.nickname || 'из Telegram', null,
@@ -1707,13 +1706,6 @@
   async function patchPersonal(body) {
     settings = await fetchJSON('/api/miniapp/v1/me/settings', { signed: true, method: 'PATCH', body });
     renderSettings(settings);
-    // The crest source is one of these, and it decides which pictures the
-    // rest of the app asks for.
-    if (settings.personal.logo_source && settings.personal.logo_source !== logoSource) {
-      logoSource = settings.personal.logo_source;
-      logos.clear();
-      await refresh();
-    }
   }
 
   async function patchChat(chatID, body) {
@@ -1740,11 +1732,27 @@
    */
   const screenStack = [];
 
-  function showScreen(name, { deeper = false } = {}) {
+  function showScreen(name, { deeper = false, back = false } = {}) {
     const current = screens.find((screen) => screen.classList.contains('is-active'))?.dataset.screen;
     if (deeper && current && current !== name) screenStack.push(current);
     else if (!deeper) screenStack.length = 0;
-    for (const screen of screens) screen.classList.toggle('is-active', screen.dataset.screen === name);
+    for (const screen of screens) {
+      const active = screen.dataset.screen === name;
+      screen.classList.toggle('is-active', active);
+      screen.classList.remove('is-entering', 'from-back');
+      if (!active) continue;
+      // Re-triggered by hand: a CSS animation does not replay because an
+      // element went from display:none to block, so without this a screen
+      // animates the first time it is opened and snaps in for ever after.
+      // Reading offsetWidth forces the reflow that makes the restart take.
+      void screen.offsetWidth;
+      screen.classList.add('is-entering');
+      // Direction carries meaning: going deeper comes in from the right,
+      // coming back from the left, the way the screens are stacked in
+      // somebody's head. A tab is neither — it is a fresh start — and
+      // takes the forward motion without claiming to be one.
+      if (back) screen.classList.add('from-back');
+    }
     for (const button of navButtons) {
       const active = button.dataset.target === name;
       button.classList.toggle('active', active);
@@ -1829,7 +1837,7 @@
     }
     try {
       // One step back, to wherever this screen was opened from.
-      tg?.BackButton?.onClick?.(() => showScreen(screenStack.pop() || 'dashboard'));
+      tg?.BackButton?.onClick?.(() => showScreen(screenStack.pop() || 'dashboard', { back: true }));
     } catch (_) {
       /* older clients have no BackButton */
     }
