@@ -30,6 +30,10 @@ type UserBet struct {
 	// names with no tournament and no discipline look like duplicates.
 	Game      competition.GameCode
 	EventName string
+	// EventTier is the tournament's own tier ("s", "a", …). A Major and a
+	// qualifier read as the same line without it, and "your accuracy by
+	// tournament" is mostly a question about which tournaments.
+	EventTier string
 }
 
 // UserBetsMaxRows bounds how much history a "my bets" screen reads — enough

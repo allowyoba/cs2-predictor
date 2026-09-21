@@ -109,6 +109,7 @@ func TestVerifyInitData_RefusesStaleAndFutureLaunches(t *testing.T) {
 type stubMiniAppStats struct {
 	standing    *scoring.UserStanding
 	predictions []scoring.UserPrediction
+	bias        []scoring.TeamBias
 	askedFor    common.UserID
 }
 
@@ -316,4 +317,10 @@ func TestMiniappDashboard_UsesTheNameTheBotShowsEverywhereElse(t *testing.T) {
 	if got := nameFrom(nil); got != "Telegram Name" {
 		t.Fatalf("display name = %q, want the launch profile when no name store is wired", got)
 	}
+}
+
+// The bias read is one extra query behind one block; these tests are about
+// authentication, so it answers nothing and the dashboard still renders.
+func (s *stubMiniAppStats) UserTeamBias(context.Context, common.UserID, int) ([]scoring.TeamBias, error) {
+	return s.bias, nil
 }
