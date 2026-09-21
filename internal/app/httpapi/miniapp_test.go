@@ -228,3 +228,46 @@ func TestMiniappTeams_ReportsFailuresRatherThanAnEmptyBoard(t *testing.T) {
 		t.Fatalf("status = %d, want 503", recorder.Code)
 	}
 }
+
+// HLTV ranks Counter-Strike and nothing else, so its crests exist for CS2
+// alone. Asking for them on another game is a preference with no second
+// source behind it, and the truthful answer is the provider's picture —
+// not a blank one, and not a setting that pretends to have done something.
+func TestMiniappTeams_HLTVIsACounterStrikeSourceOnly(t *testing.T) {
+	dota := common.NewTeamID()
+	teams := &stubTeams{teams: []competition.Team{
+		{ID: dota, Name: "Team Spirit", LogoURL: "https://cdn-api.pandascore.co/spirit.png",
+			HLTVLogoURL: "https://img-cdn.hltv.org/spirit.png", Location: "RU", HLTVLocation: "DE"},
+	}}
+	logos := &stubLogos{digests: map[common.TeamID]map[enrichment.Source]string{
+		dota: {"PANDASCORE": "aaaa1111", enrichment.SourceHLTV: "bbbb2222"},
+	}}
+	handler := teamsHandler(teams, logos)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=dota2&logos=hltv", nil))
+
+	body := decodeTeams(t, recorder.Body.Bytes())
+	if body.LogoSrc != "provider" {
+		t.Fatalf("logo source = %q, want the provider: HLTV has no Dota 2 to offer", body.LogoSrc)
+	}
+	if !strings.Contains(body.Teams[0].Logo, "src=provider") {
+		t.Fatalf("crest = %q, want the provider's", body.Teams[0].Logo)
+	}
+	// The same rule for the flag: HLTV's country is a Counter-Strike answer.
+	if body.Teams[0].Location != "RU" {
+		t.Fatalf("location = %q, want the provider's country outside CS2", body.Teams[0].Location)
+	}
+
+	// And on CS2 the preference is honoured, which is what makes the rule
+	// a rule rather than the setting being broken.
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/miniapp/v1/teams?game=cs2&logos=hltv", nil))
+	body = decodeTeams(t, recorder.Body.Bytes())
+	if body.LogoSrc != "hltv" || !strings.Contains(body.Teams[0].Logo, "src=hltv") {
+		t.Fatalf("on CS2 the preference was ignored: %+v", body.Teams[0])
+	}
+	if body.Teams[0].Location != "DE" {
+		t.Fatalf("location = %q, want HLTV's country on CS2", body.Teams[0].Location)
+	}
+}

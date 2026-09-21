@@ -113,7 +113,12 @@ func teamsHandler(catalog TeamCatalog, logos MiniAppLogos) http.Handler {
 			http.Error(w, "unknown game", http.StatusBadRequest)
 			return
 		}
-		preferHLTV := r.URL.Query().Get("logos") == "hltv"
+		// HLTV ranks Counter-Strike and nothing else, so its crests and
+		// countries exist for CS2 alone. Asking for them on another game
+		// is not an error — it is a preference that simply has no other
+		// source to offer — and answering with the provider's pictures is
+		// the truthful reading of it.
+		preferHLTV := r.URL.Query().Get("logos") == "hltv" && game == competition.GameCS2
 		limit := miniappTeamsLimit
 		if raw := r.URL.Query().Get("limit"); raw != "" {
 			parsed, err := strconv.Atoi(raw)

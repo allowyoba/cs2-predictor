@@ -1569,8 +1569,12 @@
       personal.replaceChildren(
         choiceRow('Язык', data.personal.locale === 'EN' ? 'English' : 'Русский',
           () => patchPersonal({ locale: data.personal.locale === 'EN' ? 'RU' : 'EN' })),
-        choiceRow('Логотипы команд', data.personal.logo_source === 'hltv' ? 'HLTV' : 'провайдер',
-          () => patchPersonal({ logo_source: data.personal.logo_source === 'hltv' ? 'provider' : 'hltv' })),
+        // HLTV ранжирует только Counter-Strike, поэтому его картинки есть
+        // для CS2 и больше ни для чего: подпись говорит об этом прямо,
+        // вместо настройки, которая делает вид, что влияет на всё.
+        choiceRow('Логотипы команд (CS2)', data.personal.logo_source === 'hltv' ? 'HLTV' : 'провайдер',
+          () => patchPersonal({ logo_source: data.personal.logo_source === 'hltv' ? 'provider' : 'hltv' }),
+          'Для остальных игр всегда используется провайдер матчей'),
         choiceRow('Часовой пояс', data.personal.timezone || 'как в чате', null,
           'Меняется в боте: /timezone Area/City'),
         choiceRow('Имя в списках', data.personal.nickname || 'из Telegram', null,
@@ -1622,8 +1626,9 @@
         () => patch({ locale: chat.locale === 'EN' ? 'RU' : 'EN' })),
       choiceRow('Язык трансляций', chat.stream_language === 'EN' ? 'English' : 'Русский',
         () => patch({ stream_language: chat.stream_language === 'EN' ? 'RU' : 'EN' })),
-      choiceRow('Флаги команд', chat.prefer_hltv_flags ? 'HLTV' : 'провайдер',
-        () => patch({ prefer_hltv_flags: !chat.prefer_hltv_flags })),
+      ...(hasCS2(chat) ? [choiceRow('Флаги команд (CS2)', chat.prefer_hltv_flags ? 'HLTV' : 'провайдер',
+        () => patch({ prefer_hltv_flags: !chat.prefer_hltv_flags }),
+        'Для остальных игр всегда используется провайдер матчей')] : []),
       choiceRow('Турниры по умолчанию', chat.top_tier_only ? 'только топ' : 'все',
         () => patch({ top_tier_only: !chat.top_tier_only })),
       choiceRow('Тихие часы', quietText(chat), null, 'Меняются в боте: Настройки → Тихие часы'),
@@ -1645,6 +1650,12 @@
       card.append(switchRow(entry, (on) => patch({ notify: { kind: entry.kind, on } })));
     }
     return card;
+  }
+
+  /** hasCS2 reports whether a chat follows Counter-Strike, which is the
+   * only game HLTV has an answer for. */
+  function hasCS2(chat) {
+    return (chat.games || []).some((g) => g.game === 'CS2' && g.enabled);
   }
 
   function quietText(chat) {
