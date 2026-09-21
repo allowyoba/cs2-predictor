@@ -169,6 +169,48 @@
         </section>
 
         <!--
+          Формат против стадии. Пустая клетка означает «мало прогнозов»
+          честнее, чем бледная: процент на двух матчах — это шум с
+          подписью.
+        -->
+        <section class="glass-card analytics-card" id="heatmapCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ФОРМАТ И СТАДИЯ</div><h2>Где вы точнее</h2></div></div>
+          <div class="heatmap" id="heatmap"></div>
+        </section>
+
+        <!--
+          Не «где хуже процент», а что было общего у неверных прогнозов.
+          Один прогноз попадает во все подходящие теги: это наблюдения о
+          матче, а не диагноз.
+        -->
+        <section class="glass-card analytics-card" id="mistakesCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ОШИБКИ</div><h2>Что у них общего</h2></div><span class="sample-chip" id="mistakeTotal"></span></div>
+          <div class="mistake-list" id="mistakes"></div>
+          <p class="legal-note">Один прогноз может попасть сразу в несколько строк, поэтому сумма больше числа ошибок.</p>
+        </section>
+
+        <!--
+          Сила соперника по разрыву в рейтинге. Рейтинги покрывают команды,
+          которые попали в ленту источника, поэтому это срез записи, а не
+          вся она — и экран говорит об этом прямо.
+        -->
+        <section class="glass-card analytics-card" id="opponentsCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">СИЛА СОПЕРНИКА</div><h2>Какие матчи читаете</h2></div><span class="sample-chip" id="opponentCoverage"></span></div>
+          <div class="opponent-list" id="opponents"></div>
+        </section>
+
+        <!--
+          Короткое описание того, как человек прогнозирует, а не сколько.
+          Четыре оси, не пять: пятая требует, чтобы человек назвал свою
+          уверенность до матча, а бот спрашивает счёт.
+        -->
+        <section class="glass-card analytics-card" id="fingerprintCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ПОРТРЕТ</div><h2>Как вы прогнозируете</h2></div></div>
+          <div class="fingerprint" id="fingerprint"></div>
+          <p class="legal-note">Пятой оси — насколько точно вы оцениваете собственную уверенность — здесь нет: для неё нужно называть вероятность до матча, а бот спрашивает счёт.</p>
+        </section>
+
+        <!--
           Турниры: где результат держится, а где проседает.
         -->
         <section class="glass-card analytics-card" id="tournamentCard" hidden>
