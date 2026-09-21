@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"cs2predictor/internal/domain/chat"
@@ -26,6 +27,7 @@ import (
 type MiniAppStats interface {
 	UserStats(ctx context.Context, userID common.UserID, period scoring.StatsPeriod) (*scoring.UserStanding, error)
 	UserPredictions(ctx context.Context, userID common.UserID, limit int) ([]scoring.UserPrediction, error)
+	UserTeamBias(ctx context.Context, userID common.UserID, limit int) ([]scoring.TeamBias, error)
 }
 
 // MiniAppNames resolves the name this person is known by inside the bot.
@@ -111,8 +113,24 @@ type gameDTO struct {
 // teamDTO is how well somebody reads one team.
 type teamDTO struct {
 	Team        string `json:"team"`
+	Game        string `json:"game,omitempty"`
 	Accuracy    int    `json:"accuracy"`
 	Predictions int    `json:"predictions"`
+}
+
+// biasDTO is how often somebody backs a team against how often it won the
+// same matches. Both rates are over the matches this person actually voted
+// on, so the comparison is about their reading rather than about the
+// team's record in games they never saw.
+type biasDTO struct {
+	Team     string `json:"team"`
+	Game     string `json:"game,omitempty"`
+	Matches  int    `json:"matches"`
+	PickRate int    `json:"pick_rate"`
+	WinRate  int    `json:"win_rate"`
+	Accuracy int    `json:"accuracy"`
+	// BiasPP is positive when backed more often than they won.
+	BiasPP int `json:"bias_pp"`
 }
 
 // chatRefDTO is one chat the person plays in, for the filter bar. Carries
@@ -148,6 +166,14 @@ type dashboardDTO struct {
 	// half a question: the useful half is usually the other one.
 	Best  []teamDTO `json:"best_teams"`
 	Worst []teamDTO `json:"worst_teams"`
+	// Teams is the whole ranking rather than its two ends, for the plot
+	// that shows accuracy against sample size: the point of that chart is
+	// the spread, and a chart of the extremes has no spread to show.
+	Teams []teamDTO `json:"teams"`
+	// Bias is the teams whose pick rate is furthest from their win rate,
+	// in either direction. Neither direction is a mistake; the gap is an
+	// observation.
+	Bias []biasDTO `json:"bias"`
 }
 
 // accessDTO is what the app is told about its own right to be open.
@@ -209,6 +235,8 @@ func dashboardHandler(deps MiniAppDeps, active MiniAppActive) http.Handler {
 		body.Trend = trendOf(insights)
 		body.Games = gameBreakdown(all, selected, now)
 		body.Best, body.Worst = teamExtremes(scoped)
+		body.Teams = teamSpread(scoped)
+		body.Bias = teamBias(r.Context(), deps, user.ID, selected)
 		if chats, err := chatRefs(r.Context(), active, user.ID); err == nil {
 			body.Chats = chats
 		} else {
@@ -260,6 +288,71 @@ func teamExtremes(scoped []scoring.UserPrediction) (best, worst []teamDTO) {
 		return render(ranked[:half]), reverse(render(ranked[half:]))
 	}
 	return render(ranked[:scoring.InsightsTeamLimit]), reverse(render(ranked[len(ranked)-scoring.InsightsTeamLimit:]))
+}
+
+// teamSpread is the whole ranking, for the accuracy-against-sample plot.
+// Bounded so one person with a long history cannot make this payload the
+// heaviest thing the app loads.
+func teamSpread(scoped []scoring.UserPrediction) []teamDTO {
+	ranked := scoring.TeamAccuracyOf(scoped)
+	if len(ranked) > teamSpreadLimit {
+		ranked = ranked[:teamSpreadLimit]
+	}
+	out := make([]teamDTO, 0, len(ranked))
+	for _, team := range ranked {
+		out = append(out, teamDTO{
+			Team: team.TeamName, Accuracy: team.AccuracyPercent(), Predictions: team.Predictions,
+		})
+	}
+	return out
+}
+
+const teamSpreadLimit = 40
+
+// teamBias reads the pick-rate comparison and keeps the teams furthest
+// from their own win rate, in both directions.
+//
+// Best effort: this is one extra query behind one block of one screen, and
+// failing the whole dashboard over it would trade a chart for everything
+// else on the page.
+func teamBias(ctx context.Context, deps MiniAppDeps, userID common.UserID, selected scope) []biasDTO {
+	rows, err := deps.Stats.UserTeamBias(ctx, userID, biasReadLimit)
+	if err != nil {
+		if deps.Log != nil {
+			deps.Log.Warn("team bias unavailable", "error", err)
+		}
+		return nil
+	}
+	kept := make([]biasDTO, 0, len(rows))
+	for _, row := range rows {
+		if row.Matches < scoring.TeamBiasMinMatches || !selected.keepsGame(row.Game) {
+			continue
+		}
+		kept = append(kept, biasDTO{
+			Team: row.TeamName, Game: string(row.Game), Matches: row.Matches,
+			PickRate: row.PickRatePercent(), WinRate: row.WinRatePercent(),
+			Accuracy: row.AccuracyPercent(), BiasPP: row.BiasPP(),
+		})
+	}
+	sort.SliceStable(kept, func(a, b int) bool {
+		return abs(kept[a].BiasPP) > abs(kept[b].BiasPP)
+	})
+	if len(kept) > biasShownLimit {
+		kept = kept[:biasShownLimit]
+	}
+	return kept
+}
+
+const (
+	biasReadLimit  = 60
+	biasShownLimit = 8
+)
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // reverse puts the worst-read team first in its own list, so both tables

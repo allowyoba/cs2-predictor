@@ -422,6 +422,9 @@
       if (!games.length) gamesRoot.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
     }
 
+    renderScatter(data.teams || []);
+    renderBias(data.bias || []);
+    renderCrossGame(all, recentEntries);
     renderTeamTable('#analyticsTeams', data.best_teams || []);
     renderTeamTable('#analyticsWorstTeams', data.worst_teams || []);
     // Two tables with nothing in either is one empty state, not two.
@@ -447,6 +450,469 @@
       row.append(copy, el('em', null, percentText(team.accuracy)));
       return row;
     }));
+  }
+
+  // --- where a percentage is worth believing ---------------------------
+
+  /**
+   * renderScatter plots accuracy against how many predictions it rests on.
+   *
+   * A percentage on its own hides its own reliability: 91% over seven
+   * predictions and 85% over thirty-four look like a ranking, and are not.
+   * Two axes separate the claim from the evidence behind it, which is the
+   * only honest way to show both at once.
+   */
+  function renderScatter(teams) {
+    const root = document.querySelector('#teamScatter');
+    if (!root) return;
+    const points = (teams || []).filter((t) => t.predictions > 0);
+    if (points.length < MIN_SCATTER_POINTS) {
+      root.replaceChildren(emptyLine(`Появится, когда наберётся ${MIN_SCATTER_POINTS}+ команд с достаточной историей.`));
+      return;
+    }
+
+    const width = 320;
+    const height = 180;
+    const pad = { left: 24, right: 10, top: 10, bottom: 20 };
+    const maxN = Math.max(...points.map((p) => p.predictions));
+    const x = (n) => pad.left + (n / maxN) * (width - pad.left - pad.right);
+    const y = (a) => pad.top + ((100 - a) / 100) * (height - pad.top - pad.bottom);
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const node = (name, attrs, text) => {
+      const n = document.createElementNS(ns, name);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      if (text !== undefined) n.textContent = text;
+      return n;
+    };
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Точность команд против числа прогнозов по ним');
+
+    // The 50% line is the only reference that means anything here: above
+    // it a call is better than a coin, below it worse.
+    svg.append(node('line', { x1: pad.left, x2: width - pad.right, y1: y(50), y2: y(50), class: 'scatter-mid' }));
+    svg.append(node('text', { x: 2, y: y(50) + 3, class: 'scatter-tick' }, '50%'));
+    svg.append(node('text', { x: 2, y: y(100) + 8, class: 'scatter-tick' }, '100%'));
+    // The reliability threshold: to the right of it a percentage rests on
+    // enough matches to be worth quoting.
+    if (maxN > MIN_SEGMENT_SAMPLE) {
+      svg.append(node('line', {
+        x1: x(MIN_SEGMENT_SAMPLE), x2: x(MIN_SEGMENT_SAMPLE), y1: pad.top, y2: height - pad.bottom,
+        class: 'scatter-threshold',
+      }));
+    }
+
+    for (const point of points) {
+      const solid = point.predictions >= MIN_SEGMENT_SAMPLE;
+      const dot = node('circle', {
+        cx: x(point.predictions), cy: y(point.accuracy),
+        r: solid ? 5 : 3.5,
+        class: 'scatter-dot' + (solid ? '' : ' thin') + (point.accuracy >= 50 ? '' : ' low'),
+      });
+      dot.append(node('title', {}, `${point.team}: ${point.accuracy}% на ${point.predictions} ${plural(point.predictions, 'прогнозе', 'прогнозах', 'прогнозах')}`));
+      svg.append(dot);
+    }
+    root.replaceChildren(svg);
+  }
+
+  const MIN_SCATTER_POINTS = 3;
+
+  /**
+   * renderBias shows who somebody backs more often than that team wins,
+   * and who they back less often than it does.
+   *
+   * Drawn as bars either side of a centre line, because the direction is
+   * the finding: a team you back too rarely is as interesting as one you
+   * back too often, and a ranked list would bury one of them.
+   */
+  function renderBias(rows) {
+    const card = document.querySelector('#biasCard');
+    const root = document.querySelector('#teamBias');
+    if (!card || !root) return;
+    const entries = rows || [];
+    if (entries.length === 0) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    const widest = Math.max(...entries.map((e) => Math.abs(e.bias_pp)), 1);
+
+    root.replaceChildren(...entries.map((entry) => {
+      const row = el('div', 'bias-row');
+      const name = el('div', 'bias-name');
+      name.append(teamMark(entry.game ? entry.game.toLowerCase() : currentGame, entry.team), el('strong', null, entry.team));
+
+      const track = el('div', 'bias-track');
+      const bar = el('i', 'bias-bar ' + (entry.bias_pp >= 0 ? 'over' : 'under'));
+      bar.style.width = `${(Math.abs(entry.bias_pp) / widest) * 50}%`;
+      track.append(el('i', 'bias-axis'), bar);
+
+      const value = el('div', 'bias-value ' + (entry.bias_pp >= 0 ? 'over' : 'under'));
+      value.append(el('b', null, `${entry.bias_pp >= 0 ? '+' : '−'}${Math.abs(entry.bias_pp)} п.п.`),
+        el('small', null, `вы ${entry.pick_rate}% · они ${entry.win_rate}%`));
+
+      row.append(name, track, value);
+      row.title = `${entry.team}: выбираете в ${entry.pick_rate}% матчей, выигрывают ${entry.win_rate}%, ваша точность ${entry.accuracy}% на ${entry.matches}`;
+      return row;
+    }));
+  }
+
+  /**
+   * renderCrossGame puts the disciplines side by side.
+   *
+   * One number per tab answers "how am I doing in this game" and never
+   * "in which game am I improving", which is the question somebody with
+   * two games actually has.
+   */
+  function renderCrossGame(games, entries) {
+    const card = document.querySelector('#crossGameCard');
+    const root = document.querySelector('#crossGame');
+    if (!card || !root) return;
+    const played = (games || []).filter((g) => g.predictions > 0);
+    if (played.length < 2) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+
+    root.replaceChildren(...played.map((game) => {
+      const cell = el('article', 'multiple');
+      cell.append(el('div', 'eyebrow', gameLabel(game.game)));
+      cell.append(el('strong', null, percentText(game.accuracy)));
+
+      const recent = (entries || [])
+        .filter((e) => e.game === game.game)
+        .slice(0, SPARK_LENGTH)
+        .reverse();
+      cell.append(sparkline(recent));
+
+      const trend = game.trend;
+      const delta = trend ? trend.delta_pp : 0;
+      cell.append(el('small', trend ? (delta >= 0 ? 'positive-text' : 'negative-text') : 'muted',
+        trend ? `${delta >= 0 ? '+' : '−'}${Math.abs(delta)} п.п.` : `${game.predictions} ${plural(game.predictions, 'прогноз', 'прогноза', 'прогнозов')}`));
+      return cell;
+    }));
+  }
+
+  const SPARK_LENGTH = 12;
+
+  /** sparkline draws a run of results as a shape, not a number. */
+  function sparkline(entries) {
+    const strip = el('div', 'spark');
+    if (entries.length === 0) {
+      strip.append(el('i', 'spark-mark empty'));
+      return strip;
+    }
+    strip.append(...entries.map((entry) => el('i', 'spark-mark ' + (entry.correct ? 'won' : 'lost'))));
+    return strip;
+  }
+
+  /**
+   * renderTournaments ranks tournaments by how the person does in them,
+   * against their own average rather than against an absolute.
+   *
+   * 64% means nothing on its own; 64% from somebody who averages 77% is
+   * the finding.
+   */
+  function renderTournaments(entries) {
+    const card = document.querySelector('#tournamentCard');
+    const root = document.querySelector('#tournamentTable');
+    if (!card || !root) return;
+
+    const byEvent = new Map();
+    for (const entry of entries || []) {
+      if (!entry.event) continue;
+      const row = byEvent.get(entry.event) || { event: entry.event, tier: entry.tier || '', total: 0, correct: 0 };
+      row.total += 1;
+      if (entry.correct) row.correct += 1;
+      byEvent.set(entry.event, row);
+    }
+    const rows = [...byEvent.values()].filter((r) => r.total >= MIN_TOURNAMENT_SAMPLE);
+    if (rows.length < 2) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+
+    const total = entries.length;
+    const overall = Math.round((entries.filter((e) => e.correct).length / Math.max(1, total)) * 100);
+    for (const row of rows) row.accuracy = Math.round((row.correct / row.total) * 100);
+    rows.sort((a, b) => b.accuracy - a.accuracy);
+
+    root.replaceChildren(...rows.map((row) => {
+      const line = el('article', 'tournament-row');
+      const copy = el('div');
+      const title = el('strong', null, row.event);
+      copy.append(title);
+      copy.append(el('small', null, `${row.total} ${plural(row.total, 'прогноз', 'прогноза', 'прогнозов')}${row.tier ? ' · ' + tierLabel(row.tier) : ''}`));
+      const delta = row.accuracy - overall;
+      line.append(copy, el('b', null, percentText(row.accuracy)),
+        el('em', delta >= 0 ? 'positive-text' : 'negative-text', `${delta >= 0 ? '+' : '−'}${Math.abs(delta)}`));
+      return line;
+    }));
+  }
+
+  const MIN_TOURNAMENT_SAMPLE = 4;
+
+  /** tierLabel spells a tier the way the bot does. */
+  function tierLabel(tier) {
+    const badges = { s: '🌟 S-tier', a: '⭐ A-tier', b: 'B-tier', c: 'C-tier', d: 'D-tier' };
+    return badges[String(tier).toLowerCase()] || String(tier).toUpperCase();
+  }
+
+  // --- the shape of a record -------------------------------------------
+  //
+  // Three views of the same settled predictions, each answering something
+  // a single percentage cannot.
+  //
+  // All three are built from the history feed the app already loads: no
+  // extra request, and nothing here can disagree with the list below it
+  // because it is the same list.
+
+  /** ROLLING_WINDOWS are the sizes the chart offers. */
+  const ROLLING_WINDOWS = [20, 50, 100];
+  let rollingWindow = 20;
+
+  /**
+   * renderForm draws the rolling accuracy, the streak timeline and the
+   * calendar from one ordered list of settled predictions.
+   *
+   * entries arrive newest first, which is right for a feed and wrong for
+   * everything here: a line that reads right-to-left is a line nobody
+   * reads correctly.
+   */
+  function renderForm(entries) {
+    const ordered = [...entries].reverse();
+    renderRolling(ordered);
+    renderStreakTimeline(ordered);
+    renderCalendar(ordered);
+    renderTournaments(entries);
+    if (dashboard) renderCrossGame(dashboard.games || [], entries);
+  }
+
+  /**
+   * renderRolling draws accuracy over the last N predictions against the
+   * all-time average.
+   *
+   * The point of the chart is the gap between the two lines: a number on
+   * its own says how somebody has done, and the distance from their own
+   * average says whether they are doing it better or worse than usual.
+   */
+  function renderRolling(ordered) {
+    const chart = document.querySelector('#rollingChart');
+    const legend = document.querySelector('#rollingLegend');
+    const switcher = document.querySelector('#rollingWindow');
+    if (!chart || !legend || !switcher) return;
+
+    // A window as long as the whole history draws one point and calls it
+    // a trend. Windows that cannot produce a readable line are offered but
+    // refused, with the reason on them, rather than silently missing.
+    const usable = (size) => ordered.length - Math.min(size, ordered.length) + 1 >= MIN_ROLLING_POINTS;
+    if (!usable(rollingWindow)) {
+      rollingWindow = ROLLING_WINDOWS.filter(usable).pop() || ROLLING_WINDOWS[0];
+    }
+    switcher.replaceChildren(...ROLLING_WINDOWS.map((size) => {
+      const ok = usable(size);
+      const button = el('button', 'window-chip' + (size === rollingWindow ? ' active' : ''), String(size));
+      button.setAttribute('aria-pressed', String(size === rollingWindow));
+      button.disabled = !ok;
+      if (!ok) button.title = `Нужно больше прогнозов: окно в ${size} пока покрывает всю историю целиком.`;
+      button.addEventListener('click', () => {
+        if (!ok) return;
+        rollingWindow = size;
+        haptic();
+        renderForm(recentEntries);
+      });
+      return button;
+    }));
+
+    // Below the window there is no rolling average yet, only a shorter
+    // and shorter prefix — which would draw a wild line out of two
+    // predictions and call it form.
+    if (ordered.length < MIN_ROLLING_SAMPLE) {
+      chart.replaceChildren(emptyLine(`Нужно хотя бы ${MIN_ROLLING_SAMPLE} завершённых прогнозов, чтобы линия что-то значила.`));
+      legend.replaceChildren();
+      return;
+    }
+
+    const size = Math.min(rollingWindow, ordered.length);
+    const series = [];
+    let hits = 0;
+    for (let i = 0; i < ordered.length; i += 1) {
+      if (ordered[i].correct) hits += 1;
+      if (i >= size) {
+        if (ordered[i - size].correct) hits -= 1;
+      }
+      if (i >= size - 1) series.push(Math.round((hits / size) * 100));
+    }
+    const overall = Math.round((ordered.filter((e) => e.correct).length / ordered.length) * 100);
+
+    chart.replaceChildren(rollingSvg(series, overall));
+
+    const latest = series[series.length - 1];
+    const earliest = series[0];
+    const delta = latest - earliest;
+    legend.replaceChildren(
+      legendItem('accent', `${latest}% сейчас`),
+      legendItem('muted', `${overall}% за всё время`),
+      legendItem(delta >= 0 ? 'up' : 'down',
+        `${delta >= 0 ? '+' : '−'}${Math.abs(delta)} п.п. за ${series.length} ${plural(series.length, 'прогноз', 'прогноза', 'прогнозов')}`),
+    );
+  }
+
+  /** MIN_ROLLING_SAMPLE is the shortest history worth drawing a line for. */
+  const MIN_ROLLING_SAMPLE = 12;
+
+  /** MIN_ROLLING_POINTS is the fewest points that still read as a line
+   * rather than as a dot with an axis around it. */
+  const MIN_ROLLING_POINTS = 5;
+
+  /**
+   * plural picks the Russian form. "1 прогнозов" is the kind of wrong that
+   * makes a careful screen look machine-made.
+   */
+  function plural(n, one, few, many) {
+    const mod100 = n % 100;
+    if (mod100 >= 11 && mod100 <= 14) return many;
+    switch (n % 10) {
+      case 1: return one;
+      case 2: case 3: case 4: return few;
+      default: return many;
+    }
+  }
+
+  function legendItem(kind, text) {
+    const item = el('span', 'legend-item ' + kind);
+    item.append(el('i'), el('span', null, text));
+    return item;
+  }
+
+  /**
+   * rollingSvg draws the line. SVG rather than a canvas so it scales with
+   * the phone and stays readable when the system font is enlarged.
+   */
+  function rollingSvg(series, overall) {
+    const width = 320;
+    const height = 120;
+    const pad = 6;
+    const lo = Math.max(0, Math.min(...series, overall) - 6);
+    const hi = Math.min(100, Math.max(...series, overall) + 6);
+    const span = Math.max(1, hi - lo);
+    const x = (i) => pad + (i * (width - pad * 2)) / Math.max(1, series.length - 1);
+    const y = (v) => height - pad - ((v - lo) / span) * (height - pad * 2);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', `Скользящая точность: сейчас ${series[series.length - 1]}%, в среднем ${overall}%`);
+
+    const node = (name, attrs) => {
+      const n = document.createElementNS('http://www.w3.org/2000/svg', name);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      return n;
+    };
+
+    // The average first, so the line is read against it rather than over it.
+    svg.append(node('line', { x1: pad, x2: width - pad, y1: y(overall), y2: y(overall), class: 'rolling-avg' }));
+
+    const points = series.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+    svg.append(node('polyline', { points, class: 'rolling-line' }));
+    svg.append(node('polygon', {
+      points: `${x(0)},${height - pad} ${points} ${x(series.length - 1)},${height - pad}`,
+      class: 'rolling-fill',
+    }));
+    svg.append(node('circle', { cx: x(series.length - 1), cy: y(series[series.length - 1]), r: 3.5, class: 'rolling-head' }));
+    return svg;
+  }
+
+  /**
+   * renderStreakTimeline shows the last results in order, so a run of
+   * three and a run of nine do not look like the same "streak: 3".
+   */
+  function renderStreakTimeline(ordered) {
+    const root = document.querySelector('#streakTimeline');
+    const summary = document.querySelector('#streakSummary');
+    if (!root) return;
+    const tail = ordered.slice(-STREAK_TIMELINE_LENGTH);
+    if (tail.length === 0) {
+      root.replaceChildren(emptyLine('Здесь появится последовательность ваших результатов.'));
+      return;
+    }
+    root.replaceChildren(...tail.map((entry) => {
+      const mark = el('i', 'streak-mark ' + (entry.correct ? 'won' : 'lost'));
+      const when = new Date(entry.played_at).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+      mark.title = `${when}: ${entry.first_team} — ${entry.second_team}, ${entry.correct ? 'верно' : 'ошибка'}`;
+      return mark;
+    }));
+
+    let run = 0;
+    for (let i = tail.length - 1; i >= 0 && tail[i].correct; i -= 1) run += 1;
+    if (summary) summary.textContent = run > 0 ? `${run} подряд` : 'серия прервана';
+  }
+
+  const STREAK_TIMELINE_LENGTH = 30;
+
+  /**
+   * renderCalendar colours each day by how the day went rather than by how
+   * much was predicted: a busy bad day and a busy good one are the same
+   * square on a contribution graph, and opposite things here.
+   */
+  function renderCalendar(ordered) {
+    const root = document.querySelector('#calendar');
+    const summary = document.querySelector('#calendarSummary');
+    if (!root) return;
+    const byDay = new Map();
+    for (const entry of ordered) {
+      const day = new Date(entry.played_at);
+      if (Number.isNaN(day.getTime())) continue;
+      const key = day.toISOString().slice(0, 10);
+      const cell = byDay.get(key) || { total: 0, correct: 0 };
+      cell.total += 1;
+      if (entry.correct) cell.correct += 1;
+      byDay.set(key, cell);
+    }
+    if (byDay.size === 0) {
+      root.replaceChildren(emptyLine('Появится, когда наберётся история по дням.'));
+      return;
+    }
+
+    const days = [];
+    const today = new Date();
+    for (let back = CALENDAR_DAYS - 1; back >= 0; back -= 1) {
+      const day = new Date(today);
+      day.setDate(today.getDate() - back);
+      const key = day.toISOString().slice(0, 10);
+      days.push({ key, day, cell: byDay.get(key) });
+    }
+    root.replaceChildren(...days.map(({ key, day, cell }) => {
+      const square = el('i', 'cal-cell lvl-' + calendarLevel(cell));
+      const label = day.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+      square.title = cell
+        ? `${label}: ${cell.correct} из ${cell.total}`
+        : `${label}: прогнозов не было`;
+      square.dataset.day = key;
+      return square;
+    }));
+    const active = days.filter((d) => d.cell).length;
+    if (summary) {
+      summary.textContent = `${active} ${plural(active, 'день', 'дня', 'дней')} с прогнозами за ${CALENDAR_DAYS}`;
+    }
+  }
+
+  const CALENDAR_DAYS = 70;
+
+  /** calendarLevel maps a day's accuracy to one of four shades; a day with
+   * nothing in it is its own, emptiest, shade. */
+  function calendarLevel(cell) {
+    if (!cell || cell.total === 0) return 'none';
+    const share = cell.correct / cell.total;
+    if (share >= 0.75) return 3;
+    if (share >= 0.5) return 2;
+    if (share > 0) return 1;
+    return 0;
   }
 
   // --- active predictions ----------------------------------------------
@@ -809,6 +1275,7 @@
       if (!historyResult) {
         recentEntries = body.entries || [];
         renderRecent();
+        renderForm(recentEntries);
       }
     } catch (error) {
       if (error instanceof ForbiddenError) showAccessNotice('forbidden');
@@ -895,8 +1362,17 @@
     renderGameRail(games);
     renderChatRail(chats);
     const wrap = document.querySelector('#filterBar');
-    if (wrap) {
-      wrap.hidden = games.length < 2 && chats.length < 2;
+    if (!wrap) return;
+    const useful = games.length > 1 || chats.length > 1;
+    // Shown once, and then left alone. Every reload of the dashboard used
+    // to hide the bar and show it again, and changing a filter reloads the
+    // dashboard — so using the filter made the bar blink and the whole
+    // page jump under the finger that was still on it.
+    if (useful) {
+      wrap.hidden = false;
+      wrap.dataset.settled = 'true';
+    } else if (wrap.dataset.settled !== 'true') {
+      wrap.hidden = true;
     }
   }
 

@@ -86,14 +86,18 @@ func sampleDashboard() dashboardDTO {
 	body.Trend = &trendDTO{CurrentAccuracy: 70, PreviousAccuracy: 60, DeltaPP: 10, CurrentSample: 10, PreviousSample: 9}
 	body.Games = []gameDTO{{Game: "CS2", Predictions: 8, Accuracy: 75, CurrentStreak: 2, Trend: body.Trend}}
 	body.Chats = []chatRefDTO{{ID: -100, Title: "Прогнозы", Predictions: 8}}
-	body.Best = []teamDTO{{Team: "G2", Accuracy: 80, Predictions: 5}}
-	body.Worst = []teamDTO{{Team: "NAVI", Accuracy: 20, Predictions: 5}}
+	body.Best = []teamDTO{{Team: "G2", Game: "CS2", Accuracy: 80, Predictions: 5}}
+	body.Worst = []teamDTO{{Team: "NAVI", Game: "CS2", Accuracy: 20, Predictions: 5}}
+	body.Teams = []teamDTO{{Team: "MOUZ", Game: "CS2", Accuracy: 60, Predictions: 12}}
+	body.Bias = []biasDTO{{
+		Team: "NAVI", Game: "CS2", Matches: 18, PickRate: 78, WinRate: 57, Accuracy: 61, BiasPP: 21,
+	}}
 	return body
 }
 
 func sampleHistory() historyDTO {
 	return historyDTO{Count: 1, Entries: []historyEntryDTO{{
-		PlayedAt: time.Now(), Game: "CS2", Event: "IEM", Chat: "Прогнозы",
+		PlayedAt: time.Now(), Game: "CS2", Event: "IEM", Tier: "s", Chat: "Прогнозы",
 		First: "G2", Second: "NAVI", Predicted: "2:0", Actual: "2:1",
 		Correct: true, Points: 1, Chats: 1,
 	}}}

@@ -27,16 +27,19 @@ type MiniAppHistory interface {
 
 // historyEntryDTO is one row as the app renders it.
 type historyEntryDTO struct {
-	PlayedAt  time.Time `json:"played_at"`
-	Game      string    `json:"game"`
-	Event     string    `json:"event"`
-	Chat      string    `json:"chat"`
-	First     string    `json:"first_team"`
-	Second    string    `json:"second_team"`
-	Predicted string    `json:"predicted"`
-	Actual    string    `json:"actual"`
-	Correct   bool      `json:"correct"`
-	Points    int       `json:"points"`
+	PlayedAt time.Time `json:"played_at"`
+	Game     string    `json:"game"`
+	Event    string    `json:"event"`
+	// Tier is the tournament's own tier, so a Major and a qualifier do not
+	// read as the same row.
+	Tier      string `json:"tier,omitempty"`
+	Chat      string `json:"chat"`
+	First     string `json:"first_team"`
+	Second    string `json:"second_team"`
+	Predicted string `json:"predicted"`
+	Actual    string `json:"actual"`
+	Correct   bool   `json:"correct"`
+	Points    int    `json:"points"`
 	// Chats is how many chats this same prediction was made in. Somebody
 	// in two groups following the same tournament predicts the same match
 	// twice, and two identical rows in a feed read as a bug — so they
@@ -145,7 +148,7 @@ func buildHistory(bets []scoring.UserBet, filter historyFilter) historyDTO {
 		}
 		seen[key] = len(body.Entries)
 		body.Entries = append(body.Entries, historyEntryDTO{
-			PlayedAt: bet.PlayedAt, Game: string(bet.Game), Event: bet.EventName, Chat: bet.ChatTitle,
+			PlayedAt: bet.PlayedAt, Game: string(bet.Game), Event: bet.EventName, Tier: bet.EventTier, Chat: bet.ChatTitle,
 			First: bet.FirstTeamName, Second: bet.SecondTeamName,
 			Predicted: bet.PredictedScore.String(), Actual: bet.ActualScore.String(),
 			Correct: bet.Correct, Points: bet.Points, Chats: 1,

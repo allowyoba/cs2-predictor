@@ -100,10 +100,80 @@
           <article><span>Слабее всего</span><strong id="analyticsWorst">—</strong><small id="analyticsWorstNote">есть что подтянуть</small></article>
         </div>
 
+        <!--
+          Форма как линия, а не как одно число. Точность за всё время
+          отвечает «сколько вы угадали когда-либо», а вопрос почти всегда
+          другой: идёте вы вверх или вниз прямо сейчас.
+        -->
+        <section class="glass-card analytics-card">
+          <div class="section-title-row compact-row">
+            <div><div class="eyebrow">ФОРМА</div><h2>Скользящая точность</h2></div>
+            <div class="window-switch" id="rollingWindow" role="group" aria-label="Размер окна"></div>
+          </div>
+          <div class="rolling-chart" id="rollingChart"></div>
+          <div class="rolling-legend" id="rollingLegend"></div>
+        </section>
+
+        <!--
+          Последовательность, а не счётчик: серии и провалы видно формой,
+          и видно сразу, где именно всё пошло не так.
+        -->
+        <section class="glass-card analytics-card">
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ПОСЛЕДОВАТЕЛЬНОСТЬ</div><h2>Серии</h2></div><span class="sample-chip" id="streakSummary"></span></div>
+          <div class="streak-timeline" id="streakTimeline"></div>
+        </section>
+
+        <!--
+          Календарь: день окрашен не количеством прогнозов, а тем, как они
+          зашли. Провальную неделю видно, не читая ни одной цифры.
+        -->
+        <section class="glass-card analytics-card">
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ПО ДНЯМ</div><h2>Календарь</h2></div><span class="sample-chip" id="calendarSummary"></span></div>
+          <div class="calendar" id="calendar"></div>
+          <div class="calendar-legend"><span>хуже</span><i class="cal-cell lvl-0"></i><i class="cal-cell lvl-1"></i><i class="cal-cell lvl-2"></i><i class="cal-cell lvl-3"></i><span>лучше</span></div>
+        </section>
+
         <section class="glass-card analytics-card">
           <div class="section-title-row compact-row"><div><div class="eyebrow">ДИСЦИПЛИНЫ</div><h2>Где результат стабильнее</h2></div><span class="sample-chip">по вашим прогнозам</span></div>
           <div class="segment-list" id="analyticsGames"></div>
           <div class="context-note">Сегменты считаются только по завершённым матчам с вашим прогнозом.</div>
+        </section>
+
+        <!--
+          Дисциплины рядом, а не по очереди: одна цифра на вкладку не
+          показывает, что в одной игре вы растёте, а в другой падаете.
+        -->
+        <section class="glass-card analytics-card" id="crossGameCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ДИСЦИПЛИНЫ РЯДОМ</div><h2>Сравнение</h2></div></div>
+          <div class="small-multiples" id="crossGame"></div>
+        </section>
+
+        <!--
+          Точность против размера выборки. 91% на семи прогнозах и 85% на
+          тридцати четырёх — это не одно и то же, и на одной шкале этого
+          не видно, а на двух видно сразу.
+        -->
+        <section class="glass-card analytics-card">
+          <div class="section-title-row compact-row"><div><div class="eyebrow">НАДЁЖНОСТЬ</div><h2>Точность и выборка</h2></div></div>
+          <div class="scatter" id="teamScatter"></div>
+          <p class="legal-note">По горизонтали — сколько прогнозов по команде, по вертикали — точность. Чем правее точка, тем больше её проценту можно верить.</p>
+        </section>
+
+        <!--
+          Кого вы выбираете чаще, чем они выигрывают, и наоборот. Ни одно
+          из направлений само по себе не ошибка — это наблюдение.
+        -->
+        <section class="glass-card analytics-card" id="biasCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ПРЕДПОЧТЕНИЯ</div><h2>Кого выбираете чаще, чем они выигрывают</h2></div></div>
+          <div class="bias-list" id="teamBias"></div>
+        </section>
+
+        <!--
+          Турниры: где результат держится, а где проседает.
+        -->
+        <section class="glass-card analytics-card" id="tournamentCard" hidden>
+          <div class="section-title-row compact-row"><div><div class="eyebrow">ТУРНИРЫ</div><h2>Где идёт лучше</h2></div><span class="sample-chip">к вашему среднему</span></div>
+          <div class="tournament-table" id="tournamentTable"></div>
         </section>
 
         <section class="glass-card analytics-card">
