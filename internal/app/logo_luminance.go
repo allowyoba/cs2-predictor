@@ -6,6 +6,12 @@ import (
 	_ "image/gif"  // registered for decoding only
 	_ "image/jpeg" // registered for decoding only
 	_ "image/png"  // registered for decoding only
+
+	// WebP is not in the standard library, and a third of a provider's
+	// crests can arrive in it. Without this they measure as "unknown" and
+	// fall back to a neutral chip, which is the one outcome this whole
+	// measurement exists to avoid.
+	_ "golang.org/x/image/webp"
 )
 
 // Measuring a crest so the app can put the right chip behind it.

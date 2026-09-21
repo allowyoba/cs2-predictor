@@ -91,6 +91,17 @@
   const logos = new Map();
 
   /**
+   * chips maps a lowercased team name to the background its crest needs.
+   *
+   * There is no one colour that shows every logo: esports marks are either
+   * light wordmarks drawn for dark backgrounds or dark ones drawn for
+   * light, and a single chip loses half of them. The bot measures each
+   * crest when it mirrors it and says which chip to use; a crest it could
+   * not measure gets the neutral default.
+   */
+  const chips = new Map();
+
+  /**
    * fetchJSON is every network read here: bounded, and never throwing past
    * the caller.
    *
@@ -454,7 +465,7 @@
     } catch (error) {
       if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
       console.warn('active predictions unavailable', error);
-      root.replaceChildren(emptyLine('Не удалось загрузить активные прогнозы.'));
+      root.replaceChildren(failedLine(describeFailure(error, 'активные прогнозы'), loadActive));
     }
   }
 
@@ -518,7 +529,7 @@
       renderMedals(body.medals || []);
     } catch (error) {
       if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
-      root.replaceChildren(emptyLine('Не удалось загрузить статистику по чатам.'));
+      root.replaceChildren(failedLine(describeFailure(error, 'статистику по чатам'), loadChats));
     }
   }
 
@@ -736,6 +747,41 @@
     return el('p', 'empty-line', text);
   }
 
+  /**
+   * failedLine is what a screen shows when its data did not arrive, and it
+   * always comes with a way to try again.
+   *
+   * Every one of these used to be a flat "could not load" and nothing
+   * else: a dead end after a dropped connection, a restart mid-deploy, or
+   * a phone that lost signal for a second — all of which fix themselves on
+   * a retry the screen refused to offer. It also said the same thing when
+   * the real answer was "you do not have access yet", which is not a
+   * failure and is not fixed by retrying, so that case says so instead.
+   */
+  function failedLine(text, retry) {
+    const wrap = el('div', 'load-failed');
+    wrap.append(el('p', 'empty-line', text));
+    const again = el('button', 'text-action', 'Попробовать снова');
+    again.addEventListener('click', () => {
+      wrap.replaceChildren(el('p', 'empty-line', 'Загружаем…'));
+      haptic();
+      void retry();
+    });
+    wrap.append(again);
+    return wrap;
+  }
+
+  /** describeFailure turns an error into something worth reading. */
+  function describeFailure(error, subject) {
+    if (error instanceof ForbiddenError) {
+      return 'Доступ к приложению ещё не выдан — запросите его в боте.';
+    }
+    if (error instanceof UnauthenticatedError) {
+      return 'Откройте приложение из бота: вне Telegram оно не может подтвердить, кто вы.';
+    }
+    return `Не удалось загрузить ${subject}. Проверьте связь и попробуйте снова.`;
+  }
+
   // --- history ----------------------------------------------------------
 
   /** chatMedalTotal is every medal won across chats, for the catalogue. */
@@ -767,7 +813,7 @@
     } catch (error) {
       if (error instanceof ForbiddenError) showAccessNotice('forbidden');
       else if (error instanceof UnauthenticatedError) showAccessNotice('unauthenticated');
-      feed.replaceChildren(emptyLine('Не удалось загрузить историю.'));
+      feed.replaceChildren(failedLine(describeFailure(error, 'историю'), loadHistory));
     }
   }
 
@@ -868,9 +914,9 @@
     }
     row.hidden = false;
 
-    const chips = [{ code: '', label: 'Все игры', accuracy: null },
+    const options = [{ code: '', label: 'Все игры', accuracy: null },
       ...games.map((g) => ({ code: g.game.toLowerCase(), label: gameLabel(g.game), accuracy: g.accuracy }))];
-    rail.replaceChildren(...chips.map((entry) => {
+    rail.replaceChildren(...options.map((entry) => {
       const chip = el('button', 'game-chip' + (entry.code === scope.game ? ' active' : ''));
       chip.dataset.game = entry.code;
       chip.setAttribute('aria-pressed', String(entry.code === scope.game));
@@ -896,9 +942,9 @@
     }
     row.hidden = false;
 
-    const chips = [{ id: null, label: 'Все чаты' },
+    const options = [{ id: null, label: 'Все чаты' },
       ...chats.map((c) => ({ id: c.id, label: c.title, count: c.predictions }))];
-    rail.replaceChildren(...chips.map((entry) => {
+    rail.replaceChildren(...options.map((entry) => {
       const active = entry.id === scope.chat;
       const chip = el('button', 'chat-chip' + (active ? ' active' : ''));
       chip.setAttribute('aria-pressed', String(active));
@@ -1012,7 +1058,7 @@
     } catch (error) {
       if (error instanceof ForbiddenError) showAccessNotice('forbidden');
       else if (error instanceof UnauthenticatedError) showAccessNotice('unauthenticated');
-      root.replaceChildren(emptyLine('Не удалось загрузить настройки.'));
+      root.replaceChildren(failedLine(describeFailure(error, 'настройки'), loadSettings));
     }
   }
 

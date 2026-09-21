@@ -77,3 +77,91 @@ func TestCrestAndInitialsAreNeverDrawnTogether(t *testing.T) {
 		}
 	}
 }
+
+// A screen whose data did not arrive must offer a way to try again.
+//
+// A dropped connection, a restart mid-deploy, a phone that loses signal
+// for a second: all of them fix themselves on a retry, and every one of
+// these screens used to answer them with a flat "could not load" and no
+// way forward. They also said the same thing when the real answer was "you
+// do not have access yet", which retrying cannot fix.
+func TestFailedScreensOfferARetry(t *testing.T) {
+	script := readStatic(t, "static/app.js")
+
+	if strings.Contains(script, "emptyLine('Не удалось загрузить") {
+		t.Error("a load failure is still rendered as a dead end; use failedLine, which carries a retry")
+	}
+	for _, needed := range []string{"function failedLine(", "function describeFailure(", "Попробовать снова"} {
+		if !strings.Contains(script, needed) {
+			t.Errorf("missing %q — a failed screen has no way out without it", needed)
+		}
+	}
+	// The three causes have to read differently: only one of them is
+	// worth retrying.
+	for _, loader := range []string{"loadHistory", "loadActive", "loadChats", "loadSettings"} {
+		if !strings.Contains(script, "failedLine(describeFailure(error, ") {
+			t.Fatal("failures are not described by cause")
+		}
+		if !strings.Contains(script, "), "+loader+"))") {
+			t.Errorf("%s does not pass itself as the retry", loader)
+		}
+	}
+}
+
+// Shared state the page keeps in a Map or a Set must actually be declared,
+// and nothing deeper may shadow its name.
+//
+// `chips` was used in two functions and declared in none: an edit meant to
+// add the declaration silently matched nothing. Nothing caught it —
+// `node --check` parses, it does not resolve names — so the page shipped
+// and threw ReferenceError the moment it drew a team, which the crest
+// loader swallowed into "falling back to initials" and the history screen
+// turned into "could not load".
+//
+// The shadowing half matters as much as the declaration half: a local
+// variable of the same name inside one function is what made the missing
+// declaration hard to see in the first place, and would make any check
+// like this one answer "declared" about the wrong thing.
+func TestSharedCollectionsAreDeclared(t *testing.T) {
+	script := readStatic(t, "static/app.js")
+
+	// Module level is two spaces in: this file is one IIFE.
+	moduleLevel := map[string]bool{}
+	for _, match := range regexp.MustCompile(`(?m)^  (?:const|let|var)\s+([A-Za-z_$][\w$]*)`).FindAllStringSubmatch(script, -1) {
+		moduleLevel[match[1]] = true
+	}
+	collections := map[string]bool{}
+	for _, match := range regexp.MustCompile(`(?m)^  const\s+([A-Za-z_$][\w$]*)\s*=\s*new (?:Map|Set)\(`).FindAllStringSubmatch(script, -1) {
+		collections[match[1]] = true
+	}
+
+	for _, match := range regexp.MustCompile(`(?m)^\s{4,}(?:const|let|var)\s+([A-Za-z_$][\w$]*)`).FindAllStringSubmatch(script, -1) {
+		if collections[match[1]] {
+			t.Errorf("a local %q shadows the shared collection of that name; rename the local", match[1])
+		}
+	}
+
+	// The leading class excludes a dot, so `wrap.classList.add(` is read as
+	// a property chain rather than as a bare name called `classList`.
+	used := regexp.MustCompile(`(^|[^.\w$])([a-z][\w$]*)\.(?:get|set|has|clear|delete|add)\(`)
+	declared := map[string]bool{}
+	for _, match := range regexp.MustCompile(`(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)`).FindAllStringSubmatch(script, -1) {
+		declared[match[1]] = true
+	}
+	for _, match := range regexp.MustCompile(`[(,]\s*([a-z][\w$]*)\s*[,)]`).FindAllStringSubmatch(script, -1) {
+		declared[match[1]] = true
+	}
+	seen := map[string]bool{}
+	for _, match := range used.FindAllStringSubmatch(script, -1) {
+		name := match[2]
+		if seen[name] || declared[name] {
+			continue
+		}
+		seen[name] = true
+		switch name {
+		case "window", "document", "localStorage", "sessionStorage":
+			continue
+		}
+		t.Errorf("%q is used as shared state but never declared in app.js", name)
+	}
+}
