@@ -3969,3 +3969,104 @@ func TestScoringRepository_ActivePredictionsCarryStreamsAndSkipFinishedMatches(t
 		t.Fatalf("a switched-off discipline still shows %d pending predictions", len(offGame))
 	}
 }
+
+// Both ranks in a comparison have to come from the same feed.
+//
+// Valve's standings run to about 390 places and HLTV's to about 100, so a
+// team's position means a different thing in each. Taking whichever number
+// is smaller — which is what this did at first — compares a top-ten place
+// on one scale against a hundred-and-twentieth on the other and calls the
+// difference a gap. On production data that mis-sorted a quarter of the
+// matches into the wrong bucket.
+func TestScoringRepository_RankGapComesFromOneFeed(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	enrich := pg.NewEnrichmentRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	chatID := common.ChatID{Value: -770100}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Ranks", Locale: common.LocaleRU,
+		Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	event := competition.Event{ID: common.NewEventID(), Game: competition.GameCS2, Name: "Rank Cup",
+		ExternalID: "rank-event", Status: competition.EventRunning, Provider: "PANDASCORE"}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two teams both feeds know, ranked so that the smallest number for
+	// each comes from a DIFFERENT feed. That is what makes this fixture
+	// able to tell the two implementations apart: picking the minimum per
+	// team silently reads one side off HLTV and the other off Valve.
+	picked := competition.Team{ID: common.NewTeamID(), Name: "Near", ExternalID: "rank-near"}
+	other := competition.Team{ID: common.NewTeamID(), Name: "Far", ExternalID: "rank-far"}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	started := time.Now().UTC().Add(-2 * time.Hour)
+	score := competition.MatchScore{First: 2, Second: 0}
+	match := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "rank-match",
+		Status: competition.MatchFinished, Format: format, FirstTeam: &picked, SecondTeam: &other,
+		ScheduledAt: &started, ActualStartedAt: &started, Score: &score,
+	}
+	if _, err := catalog.SaveMatch(ctx, match); err != nil {
+		t.Fatal(err)
+	}
+
+	rank := func(v int) *int { return &v }
+	for _, r := range []enrichment.TeamRanking{
+		{TeamID: picked.ID, Source: enrichment.SourceHLTV, GlobalRank: rank(40), PublishedAt: started},
+		{TeamID: other.ID, Source: enrichment.SourceHLTV, GlobalRank: rank(9), PublishedAt: started},
+		{TeamID: picked.ID, Source: enrichment.SourceValveVRS, GlobalRank: rank(11), PublishedAt: started},
+		{TeamID: other.ID, Source: enrichment.SourceValveVRS, GlobalRank: rank(240), PublishedAt: started},
+	} {
+		if err := enrich.SaveRanking(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	player := common.UserID{Value: 7711}
+	var options []prediction.Option
+	for i, s := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: s})
+	}
+	telegramPollID, messageID := "rank-poll", int64(11)
+	saved, err := predictions.SavePoll(ctx, prediction.Poll{
+		ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID,
+		TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+		Options: options, Status: prediction.PollClosed, ClosesAt: started,
+		FirstTeamID: picked.ID, SecondTeamID: other.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Option 0 of a BO3 is 2:0 — backing the first team, which is picked.
+	if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: player,
+		OptionIndex: 0, DisplayName: "Player", VotedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+
+	facts, err := scoringRepo.UserPredictionFacts(ctx, player, scoring.PredictionFactsMax)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("facts = %d, want the one settled prediction", len(facts))
+	}
+	fact := facts[0]
+	if !fact.Ranked() {
+		t.Fatal("both teams are ranked by both feeds; this must be readable")
+	}
+	// HLTV is preferred and ranks both: 9 − 40 = −31, a heavy underdog
+	// call. Taking each team's smallest number instead reads the picked
+	// side off Valve (11) and the other off HLTV (9), giving −2 and
+	// calling the same match even.
+	if gap := fact.RankGap(); gap != -31 {
+		t.Fatalf("gap = %d, want −31 from HLTV alone — mixing feeds gives −2", gap)
+	}
+	if bucket := scoring.ClassifyRankGap(fact.RankGap()); bucket != scoring.RankHeavyUnderdog {
+		t.Fatalf("bucket = %q, want a heavy underdog call", bucket)
+	}
+}

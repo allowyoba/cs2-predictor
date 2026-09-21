@@ -10,21 +10,27 @@ import (
 // UserPredictionFacts reads every settled prediction with the match around
 // it: tier, stage, format, both teams and their ranks.
 //
-// One query for four screens — see scoring.PredictionFact. The ranks come
-// from whichever source has the better coverage for that team rather than
-// from one feed, because a match is only readable as favourite-against-
-// underdog when both sides are ranked, and insisting on a single source
-// throws away matches where each side is known to a different one.
+// One query for four screens — see scoring.PredictionFact.
+//
+// Both ranks always come from the SAME feed. That is the whole subtlety
+// here: Valve's standings run to about 390 places and HLTV's to about 100,
+// so a team's position means a different thing in each. Taking whichever
+// number is smaller — as this did at first — compares a top-ten place on
+// one scale against a hundred-and-twentieth on the other and calls the
+// difference a gap, which is arithmetic on two different units. On
+// production data it mis-sorted a quarter of the matches.
+//
+// A match neither feed ranks on both sides is simply not readable as
+// favourite against underdog, and says so by leaving both ranks null.
 func (r *ScoringRepository) UserPredictionFacts(ctx context.Context, userID common.UserID, limit int) ([]scoring.PredictionFact, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	rows, err := executor(ctx, r.pool).Query(ctx, `
-WITH best_rank AS (
-    SELECT team_id, MIN(global_rank) AS rank
+WITH ranked AS (
+    SELECT team_id, source, global_rank
       FROM team_ranking
      WHERE global_rank IS NOT NULL
-     GROUP BY team_id
 ),
 picks AS (
     SELECT COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
@@ -61,13 +67,21 @@ picks AS (
 )
 SELECT k.played_at, k.game, k.chat_id, k.tier, k.stage, k.series_kind, k.series_size,
        COALESCE(pt.name, ''), COALESCE(ot.name, ''),
-       pr.rank, orr.rank,
+       pair.picked_rank, pair.other_rank,
        k.picked_id = k.winner_id AS correct
   FROM picks k
   LEFT JOIN team pt ON pt.id = k.picked_id
   LEFT JOIN team ot ON ot.id = k.other_id
-  LEFT JOIN best_rank pr ON pr.team_id = k.picked_id
-  LEFT JOIN best_rank orr ON orr.team_id = k.other_id
+  -- One feed, both sides. HLTV first where it has an opinion: it is the
+  -- Counter-Strike authority and its scale is the tighter of the two.
+  LEFT JOIN LATERAL (
+      SELECT p.global_rank AS picked_rank, o.global_rank AS other_rank
+        FROM ranked p
+        JOIN ranked o ON o.source = p.source AND o.team_id = k.other_id
+       WHERE p.team_id = k.picked_id
+       ORDER BY CASE p.source WHEN 'HLTV' THEN 0 ELSE 1 END
+       LIMIT 1
+  ) pair ON true
  WHERE k.picked_id IS NOT NULL
    AND k.winner_id IS NOT NULL
    AND k.played_at IS NOT NULL
