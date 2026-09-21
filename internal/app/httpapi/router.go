@@ -68,6 +68,9 @@ type RouterDeps struct {
 	// MiniAppSettings, Switches and MiniAppAuthz back the settings screens:
 	// the same settings the bot offers in a private chat, offered in the
 	// app as well. Any of them missing turns those endpoints off.
+	// MiniAppFacts backs the segment screens: format and stage, mistakes,
+	// the fingerprint and opponent strength, all from one read.
+	MiniAppFacts    MiniAppFacts
 	MiniAppSettings MiniAppSettings
 	Switches        common.NotifySwitchboard
 	MiniAppAuthz    MiniAppAuthorizer
@@ -113,6 +116,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("GET /api/miniapp/v1/me/active", instrument("miniapp_active", activeHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/chats", instrument("miniapp_chats", chatsHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/history", instrument("miniapp_history", historyHandler(deps.MiniApp, deps.MiniAppHistory)))
+	mux.Handle("GET /api/miniapp/v1/me/segments", instrument("miniapp_segments", segmentsHandler(deps.MiniApp, deps.MiniAppFacts)))
 	mux.Handle("GET /api/miniapp/v1/me/settings", instrument("miniapp_settings", settingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
 	mux.Handle("PATCH /api/miniapp/v1/me/settings", instrument("miniapp_settings_patch", patchSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
 	mux.Handle("PATCH /api/miniapp/v1/chats/{id}/settings", instrument("miniapp_chat_settings_patch", patchChatSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches, deps.MiniAppAuthz)))

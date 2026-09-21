@@ -387,6 +387,7 @@ func run() error {
 			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats, Prefs: chats,
 			Operators: cfg.TeamMatchOperatorChatIDs, Clock: clock, Log: log,
 		},
+		MiniAppFacts:    scoringRepo,
 		MiniAppSettings: chats, Switches: chats, MiniAppAuthz: authorization,
 		Version: version, Commit: commit, BuildTime: buildTime,
 		EnrichmentState: enrichmentRepo, EnrichmentSources: enrichmentSources,

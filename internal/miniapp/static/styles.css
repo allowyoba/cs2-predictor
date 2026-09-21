@@ -218,3 +218,29 @@ main{padding:0 16px calc(84px + var(--safe-bottom))}.screen{display:none;animati
   .screen.is-entering,.screen.is-entering.from-back{animation:screenFade .12s linear both}
 }
 @keyframes screenFade{from{opacity:0}to{opacity:1}}
+
+.heat-grid{display:grid;gap:4px;margin-top:12px;align-items:center}
+.heat-corner{display:block}
+.heat-head{font-size:8px;color:var(--text-3);text-align:center;font-weight:800;letter-spacing:.05em}
+.heat-row-head{font-size:9px;color:var(--text-2);font-weight:700}
+.heat-cell{display:grid;place-items:center;min-height:32px;border-radius:8px;font-size:10px;font-weight:800;color:#061015}
+.heat-cell.empty{background:rgba(255,255,255,.04)}
+.heat-cell.lvl-0{background:rgba(255,107,135,.75)}
+.heat-cell.lvl-1{background:rgba(255,107,135,.38);color:var(--text)}
+.heat-cell.lvl-2{background:rgba(255,255,255,.10);color:var(--text)}
+.heat-cell.lvl-3{background:rgba(var(--accent-rgb),.42);color:var(--text)}
+.heat-cell.lvl-4{background:var(--accent)}
+.mistake-list,.opponent-list,.fingerprint{display:grid;gap:7px;margin-top:12px}
+.mistake-row,.opponent-row,.axis-row{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto auto;align-items:center;gap:9px}
+.mistake-row{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto}
+.mistake-row strong,.opponent-row strong,.axis-row strong{font-size:10px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mistake-track,.opponent-track,.axis-track{height:8px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden}
+.mistake-track i{display:block;height:100%;border-radius:inherit;background:rgba(255,107,135,.6)}
+.opponent-track i{display:block;height:100%;border-radius:inherit}
+.opponent-track i.good{background:var(--accent)}
+.opponent-track i.poor{background:rgba(255,107,135,.6)}
+.axis-track i{display:block;height:100%;border-radius:inherit;background:var(--accent)}
+.mistake-row b,.opponent-row b,.axis-row b{font-size:11px;text-align:right}
+.opponent-row small,.axis-row small{font-size:8px;color:var(--text-3);white-space:nowrap}
+.axis-row.is-thin{opacity:.45}
+.axis-row.is-thin .axis-track i{background:var(--text-3)}

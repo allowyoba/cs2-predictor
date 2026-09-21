@@ -138,6 +138,18 @@ func sampleSettings() settingsDTO {
 	}
 }
 
+func sampleSegments() segmentsDTO {
+	return segmentsDTO{
+		Total:        120,
+		Heatmap:      []heatCellDTO{{Format: "BO3", Stage: "playoff", Accuracy: 81, Predictions: 38, DeltaPP: 10}},
+		Mistakes:     []mistakeDTO{{Tag: "bo1", Count: 6}},
+		MistakeTotal: 42,
+		Fingerprint:  []axisDTO{{Axis: "consistency", Score: 88, Sample: 120, Meaningful: true}},
+		Opponents:    []segmentDTO{{Key: "even", Accuracy: 57, Predictions: 61, DeltaPP: -3}},
+		Ranked:       61,
+	}
+}
+
 func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	script := appScript(t)
 	emitted := jsonKeys(t, sampleDashboard())
@@ -152,6 +164,9 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 		emitted[key] = true
 	}
 	for key := range jsonKeys(t, sampleSettings()) {
+		emitted[key] = true
+	}
+	for key := range jsonKeys(t, sampleSegments()) {
 		emitted[key] = true
 	}
 	// The public team endpoint feeds the same page.
