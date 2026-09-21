@@ -452,6 +452,184 @@
     }));
   }
 
+  // --- segments ---------------------------------------------------------
+  //
+  // Four readings that need more than the outcome of each prediction. They
+  // come from one endpoint because they come from one read: format and
+  // stage, what the wrong calls had in common, the shape of somebody's
+  // reading, and how strong the other side was.
+
+  const STAGE_LABELS = { group: 'Группа', playoff: 'Плей-офф', qualifier: 'Квалификация' };
+  const MISTAKE_LABELS = {
+    even: 'Равный по рейтингу матч',
+    upset_pick: 'Ставка на андердога',
+    bo1: 'BO1',
+    playoff: 'Плей-офф',
+    top_tier: 'Топовый турнир',
+    unfamiliar: 'Команда, которую вы почти не знаете',
+  };
+  const OPPONENT_LABELS = {
+    heavy_favourite: 'Явный фаворит',
+    favourite: 'Фаворит',
+    even: 'Равные',
+    underdog: 'Андердог',
+    heavy_underdog: 'Явный андердог',
+  };
+  const OPPONENT_ORDER = ['heavy_favourite', 'favourite', 'even', 'underdog', 'heavy_underdog'];
+  const AXIS_LABELS = {
+    consistency: 'Стабильность',
+    upset_reading: 'Чтение андердогов',
+    big_matches: 'Большие матчи',
+    multi_game: 'Несколько игр',
+  };
+
+  async function loadSegments() {
+    try {
+      const body = await fetchJSON(`/api/miniapp/v1/me/segments${scopeQuery()}`, { signed: true });
+      renderHeatmap(body);
+      renderMistakes(body);
+      renderOpponents(body);
+      renderFingerprint(body);
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      // These four are extra readings of a record the rest of the app
+      // already shows, so losing them is not worth an error banner over
+      // the screens that did load.
+      console.warn('segments unavailable', error);
+    }
+  }
+
+  /** renderHeatmap crosses series format with stage. */
+  function renderHeatmap(body) {
+    const card = document.querySelector('#heatmapCard');
+    const root = document.querySelector('#heatmap');
+    if (!card || !root) return;
+    const cells = body.heatmap || [];
+    if (cells.length < 2) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+
+    const formats = [...new Set(cells.map((c) => c.format))];
+    const stages = [...new Set(cells.map((c) => c.stage))];
+    const byKey = new Map(cells.map((c) => [c.format + '|' + c.stage, c]));
+
+    const grid = el('div', 'heat-grid');
+    grid.style.gridTemplateColumns = `minmax(52px,auto) repeat(${stages.length}, minmax(0,1fr))`;
+    grid.append(el('i', 'heat-corner'));
+    for (const stage of stages) grid.append(el('span', 'heat-head', STAGE_LABELS[stage] || stage));
+
+    for (const format of formats) {
+      grid.append(el('span', 'heat-row-head', format));
+      for (const stage of stages) {
+        const cell = byKey.get(format + '|' + stage);
+        // An empty square says "not enough here" more plainly than a faint
+        // one, which reads as a number somebody forgot to finish.
+        if (!cell) {
+          grid.append(el('i', 'heat-cell empty'));
+          continue;
+        }
+        const box = el('b', 'heat-cell lvl-' + heatLevel(cell.delta_pp), percentText(cell.accuracy));
+        box.title = `${format} · ${STAGE_LABELS[cell.stage] || cell.stage}: ${cell.accuracy}% на ${cell.predictions}, ${cell.delta_pp >= 0 ? '+' : '−'}${Math.abs(cell.delta_pp)} п.п. к среднему`;
+        grid.append(box);
+      }
+    }
+    root.replaceChildren(grid);
+  }
+
+  /** heatLevel maps the distance from somebody's own average onto five
+   * shades, so the grid reads as better-or-worse-than-usual rather than as
+   * an absolute nobody has a reference for. */
+  function heatLevel(delta) {
+    if (delta >= 10) return 4;
+    if (delta >= 3) return 3;
+    if (delta > -3) return 2;
+    if (delta > -10) return 1;
+    return 0;
+  }
+
+  function renderMistakes(body) {
+    const card = document.querySelector('#mistakesCard');
+    const root = document.querySelector('#mistakes');
+    const total = document.querySelector('#mistakeTotal');
+    if (!card || !root) return;
+    const rows = body.mistakes || [];
+    if (rows.length === 0) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    if (total) {
+      total.textContent = `${body.mistake_total} ${plural(body.mistake_total, 'ошибка', 'ошибки', 'ошибок')}`;
+    }
+    const widest = Math.max(...rows.map((r) => r.count), 1);
+    root.replaceChildren(...rows.map((row) => {
+      const line = el('div', 'mistake-row');
+      line.append(el('strong', null, MISTAKE_LABELS[row.tag] || row.tag));
+      const track = el('div', 'mistake-track');
+      const bar = el('i');
+      bar.style.width = `${(row.count / widest) * 100}%`;
+      track.append(bar);
+      line.append(track, el('b', null, String(row.count)));
+      return line;
+    }));
+  }
+
+  function renderOpponents(body) {
+    const card = document.querySelector('#opponentsCard');
+    const root = document.querySelector('#opponents');
+    const coverage = document.querySelector('#opponentCoverage');
+    if (!card || !root) return;
+    const rows = body.opponents || [];
+    if (rows.length < 2) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    // Said out loud: rankings cover the teams a feed lists, so this is a
+    // slice of the record. A chart that quietly answers about a quarter of
+    // the data is a chart that misleads.
+    if (coverage) {
+      coverage.textContent = `${body.ranked} из ${body.total}`;
+    }
+    const ordered = OPPONENT_ORDER.map((key) => rows.find((r) => r.key === key)).filter(Boolean);
+    root.replaceChildren(...ordered.map((row) => {
+      const line = el('div', 'opponent-row');
+      line.append(el('strong', null, OPPONENT_LABELS[row.key] || row.key));
+      const track = el('div', 'opponent-track');
+      const bar = el('i', row.accuracy >= 50 ? 'good' : 'poor');
+      bar.style.width = `${Math.max(2, row.accuracy)}%`;
+      track.append(bar);
+      line.append(track, el('b', null, percentText(row.accuracy)), el('small', null, `n=${row.predictions}`));
+      return line;
+    }));
+  }
+
+  function renderFingerprint(body) {
+    const card = document.querySelector('#fingerprintCard');
+    const root = document.querySelector('#fingerprint');
+    if (!card || !root) return;
+    const axes = body.fingerprint || [];
+    if (!axes.some((a) => a.meaningful)) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    root.replaceChildren(...axes.map((axis) => {
+      const line = el('div', 'axis-row' + (axis.meaningful ? '' : ' is-thin'));
+      line.append(el('strong', null, AXIS_LABELS[axis.axis] || axis.axis));
+      const track = el('div', 'axis-track');
+      const bar = el('i');
+      bar.style.width = `${axis.meaningful ? axis.score : 0}%`;
+      track.append(bar);
+      // A thin axis shows why rather than a number nobody should read.
+      line.append(track, el('b', null, axis.meaningful ? String(axis.score) : '—'),
+        el('small', null, axis.meaningful ? `n=${axis.sample}` : 'мало данных'));
+      return line;
+    }));
+  }
+
   // --- where a percentage is worth believing ---------------------------
 
   /**
@@ -1486,6 +1664,7 @@
       void loadActive();
       void loadChats();
       void loadSettings();
+      void loadSegments();
       const notice = document.querySelector('#accessNotice');
       if (notice) notice.hidden = true;
     } catch (error) {
