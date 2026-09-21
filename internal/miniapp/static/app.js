@@ -1594,12 +1594,17 @@
         // Null rather than zero: "no predictions here" and "0% here" are
         // different statements and only one of them is true.
         accuracy: current.has(code) ? current.get(code).accuracy : null,
+        logo: knownGames.get(code)?.logo || '',
       }))];
     rail.replaceChildren(...options.map((entry) => {
       const chip = el('button', 'game-chip' + (entry.code === scope.game ? ' active' : ''));
       chip.dataset.game = entry.code;
       chip.setAttribute('aria-pressed', String(entry.code === scope.game));
-      chip.append(el('i', 'game-dot'), el('span', null, entry.label));
+      // The publisher's own logo when it has been mirrored, and the
+      // coloured dot when it has not: the name is always there either way,
+      // because a logo alone is a guess about what somebody recognises.
+      const logo = entry.logo ? gameLogoImage(entry.logo, entry.label) : el('i', 'game-dot');
+      chip.append(logo, el('span', null, entry.label));
       if (entry.accuracy !== null) chip.append(el('small', null, percentText(entry.accuracy)));
       chip.addEventListener('click', () => setGame(entry.code));
       return chip;
@@ -1632,6 +1637,18 @@
       chip.addEventListener('click', () => setChat(entry.id));
       return chip;
     }));
+  }
+
+  /** gameLogoImage draws a game's own logo, falling back to the dot if it
+   * fails to load — the same rule the team crests follow. */
+  function gameLogoImage(url, label) {
+    const img = el('img', 'game-logo');
+    img.alt = '';
+    img.decoding = 'async';
+    img.addEventListener('error', () => img.replaceWith(el('i', 'game-dot')));
+    img.src = url;
+    img.title = label;
+    return img;
   }
 
   /** scopeIsNarrowed says whether an empty screen is empty because of the

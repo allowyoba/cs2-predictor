@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/enrichment"
 	"cs2predictor/internal/platform/common"
 	"github.com/google/uuid"
@@ -19,6 +20,8 @@ type MiniAppLogos interface {
 	FindLogo(ctx context.Context, teamID common.TeamID, source enrichment.Source) (*enrichment.TeamLogo, error)
 	LogoDigests(ctx context.Context) (map[common.TeamID]map[enrichment.Source]string, error)
 	LogoChips(ctx context.Context) (map[common.TeamID]map[enrichment.Source]bool, error)
+	FindGameLogo(ctx context.Context, game competition.GameCode) (*enrichment.GameLogo, error)
+	GameLogoDigests(ctx context.Context) (map[competition.GameCode]string, error)
 }
 
 // logoHandler serves GET /api/miniapp/v1/teams/{id}/logo?src=<hltv|provider>.
@@ -72,6 +75,55 @@ func logoHandler(logos MiniAppLogos) http.Handler {
 		}
 		_, _ = w.Write(logo.Bytes)
 	})
+}
+
+// gameLogoHandler serves GET /api/miniapp/v1/games/{code}/logo.
+//
+// Public and immutable for the same reasons as a team crest: a game's logo
+// is a picture, not anybody's data, and the digest in the URL means these
+// bytes can never be the wrong answer for this address.
+func gameLogoHandler(logos MiniAppLogos) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if logos == nil {
+			http.Error(w, "logo cache is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		game, ok := parseGame(r.PathValue("code"))
+		if !ok {
+			http.Error(w, "unknown game", http.StatusBadRequest)
+			return
+		}
+		logo, err := logos.FindGameLogo(r.Context(), game)
+		if err != nil {
+			http.Error(w, "logo lookup failed", http.StatusInternalServerError)
+			return
+		}
+		if logo == nil {
+			// The app names the game in words when there is no picture,
+			// which is what it did before any of these were mirrored.
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", logo.ContentType)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("ETag", `"`+logo.Digest+`"`)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, logo.Digest) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write(logo.Bytes)
+	})
+}
+
+// gameLogoURL is the address the app renders for one game's logo, or ""
+// when nothing has been mirrored for it yet.
+func gameLogoURL(game competition.GameCode, digest string) string {
+	if digest == "" {
+		return ""
+	}
+	return "/api/miniapp/v1/games/" + strings.ToLower(string(game)) + "/logo?v=" + digest
 }
 
 // logoURL is the address the app renders for one team's crest, or "" when
