@@ -1376,11 +1376,30 @@
     }
   }
 
+  /**
+   * knownGames is every discipline this person has been seen to play.
+   *
+   * The rail is built from the current scope, and picking a chat narrows
+   * that scope — so a chat that follows one game would collapse the rail
+   * to nothing and the whole page would jump up under the finger that had
+   * just tapped. The rail is a control, and a control that disappears
+   * because you used it is worse than one that shows an option leading
+   * nowhere.
+   */
+  const knownGames = new Map();
+
   function renderGameRail(games) {
     const rail = document.querySelector('#gameRail');
     const row = document.querySelector('#gameRailRow');
     if (!rail || !row) return;
-    if (games.length < 2) {
+
+    // Remembered by code, refreshed by the current scope: a game keeps its
+    // place on the rail, and its percentage is whatever the current filter
+    // makes it — or absent, when this chat has no predictions in it.
+    for (const game of games) knownGames.set(game.game, game);
+    const current = new Map(games.map((g) => [g.game, g]));
+
+    if (knownGames.size < 2) {
       row.hidden = true;
       rail.replaceChildren();
       scope.game = '';
@@ -1391,7 +1410,13 @@
     row.hidden = false;
 
     const options = [{ code: '', label: 'Все игры', accuracy: null },
-      ...games.map((g) => ({ code: g.game.toLowerCase(), label: gameLabel(g.game), accuracy: g.accuracy }))];
+      ...[...knownGames.keys()].map((code) => ({
+        code: code.toLowerCase(),
+        label: gameLabel(code),
+        // Null rather than zero: "no predictions here" and "0% here" are
+        // different statements and only one of them is true.
+        accuracy: current.has(code) ? current.get(code).accuracy : null,
+      }))];
     rail.replaceChildren(...options.map((entry) => {
       const chip = el('button', 'game-chip' + (entry.code === scope.game ? ' active' : ''));
       chip.dataset.game = entry.code;
@@ -1403,7 +1428,7 @@
     }));
     // Every game's crests, not just the selected one: the feeds below mix
     // disciplines, and a row from another game would come out bare.
-    for (const game of games) void loadLogos(game.game.toLowerCase());
+    for (const code of knownGames.keys()) void loadLogos(code.toLowerCase());
   }
 
   function renderChatRail(chats) {
@@ -1557,6 +1582,7 @@
 
     const block = document.querySelector('#chatSettingsBlock');
     const chats = document.querySelector('#chatSettings');
+    const heading = document.querySelector('#chatSettingsHeading');
     if (!block || !chats) return;
     // Nothing to manage is not an empty section: it is a section that does
     // not belong on this person's screen at all.
@@ -1565,7 +1591,25 @@
       return;
     }
     block.hidden = false;
-    chats.replaceChildren(...data.chats.map(chatSettingsCard));
+
+    // The bar at the top narrows this screen too. Somebody who has picked
+    // one chat is looking at that chat everywhere else in the app, and a
+    // settings list that keeps showing all four is the one place where a
+    // tap lands somewhere other than where they are looking.
+    const shown = scope.chat === null ? data.chats : data.chats.filter((c) => c.id === scope.chat);
+    if (heading) {
+      heading.textContent = scope.chat === null
+        ? 'ЧАТЫ, КОТОРЫМИ ВЫ УПРАВЛЯЕТЕ'
+        : 'ВЫБРАННЫЙ ЧАТ';
+    }
+
+    // Picked a chat they play in but do not manage: say so, rather than
+    // showing an empty block that reads as a loading failure.
+    if (shown.length === 0) {
+      chats.replaceChildren(emptyLine('В выбранном чате у вас нет прав на настройки. Снимите фильтр наверху, чтобы увидеть остальные.'));
+      return;
+    }
+    chats.replaceChildren(...shown.map(chatSettingsCard));
   }
 
   function chatSettingsCard(chat) {
