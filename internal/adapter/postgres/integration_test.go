@@ -5,6 +5,8 @@ package postgres_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,13 +27,19 @@ import (
 	"cs2predictor/internal/platform/common"
 )
 
-// newTestPool starts a fresh postgres:17-alpine container, migrates it, and
-// returns a connected pool. Each test gets its own container so tests stay
-// independent (and safe to run with -parallel).
-func newTestPool(t *testing.T) (*pgxpool.Pool, context.Context) {
-	t.Helper()
-	ctx := context.Background()
+// sharedDSN points at the one postgres:17-alpine container this whole
+// package's tests run against — started once by TestMain instead of once
+// per test. None of these tests call t.Parallel(), so running them one
+// after another against a single shared, migrated schema is safe as long
+// as each test leaves it empty for the next one (see newTestPool).
+var sharedDSN string
 
+// TestMain starts that one container, migrates it, runs every test in the
+// package, and tears the container down afterward. A container boot is the
+// expensive part of each of these tests (not the SQL itself), so paying for
+// it once instead of ~60 times is most of the win.
+func TestMain(m *testing.M) {
+	ctx := context.Background()
 	container, err := tcpostgres.Run(ctx, "postgres:17-alpine",
 		tcpostgres.WithDatabase("cs2predictor"),
 		tcpostgres.WithUsername("cs2predictor"),
@@ -39,24 +47,93 @@ func newTestPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 		tcpostgres.BasicWaitStrategies(),
 	)
 	if err != nil {
-		t.Fatalf("start postgres container: %v", err)
+		fmt.Fprintln(os.Stderr, "start shared postgres container:", err)
+		os.Exit(1)
 	}
-	t.Cleanup(func() { _ = container.Terminate(ctx) })
+	defer func() { _ = container.Terminate(ctx) }()
 
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		t.Fatalf("connection string: %v", err)
+		fmt.Fprintln(os.Stderr, "connection string:", err)
+		os.Exit(1)
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	if err := pg.Migrate(ctx, dsn); err != nil {
+		fmt.Fprintln(os.Stderr, "migrate:", err)
+		os.Exit(1)
+	}
+	sharedDSN = dsn
+
+	os.Exit(m.Run())
+}
+
+// newTestPool connects to the package's shared container and hands back a
+// pool already sitting on a freshly migrated, empty schema. The emptying
+// happens in t.Cleanup rather than up front, so a test that fails mid-run
+// still leaves the database clean for whatever runs after it, and a panic
+// inside the test still gets a chance to clean up before the pool closes.
+func newTestPool(t *testing.T) (*pgxpool.Pool, context.Context) {
+	t.Helper()
+	ctx := context.Background()
+
+	pool, err := pgxpool.New(ctx, sharedDSN)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	t.Cleanup(pool.Close)
-
-	if err := pg.Migrate(ctx, dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	t.Cleanup(func() {
+		if err := truncateAllTables(ctx, pool); err != nil {
+			t.Errorf("cleaning up the shared database after the test: %v", err)
+		}
+		pool.Close()
+	})
 	return pool, ctx
+}
+
+// seedTables holds the static reference data a couple of migrations insert
+// once (0001, 0032) rather than data any test ever creates — the fixed
+// catalog of games and data providers, read by code but never written by
+// it. A fresh `go run` migration also only inserts these once; truncating
+// them between tests would just be data no later migration re-seeds,
+// exactly the gap that produced "game code CS2 is not seeded" here.
+var seedTables = map[string]bool{
+	"game":          true,
+	"data_provider": true,
+}
+
+// truncateAllTables empties every ordinary table in the public schema —
+// everything but goose's own migration-tracking table and the static
+// reference tables above — in one dynamic TRUNCATE ... CASCADE.
+// Discovering the table list from pg_tables rather than hardcoding it means
+// a newly added table is covered automatically, with nothing here to
+// forget to update. TRUNCATE on a partitioned table (outbox_event) cascades
+// to its partitions on its own, so those need no special handling either.
+func truncateAllTables(ctx context.Context, pool *pgxpool.Pool) error {
+	rows, err := pool.Query(ctx,
+		`SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'goose_db_version'`)
+	if err != nil {
+		return fmt.Errorf("list tables: %w", err)
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan table name: %w", err)
+		}
+		if seedTables[name] {
+			continue
+		}
+		names = append(names, pgx.Identifier{name}.Sanitize())
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("list tables: %w", err)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	if _, err := pool.Exec(ctx, "TRUNCATE TABLE "+strings.Join(names, ", ")+" RESTART IDENTITY CASCADE"); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+	return nil
 }
 
 // TestPredictionIsPersistedScoredAndRankedWithinItsChat exercises the full
