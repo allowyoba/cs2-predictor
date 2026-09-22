@@ -71,19 +71,19 @@ func (h *UpdateHandler) openManagedChat(ctx context.Context, target replyTarget,
 
 const privateChatsPageSize = 8
 
-// privateStatsMenu renders the root of a person's own statistics in a
-// private chat: the periods they have data for, plus the buttons for
-// managing chats, notifications, language and their display name. The
-// locale is the user's own, independent of any group chat's setting, and
-// the language button re-renders this screen with the other one.
-// hasHubAccess mirrors startLanding's own condition for showing the
-// mode-switcher hub at all: a plain voter with no managed chat and no
-// operator rights has nowhere the hub would send them back to, so no back
-// button is added (the previous, correct behavior for the common case).
-// Anyone who could have reached this screen via hub:personal must be able
-// to get back to it — this is exactly the dead end reported in production:
-// an operator opening the hub's personal-stats panel had no way back to the
-// hub at all.
+// privateStatsMenu renders the root of a person's own corner of the bot in
+// a private chat: a short list of destinations (results, form, bets) rather
+// than a flat dump of every leaf action. hasHubAccess mirrors startLanding's
+// own condition for showing the mode-switcher hub at all: a plain voter
+// with no managed chat and no operator rights has nowhere the hub would
+// send them back to, so no back button is added (the previous, correct
+// behavior for the common case), and this screen keeps Settings/Help itself
+// — it IS their root. Anyone who could have reached this screen via
+// hub:personal must be able to get back to it — this is exactly the dead
+// end reported in production: an operator opening the hub's personal-stats
+// panel had no way back to the hub at all. For that same person, Settings
+// and Help already live one level up on the hub (see modeHub), so repeating
+// them here would just be a second copy of the same two buttons.
 func (h *UpdateHandler) hasHubAccess(ctx context.Context, userID common.UserID) (bool, error) {
 	chats, err := h.Chats.ManagedChats(ctx, userID)
 	if err != nil {
@@ -93,43 +93,56 @@ func (h *UpdateHandler) hasHubAccess(ctx context.Context, userID common.UserID) 
 }
 
 func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
-	personal, err := h.personalScoring()
-	if err != nil {
-		return err
-	}
 	hubAccess, err := h.hasHubAccess(ctx, userID)
 	if err != nil {
 		return err
 	}
-	var backRow []InlineButton
-	if hubAccess {
-		backRow = []InlineButton{h.backButton(locale, "hub:root")}
-	}
 
-	available, err := personal.AvailableUserMonths(ctx, userID)
-	if err != nil {
-		return err
-	}
-	// Grouped by function rather than a flat dump: stats/analytics first
-	// (this screen's primary purpose), then the person's own activity, then
-	// personal preferences tucked behind one "Settings" entry point
-	// (notifications/language/rename all move to privateSettingsMenu), then
-	// help/back last — standard progressive disclosure instead of listing
-	// every leaf action at the top level.
+	// A fixed set of destinations regardless of how much data the person
+	// has: each one (Results, Form, Bets) renders its own empty state when
+	// there is nothing to show yet, so this screen never has to branch on
+	// it. That is what keeps it a stable list of "what can I open" instead
+	// of a message whose shape changes with the data behind it.
 	//
 	// Group management is deliberately absent: it is a mode of its own and
 	// lives on the hub (modeHub's "hub:manage"), which the back row below
 	// returns to. Repeating it here offered it to everyone, including the
 	// majority who manage nothing and would only reach an empty list.
+	rows := [][]InlineButton{
+		{button(h.Texts.Get("private.results", locale), "pstats:results")},
+		{button(h.Texts.Get("insights.title", locale), "pstats:insights")},
+		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
+	}
+	if !hubAccess {
+		// This screen is this person's actual root (no hub exists above
+		// it), so Settings and Help live here rather than nowhere.
+		rows = append(rows,
+			[]InlineButton{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
+			[]InlineButton{button(h.Texts.Get("menu.help", locale), "pstats:help")},
+		)
+	} else {
+		rows = append(rows, []InlineButton{h.backButton(locale, "hub:root")})
+	}
+	return h.respond(ctx, target, h.Texts.Get("private.cabinet_choose", locale), &InlineKeyboard{InlineKeyboard: rows})
+}
+
+// privateResultsMenu renders the periods a person has data for: the latest
+// month and year, all time, another period, and the per-chat breakdown.
+// Split out from privateStatsMenu so the personal cabinet's root reads as a
+// short list of destinations instead of a mixture of navigation and period
+// buttons — this is the screen "Выберите период" actually describes.
+func (h *UpdateHandler) privateResultsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+	personal, err := h.personalScoring()
+	if err != nil {
+		return err
+	}
+	available, err := personal.AvailableUserMonths(ctx, userID)
+	if err != nil {
+		return err
+	}
+	back := h.backButton(locale, "pstats:menu")
 	if len(available) == 0 {
-		rows := [][]InlineButton{
-			{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
-			{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
-			{button(h.Texts.Get("menu.help", locale), "pstats:help")},
-		}
-		if backRow != nil {
-			rows = append(rows, backRow)
-		}
+		rows := [][]InlineButton{{back}}
 		return h.respond(ctx, target, h.Texts.Get("private.stats_empty", locale), &InlineKeyboard{InlineKeyboard: rows})
 	}
 
@@ -137,21 +150,9 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 	latestMonthLabel := fmt.Sprintf("%s %d", shortMonthName(latest.Month, locale), latest.Year)
 	rows := [][]InlineButton{
 		{button(latestMonthLabel, fmt.Sprintf("pstats:month:%04d-%02d", latest.Year, latest.Month)), button(strconv.Itoa(latest.Year), fmt.Sprintf("pstats:year:%d", latest.Year))},
-		{button(h.Texts.Get("stats.all_time", locale), "pstats:all"), button(h.Texts.Get("insights.title", locale), "pstats:insights")},
-		{button(h.Texts.Get("private.chats", locale), "pstats:chats:0"), button(h.Texts.Get("stats.other_period", locale), "pstats:years")},
-		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
-		{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
-		{button(h.Texts.Get("menu.help", locale), "pstats:help")},
-	}
-	// The Mini App opens on top of this dashboard rather than replacing
-	// it: the bot stays the place predictions are made, and the app is
-	// where the history behind them is read. Closed by default — see
-	// miniapp_access.go for what each state offers.
-	if row := h.miniAppRow(ctx, userID, locale); row != nil {
-		rows = append(rows, row)
-	}
-	if backRow != nil {
-		rows = append(rows, backRow)
+		{button(h.Texts.Get("stats.all_time", locale), "pstats:all"), button(h.Texts.Get("stats.other_period", locale), "pstats:years")},
+		{button(h.Texts.Get("private.chats", locale), "pstats:chats:0")},
+		{back},
 	}
 	return h.respond(ctx, target, h.Texts.Get("private.stats_choose", locale), &InlineKeyboard{InlineKeyboard: rows})
 }
@@ -194,7 +195,7 @@ func (h *UpdateHandler) privateYearMenu(ctx context.Context, target replyTarget,
 			button(h.Texts.Get("stats.months_button", locale), fmt.Sprintf("pstats:months:%d", period.Year)),
 		})
 	}
-	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})
+	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:results")})
 	text := bold(escapeHTML(h.Texts.Get("stats.year", locale)))
 	if len(seen) == 0 {
 		text += "\n\n" + h.Texts.Get("stats.empty", locale)
@@ -263,7 +264,7 @@ func (h *UpdateHandler) renderPrivateStats(ctx context.Context, target replyTarg
 		text += "\n" + h.Texts.Get("private.activity", locale, stats.Predictions, stats.Tournaments)
 		text += "\n" + h.Texts.Get("private.accuracy", locale, stats.AccuracyPercent())
 	}
-	rows := [][]InlineButton{{h.backButton(locale, "pstats:menu")}}
+	rows := [][]InlineButton{{h.backButton(locale, "pstats:results")}}
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
 }
 
@@ -277,7 +278,7 @@ func (h *UpdateHandler) privateChatsMenu(ctx context.Context, target replyTarget
 		return err
 	}
 	if len(chats) == 0 {
-		rows := [][]InlineButton{{h.backButton(locale, "pstats:menu")}}
+		rows := [][]InlineButton{{h.backButton(locale, "pstats:results")}}
 		return h.respond(ctx, target, h.Texts.Get("private.chats_title", locale)+"\n\n"+h.Texts.Get("stats.empty", locale), &InlineKeyboard{InlineKeyboard: rows})
 	}
 
@@ -302,7 +303,7 @@ func (h *UpdateHandler) privateChatsMenu(ctx context.Context, target replyTarget
 	}); nav != nil {
 		rows = append(rows, nav)
 	}
-	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})
+	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:results")})
 	return h.respond(ctx, target, h.Texts.Get("private.chats_title", locale), &InlineKeyboard{InlineKeyboard: rows})
 }
 

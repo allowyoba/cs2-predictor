@@ -60,7 +60,7 @@ func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target reply
 		selected = filterByGame(predictions, game)
 	}
 	insights := scoring.BuildPersonalInsights(selected, h.Clock.Now())
-	keyboard := h.insightsKeyboard(locale, perGame, game)
+	keyboard := h.insightsKeyboard(ctx, userID, locale, perGame, game)
 	if !insights.HasData() {
 		return h.respond(ctx, target, h.Texts.Get("insights.empty", locale), keyboard)
 	}
@@ -70,8 +70,15 @@ func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target reply
 // insightsKeyboard renders the game picker above the back button, and only
 // when there is something to pick between: one game means one record, and
 // a filter with a single option is furniture.
-func (h *UpdateHandler) insightsKeyboard(locale common.LocaleCode, perGame []scoring.GameInsights,
-	selected competition.GameCode) *InlineKeyboard {
+//
+// The Mini App's deeper analytics sit here too, as one more row: "My Form"
+// and "Analytics in the app" used to be two separate top-level entries in
+// the personal cabinet, which offered the same underlying question — how am
+// I doing — twice. Tapping through to the app from here, rather than from
+// the cabinet's root, keeps the app framed as "more detail on this", not
+// as an unrelated destination.
+func (h *UpdateHandler) insightsKeyboard(ctx context.Context, userID common.UserID, locale common.LocaleCode,
+	perGame []scoring.GameInsights, selected competition.GameCode) *InlineKeyboard {
 	var rows [][]InlineButton
 	if len(perGame) > 1 {
 		row := []InlineButton{button(
@@ -81,6 +88,9 @@ func (h *UpdateHandler) insightsKeyboard(locale common.LocaleCode, perGame []sco
 				statsFilterLabel(selected == entry.Game, h.Texts.Get(gameShortLabelKey(entry.Game), locale)),
 				"pstats:insights:"+string(entry.Game)))
 		}
+		rows = append(rows, row)
+	}
+	if row := h.miniAppRow(ctx, userID, locale); row != nil {
 		rows = append(rows, row)
 	}
 	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})

@@ -92,6 +92,12 @@ func navigationScreens() []screenUnderTest {
 			},
 		},
 		{
+			name: "personal results", back: "pstats:menu", private: true,
+			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
+				return h.privateResultsMenu(context.Background(), target, common.UserID{Value: 7}, s.Locale)
+			},
+		},
+		{
 			// Opened from the system panel, so it returns there — this one
 			// used to drop the reader into the personal dashboard, a
 			// section they were never in.
