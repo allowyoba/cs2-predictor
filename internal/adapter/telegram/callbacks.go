@@ -191,6 +191,8 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		} else {
 			err = h.removeTeamMatchOperator(ctx, target, userID, locale, common.UserID{Value: id})
 		}
+	case data == "pstats:results":
+		err = h.privateResultsMenu(ctx, target, userID, locale)
 	case data == "pstats:all":
 		err = h.renderPrivateStats(ctx, target, userID, locale, scoring.AllTime())
 	case data == "pstats:years":

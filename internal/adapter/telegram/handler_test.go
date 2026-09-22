@@ -496,7 +496,7 @@ func TestHandleMessage_PrivateChatRepliesAndDoesNotPersistChat(t *testing.T) {
 		t.Fatalf("expected exactly one sendMessage call, got %d", len(*calls))
 	}
 	// Locale is hardcoded to RU for the private statistics UI.
-	if text, _ := (*calls)[0]["text"].(string); !strings.Contains(text, ru(t, "private.stats_empty")) {
+	if text, _ := (*calls)[0]["text"].(string); !strings.Contains(text, ru(t, "private.cabinet_choose")) {
 		t.Fatalf("unexpected private stats reply = %q", text)
 	}
 }

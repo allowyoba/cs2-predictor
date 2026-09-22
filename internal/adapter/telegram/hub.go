@@ -37,6 +37,11 @@ func (h *UpdateHandler) startLanding(ctx context.Context, target replyTarget, us
 // modeHub renders the actual switcher. Each row is a full panel — personal
 // dashboard, group management, or (operators only) system tools — never a
 // mix of the three on one screen.
+//
+// Settings and Help sit here too, below the panels: for anyone who sees
+// this screen at all, it IS their root, so this is where "root level"
+// means — the personal dashboard below no longer repeats them (see
+// privateStatsMenu).
 func (h *UpdateHandler) modeHub(ctx context.Context, target replyTarget, locale common.LocaleCode, managesAnyChat, isOperator bool) error {
 	var rows [][]InlineButton
 	rows = append(rows, []InlineButton{button(h.Texts.Get("hub.personal", locale), "hub:personal")})
@@ -46,6 +51,10 @@ func (h *UpdateHandler) modeHub(ctx context.Context, target replyTarget, locale 
 	if isOperator {
 		rows = append(rows, []InlineButton{button(h.Texts.Get("hub.system", locale), "hub:system")})
 	}
+	rows = append(rows,
+		[]InlineButton{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
+		[]InlineButton{button(h.Texts.Get("menu.help", locale), "pstats:help")},
+	)
 	return h.respond(ctx, target, bold(h.Texts.Get("hub.title", locale)), &InlineKeyboard{InlineKeyboard: rows})
 }
 

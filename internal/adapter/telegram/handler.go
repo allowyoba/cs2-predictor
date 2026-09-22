@@ -545,7 +545,7 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"):
 		return h.startLanding(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/stats"):
-		return h.privateStatsMenu(ctx, sendTarget(chatID, nil), userID, locale)
+		return h.privateResultsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/bets"):
 		return h.privateBetsMenu(ctx, sendTarget(chatID, nil), userID, locale, nil, 0, 0)
 	case strings.HasPrefix(text, "/team_match_admin"):

@@ -232,7 +232,7 @@ func TestPrivateMessage_PersonalStatsDeepLinkUnknownChatFallsBackToDashboard(t *
 
 	found := false
 	for _, c := range *calls {
-		if text, ok := c["text"].(string); ok && strings.Contains(text, ru(t, "private.stats_empty")) {
+		if text, ok := c["text"].(string); ok && strings.Contains(text, ru(t, "private.cabinet_choose")) {
 			found = true
 		}
 	}
