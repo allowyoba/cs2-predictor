@@ -114,6 +114,27 @@ func navigationScreens() []screenUnderTest {
 				return h.suggestionMenu(context.Background(), target, s.Locale)
 			},
 		},
+		{
+			// No managed chat and no operator role: privateStatsMenu is this
+			// person's actual root, so Settings returns there.
+			name: "personal settings, no hub", back: "pstats:menu", private: true,
+			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
+				return h.privateSettingsMenu(context.Background(), target, common.UserID{Value: 7}, s.Locale)
+			},
+		},
+		{
+			// Manages a chat, so modeHub sits above privateStatsMenu and offers
+			// Settings itself — this used to send the reader back to the
+			// personal cabinet regardless, a screen they were never on.
+			name: "personal settings, hub access", back: "hub:root", private: true,
+			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
+				userID := common.UserID{Value: 7}
+				if err := h.Chats.RecordManaged(context.Background(), s.ChatID, userID); err != nil {
+					t.Fatal(err)
+				}
+				return h.privateSettingsMenu(context.Background(), target, userID, s.Locale)
+			},
+		},
 	}
 }
 

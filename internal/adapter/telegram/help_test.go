@@ -113,3 +113,42 @@ func TestPstatsHelpCallback_RendersAndBacksToPersonalMenu(t *testing.T) {
 		t.Fatalf("expected the back button to point at pstats:menu, got %+v", btn)
 	}
 }
+
+// TestPstatsHelpCallback_WithHubAccessBacksToHub covers the same route for
+// someone who manages a chat: modeHub offers Help itself in that case (see
+// hub.go), not privateStatsMenu, so the way out has to be the hub too — this
+// used to be hardcoded to pstats:menu regardless, the same bug Settings had.
+func TestPstatsHelpCallback_WithHubAccessBacksToHub(t *testing.T) {
+	srv, calls := newRecordingServer(t)
+	defer srv.Close()
+	handler, chats := newTestHandler(t, srv)
+	chatID := common.ChatID{Value: -1}
+	if _, err := chats.Save(context.Background(), chat.Settings{ChatID: chatID, Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chats.RecordManaged(context.Background(), chatID, common.UserID{Value: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	data := "pstats:help"
+	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Any"}, Message: &Message{MessageID: 1, Chat: Chat{ID: 1, Type: "private"}}, Data: &data}
+	if err := handler.handleCallback(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	var edited map[string]any
+	for _, c := range *calls {
+		if c["__method"] == "editMessageText" {
+			edited = c
+		}
+	}
+	if edited == nil {
+		t.Fatal("expected an editMessageText call for pstats:help")
+	}
+	kb, _ := edited["reply_markup"].(map[string]any)
+	rows, _ := kb["inline_keyboard"].([]any)
+	lastRow, _ := rows[len(rows)-1].([]any)
+	btn, _ := lastRow[0].(map[string]any)
+	if btn["callback_data"] != "hub:root" {
+		t.Fatalf("expected the back button to point at hub:root, got %+v", btn)
+	}
+}
