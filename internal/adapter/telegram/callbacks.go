@@ -131,7 +131,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 	case data == "pstats:menu":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
 	case data == "pstats:settings":
-		err = h.privateSettingsMenu(ctx, target, locale)
+		err = h.privateSettingsMenu(ctx, target, userID, locale)
 	case data == "hub:root":
 		err = h.startLanding(ctx, target, userID, locale)
 	case data == "hub:personal":
@@ -284,7 +284,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 			err = setErr
 			break
 		}
-		err = h.privateSettingsMenu(ctx, target, next)
+		err = h.privateSettingsMenu(ctx, target, userID, next)
 	case data == "hub:crest_source":
 		err = h.toggleCrestSource(ctx, target, userID, locale)
 	case data == "notify:menu":
@@ -297,7 +297,10 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.renderPersonalInsights(ctx, target, userID, locale,
 			competition.GameCode(strings.TrimPrefix(data, "pstats:insights:")))
 	case data == "pstats:help":
-		err = h.helpView(ctx, target, locale, "pstats:menu", true)
+		var back string
+		if back, err = h.personalRootBack(ctx, userID); err == nil {
+			err = h.helpView(ctx, target, locale, back, true)
+		}
 	case data == "pstats:rename":
 		err = h.renameMenu(ctx, target, userID, locale)
 	case data == "pstats:timezone":

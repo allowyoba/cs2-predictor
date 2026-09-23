@@ -157,11 +157,33 @@ func (h *UpdateHandler) privateResultsMenu(ctx context.Context, target replyTarg
 	return h.respond(ctx, target, h.Texts.Get("private.stats_choose", locale), &InlineKeyboard{InlineKeyboard: rows})
 }
 
+// personalRootBack is the back target for a screen modeHub and
+// privateStatsMenu both offer directly (Settings, Help) — see each's own
+// hubAccess branch. Such a screen has two different parents depending on
+// hubAccess, so its own back button has to follow whichever one actually
+// opened it rather than always assuming privateStatsMenu: hub:root once a
+// hub exists above the cabinet, pstats:menu when the cabinet is this
+// person's actual root. Getting this wrong drops the reader into a screen
+// they were never on — exactly what happened here before this was split out.
+func (h *UpdateHandler) personalRootBack(ctx context.Context, userID common.UserID) (string, error) {
+	hubAccess, err := h.hasHubAccess(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	if hubAccess {
+		return "hub:root", nil
+	}
+	return "pstats:menu", nil
+}
+
 // privateSettingsMenu groups the person's own preferences — notifications,
-// language, display name — behind one entry point from privateStatsMenu,
-// instead of each living as its own top-level button alongside unrelated
-// stats/navigation actions.
-func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTarget, locale common.LocaleCode) error {
+// language, display name — behind one entry point, instead of each living
+// as its own top-level button alongside unrelated stats/navigation actions.
+func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTarget, userID common.UserID, locale common.LocaleCode) error {
+	back, err := h.personalRootBack(ctx, userID)
+	if err != nil {
+		return err
+	}
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("notify.title", locale), "notify:menu"), button(h.Texts.Get("dm.language", locale), "pstats:locale")},
 		{button(h.Texts.Get("dm.timezone", locale), "pstats:timezone")},
@@ -169,7 +191,7 @@ func (h *UpdateHandler) privateSettingsMenu(ctx context.Context, target replyTar
 	}
 	rows = append(rows,
 		[]InlineButton{button(h.Texts.Get("idea.title", locale), "idea:menu")},
-		[]InlineButton{h.backButton(locale, "pstats:menu")},
+		[]InlineButton{h.backButton(locale, back)},
 	)
 	return h.respond(ctx, target, h.Texts.Get("private.settings_title", locale), &InlineKeyboard{InlineKeyboard: rows})
 }
