@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"cs2predictor/internal/domain/chat"
@@ -55,10 +56,19 @@ type TeamMatchService struct {
 	Outbox      common.Outbox
 	Clock       common.Clock
 	Log         *slog.Logger
-	// OperatorChatIDs receive a one-line ping when a new request is
-	// created — DEPLOY_NOTIFY_CHAT_IDS, reused rather than introducing a
-	// second admin-contact list (see Config.TeamMatchOperatorChatIDs).
+	// OperatorChatIDs receive a single batched ping per sync run when new
+	// requests were created — DEPLOY_NOTIFY_CHAT_IDS, reused rather than
+	// introducing a second admin-contact list (see
+	// Config.TeamMatchOperatorChatIDs).
 	OperatorChatIDs []int64
+
+	// pendingPingNames accumulates the external names of requests created
+	// since the last FlushOperatorPings, so a sync run touching many teams
+	// sends operators one combined message instead of flooding the admin
+	// chat with one per request. EnsureRequests/SynchronizeMatches run
+	// sequentially on one goroutine, so a plain mutex is enough.
+	pendingPingMu    sync.Mutex
+	pendingPingNames []string
 }
 
 // EnsureRequests is the entry point, called once per team per newly
@@ -196,21 +206,40 @@ func bestSnapshotMatch(name string, snapshot []enrichment.RankedTeam) (enrichmen
 	return best, bestScore
 }
 
-// notifyOperators pings every configured operator once when a new request
-// is created — not on every crowd response or every chat it comes up in
-// again, which is the spam this whole design otherwise avoids. Best
-// effort: a failed enqueue is logged, never propagated (this runs inline
-// in the poll-creation path, and a notification failure must not stop a
-// poll from going out).
+// notifyOperators records that req needs an operator's attention, for
+// FlushOperatorPings to report once the current sync run is done — not one
+// Telegram message per request created, which floods the admin chat when a
+// single run (e.g. a big tournament's matches all landing at once)
+// discovers many unmatched teams together.
 func (s *TeamMatchService) notifyOperators(ctx context.Context, req enrichment.TeamMatchRequest) {
+	s.pendingPingMu.Lock()
+	s.pendingPingNames = append(s.pendingPingNames, req.ExternalName)
+	s.pendingPingMu.Unlock()
+}
+
+// FlushOperatorPings sends every operator chat at most one message
+// covering every team-match request created since the last flush, then
+// clears the buffer — called once per sync run (see
+// CompetitionSynchronization.SynchronizeMatches), never per request. A
+// run that created no new requests sends nothing. Best effort: a failed
+// enqueue is logged, never propagated, matching notifyOperators' previous
+// behavior.
+func (s *TeamMatchService) FlushOperatorPings(ctx context.Context) {
+	s.pendingPingMu.Lock()
+	names := s.pendingPingNames
+	s.pendingPingNames = nil
+	s.pendingPingMu.Unlock()
+	if len(names) == 0 {
+		return
+	}
 	for _, chatID := range s.OperatorChatIDs {
-		n := common.TeamMatchOperatorPingNotification{ChatID: chatID, ExternalName: req.ExternalName}
+		n := common.TeamMatchOperatorPingNotification{ChatID: chatID, ExternalNames: names}
 		payload, err := json.Marshal(n)
 		if err != nil {
 			s.Log.Error("team match operator notify marshal failed", "error", err)
 			continue
 		}
-		if _, err := s.Outbox.Enqueue(ctx, "TEAM_MATCH_REQUEST", req.ID.String(), "telegram.team-match-operator-ping", string(payload)); err != nil {
+		if _, err := s.Outbox.Enqueue(ctx, "TEAM_MATCH_REQUEST", "batch", "telegram.team-match-operator-ping", string(payload)); err != nil {
 			s.Log.Error("team match operator notify enqueue failed", "chatId", chatID, "error", err)
 		}
 	}

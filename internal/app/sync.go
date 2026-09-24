@@ -187,6 +187,12 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 				continue
 			}
 		}
+		// One combined operator ping for however many team-match requests
+		// this whole run created, not one per request — see
+		// TeamMatchService.FlushOperatorPings.
+		if s.TeamMatch != nil {
+			s.TeamMatch.FlushOperatorPings(ctx)
+		}
 		if err != nil {
 			return err
 		}

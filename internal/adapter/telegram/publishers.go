@@ -665,7 +665,16 @@ func NewTeamMatchOperatorPingPublisher(client *Client, chats chat.Repository, te
 			// Root operators are an ops concern, not a per-person
 			// preference — RU (this project's primary locale) rather than
 			// a per-chat lookup this compose closure has no ctx for.
-			text := texts.Get("teammatch.operator_ping", common.LocaleRU, escapeHTML(n.ExternalName))
+			names := make([]string, len(n.ExternalNames))
+			for i, name := range n.ExternalNames {
+				names[i] = escapeHTML(name)
+			}
+			var text string
+			if len(names) == 1 {
+				text = texts.Get("teammatch.operator_ping", common.LocaleRU, names[0])
+			} else {
+				text = texts.Get("teammatch.operator_ping_batch", common.LocaleRU, len(names), strings.Join(names, "\n• "))
+			}
 			return n.ChatID, text, nil
 		},
 	}
