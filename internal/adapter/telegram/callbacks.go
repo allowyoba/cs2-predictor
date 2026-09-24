@@ -141,6 +141,8 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.systemToolsMenu(ctx, target, userID, locale)
 	case data == "hub:provider_status":
 		err = h.providerStatusView(ctx, target, userID, locale)
+	case data == "hub:host_status":
+		err = h.hostStatusView(ctx, target, userID, locale)
 	case data == "hub:outbox":
 		err = h.outboxStatusView(ctx, target, userID, locale)
 	case data == "hub:outbox:replay":
