@@ -1400,6 +1400,68 @@
   }
 
 
+  // --- follows and nominations ------------------------------------------
+
+  /** Team/player cuts: the viewer's record on each target their chats follow. */
+  async function loadFollows() {
+    const block = document.querySelector('#profileFollowsBlock');
+    const root = document.querySelector('#profileFollows');
+    if (!block || !root) return;
+    try {
+      const body = await fetchJSON(`/api/miniapp/v1/me/follows${scopeQuery()}`, { signed: true });
+      const rows = (body.follows || []);
+      block.hidden = !rows.length;
+      root.replaceChildren(...rows.map((cut) => {
+        const row = el('div', 'team-row');
+        const copy = el('div', 'team-copy');
+        copy.append(el('strong', null, `${cut.kind === 'PLAYER' ? '🎮' : '👥'} ${cut.label}`),
+          el('small', null, `${cut.chat_title} · ${cut.predictions} ${plural(cut.predictions, 'прогноз', 'прогноза', 'прогнозов')} · ${cut.points} очк.`));
+        row.append(el('span', 'rank-num', ''), el('span', null, ''), copy,
+          el('em', null, cut.predictions ? percentText(cut.accuracy) : '—'));
+        return row;
+      }));
+    } catch (error) {
+      console.warn('follows unavailable', error);
+      block.hidden = true;
+    }
+  }
+
+  let nominationPeriod = 'month';
+
+  const nominationCopy = {
+    best_accuracy: (n) => ['ЛУЧШАЯ ТОЧНОСТЬ', percentText(n.value), `${n.user_name} · ${n.sample} прогн.`],
+    best_streak: (n) => ['ЛУЧШАЯ СЕРИЯ', String(n.value), `${n.user_name} · подряд`],
+    biggest_upset: (n) => ['ГЛАВНЫЙ АПСЕТ', `+${n.value}`, `${n.user_name}: ${n.picked} vs ${n.opponent}, мест в рейтинге`],
+    most_active: (n) => ['САМЫЙ АКТИВНЫЙ', String(n.value), `${n.user_name} · прогнозов`],
+    most_active_chat: (n) => ['САМЫЙ АКТИВНЫЙ ЧАТ', String(n.value), `${n.chat_title} · прогнозов`],
+  };
+
+  async function loadNominations() {
+    const root = document.querySelector('#profileNominations');
+    if (!root) return;
+    try {
+      const body = await fetchJSON(`/api/miniapp/v1/me/nominations${scopeQuery({ period: nominationPeriod })}`, { signed: true });
+      const tiles = (body.nominations || []).filter((n) => nominationCopy[n.kind]).map((n) => {
+        const [label, value, note] = nominationCopy[n.kind](n);
+        return kpiTile(label, value, n.is_you ? `${note} · это вы` : note);
+      });
+      root.replaceChildren(...(tiles.length ? tiles : [emptyLine('За этот период данных пока мало.')]));
+    } catch (error) {
+      console.warn('nominations unavailable', error);
+      root.replaceChildren(failedLine('Номинации не загрузились.', loadNominations));
+    }
+  }
+
+  for (const chip of document.querySelectorAll('#nominationPeriods [data-period]')) {
+    chip.addEventListener('click', () => {
+      nominationPeriod = chip.dataset.period;
+      for (const other of document.querySelectorAll('#nominationPeriods [data-period]')) {
+        other.classList.toggle('active', other === chip);
+      }
+      void loadNominations();
+    });
+  }
+
   function kpiTile(label, value, note) {
     const tile = el('article');
     tile.append(el('small', null, label), el('strong', null, value), el('span', null, note));
@@ -1720,6 +1782,8 @@
       void loadChats();
       void loadSettings();
       void loadSegments();
+      void loadFollows();
+      void loadNominations();
       const notice = document.querySelector('#accessNotice');
       if (notice) notice.hidden = true;
     } catch (error) {

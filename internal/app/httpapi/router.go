@@ -9,6 +9,8 @@ import (
 
 	"cs2predictor/internal/app"
 	"cs2predictor/internal/domain/enrichment"
+	"cs2predictor/internal/domain/scoring"
+	"cs2predictor/internal/domain/subscription"
 	"cs2predictor/internal/miniapp"
 	"cs2predictor/internal/platform/common"
 )
@@ -74,6 +76,10 @@ type RouterDeps struct {
 	MiniAppSettings MiniAppSettings
 	Switches        common.NotifySwitchboard
 	MiniAppAuthz    MiniAppAuthorizer
+	// MiniAppChatFacts and MiniAppTargets back nominations and the
+	// team/player cuts; nil answers 503.
+	MiniAppChatFacts scoring.ChatFactsRepository
+	MiniAppTargets   subscription.TargetRepository
 
 	// Version/Commit/BuildTime are reported by GET /version — set via
 	// -ldflags at build time (see Makefile and docker/Dockerfile),
@@ -118,6 +124,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("GET /api/miniapp/v1/me/chats", instrument("miniapp_chats", chatsHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/history", instrument("miniapp_history", historyHandler(deps.MiniApp, deps.MiniAppHistory)))
 	mux.Handle("GET /api/miniapp/v1/me/segments", instrument("miniapp_segments", segmentsHandler(deps.MiniApp, deps.MiniAppFacts)))
+	mux.Handle("GET /api/miniapp/v1/me/follows", instrument("miniapp_follows", followsHandler(deps.MiniApp, deps.MiniAppActive, deps.MiniAppTargets)))
+	mux.Handle("GET /api/miniapp/v1/me/nominations", instrument("miniapp_nominations", nominationsHandler(deps.MiniApp, deps.MiniAppActive, deps.MiniAppChatFacts)))
 	mux.Handle("GET /api/miniapp/v1/me/settings", instrument("miniapp_settings", settingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
 	mux.Handle("PATCH /api/miniapp/v1/me/settings", instrument("miniapp_settings_patch", patchSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
 	mux.Handle("PATCH /api/miniapp/v1/chats/{id}/settings", instrument("miniapp_chat_settings_patch", patchChatSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches, deps.MiniAppAuthz)))

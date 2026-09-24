@@ -192,6 +192,13 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 		emitted[key] = true
 	}
 
+	for key := range jsonKeys(t, followsDTO{Follows: []followCutDTO{{Kind: "TEAM", Label: "G2", ChatTitle: "c"}}}) {
+		emitted[key] = true
+	}
+	for key := range jsonKeys(t, nominationsDTO{Nominations: []nominationDTO{{Kind: "best_accuracy", UserName: "u", ChatTitle: "c", Picked: "a", Opponent: "b"}}}) {
+		emitted[key] = true
+	}
+
 	// Access is the one payload the page reads before it has anything else.
 	for key := range jsonKeys(t, accessDTO{Status: "PENDING", Operator: false}) {
 		emitted[key] = true
