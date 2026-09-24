@@ -383,9 +383,10 @@ func run() error {
 	mux := httpapi.NewRouter(httpapi.RouterDeps{
 		Webhook: webhookHandler, Gateway: gateway, Registry: registry, Pool: pool,
 		Metrics: metrics, Log: log, WebhookRateLimit: cfg.WebhookRateLimit, Teams: catalog,
-		Logos:          enrichmentRepo,
-		MiniAppHistory: scoringRepo,
-		MiniAppActive:  scoringRepo,
+		Logos:                  enrichmentRepo,
+		MiniAppHistory:         scoringRepo,
+		MiniAppActive:          scoringRepo,
+		MiniAppChatLeaderboard: scoringRepo,
 		MiniApp: httpapi.MiniAppDeps{
 			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats, Prefs: chats,
 			Logos:     enrichmentRepo,
