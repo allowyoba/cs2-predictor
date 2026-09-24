@@ -281,6 +281,33 @@
         в боте это два разных меню, и перенести меню, потеряв разделение,
         — самый быстрый способ дать заглушить чат вместо себя.
       -->
+      <section class="screen" data-screen="results" aria-labelledby="results-title">
+        <div class="section-heading"><div><div class="eyebrow">ГРУППОВОЙ ЗАЧЁТ</div><h1 id="results-title">Результаты</h1></div></div>
+
+        <div class="filter-row" aria-label="Чат">
+          <div class="chat-rail" id="resultsChatRail"></div>
+        </div>
+        <div class="window-switch" id="resultsPeriod" role="group" aria-label="Период"></div>
+
+        <div>
+          <div class="profile-hero" id="resultsHero" hidden>
+            <div class="profile-avatar" id="resultsHeroRank">—</div>
+            <div><div class="eyebrow">ВАШЕ МЕСТО</div><h1 id="resultsHeroPoints">—</h1><p id="resultsHeroNote">—</p></div>
+          </div>
+          <div class="profile-kpis" id="resultsKpis"></div>
+
+          <section class="section-block" id="resultsBarsBlock" hidden>
+            <div class="section-title-row"><div><div class="eyebrow">ОЧКИ</div><h2>По участникам</h2></div></div>
+            <div class="segment-list" id="resultsBars"></div>
+          </section>
+
+          <section class="section-block">
+            <div class="section-title-row"><div><div class="eyebrow">ТАБЛИЦА</div><h2>Полный зачёт</h2></div><span class="sample-chip" id="resultsSample"></span></div>
+            <div class="team-table" id="resultsTable"></div>
+          </section>
+        </div>
+      </section>
+
       <section class="screen" data-screen="settings" aria-labelledby="settings-title">
         <div class="section-heading"><div><div class="eyebrow">НАСТРОЙКИ</div><h1 id="settings-title">Что и куда приходит</h1></div></div>
 
@@ -327,6 +354,7 @@
       <button data-target="analytics"><svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></svg><span>Аналитика</span></button>
       <button data-target="history"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h11"/></svg><span>История</span></button>
       <button data-target="achievements"><svg viewBox="0 0 24 24"><path d="M8 3h8v6a4 4 0 0 1-8 0V3Z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4M12 13v5M8 21h8"/></svg><span>Награды</span></button>
+      <button data-target="results"><svg viewBox="0 0 24 24"><path d="M5 21V11M12 21V4M19 21v-7"/></svg><span>Результаты</span></button>
       <button data-target="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.3-4 4-6 8-6s6.7 2 8 6"/></svg><span>Профиль</span></button>
     </nav>
   </div>

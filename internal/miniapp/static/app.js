@@ -1152,7 +1152,168 @@
     return `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })} ${time}`;
   }
 
+  // --- results (group leaderboard) ---------------------------------------
+  //
+  // The one screen that is not about one person: who ranks where in one
+  // chat. It needs its own chat picker, separate from the app's filter bar,
+  // because a leaderboard with no chat selected has no field to rank
+  // against — "every chat merged into one table" is not a leaderboard,
+  // it is people who never played each other pretending they did.
+
+  /** resultsScope is this screen's own choice: which chat, which period. */
+  const resultsScope = { chat: null, period: 'all', year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
+  const RESULTS_PERIODS = [
+    { id: 'all', label: 'Всё время' },
+    { id: 'year', label: 'Этот год' },
+    { id: 'month', label: 'Этот месяц' },
+  ];
+
+  function resultsQuery() {
+    const extra = { period: resultsScope.period };
+    if (resultsScope.period === 'year' || resultsScope.period === 'month') extra.year = String(resultsScope.year);
+    if (resultsScope.period === 'month') extra.month = String(resultsScope.month);
+    if (resultsScope.chat !== null) extra.chat = String(resultsScope.chat);
+    if (scope.game) extra.game = scope.game.toUpperCase();
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(extra)) if (value) query.set(key, value);
+    const rendered = query.toString();
+    return rendered ? `?${rendered}` : '';
+  }
+
+  /** renderResultsChatRail picks up the same chat list the filter bar
+   * uses (GET /me/chats already loaded it) — no extra request for it. */
+  function renderResultsChatRail(chats) {
+    const rail = document.querySelector('#resultsChatRail');
+    if (!rail) return;
+    if (resultsScope.chat === null && chats.length) resultsScope.chat = chats[0].id;
+    rail.replaceChildren(...chats.map((entry) => {
+      const active = entry.id === resultsScope.chat;
+      const chip = el('button', 'chat-chip' + (active ? ' active' : ''));
+      chip.setAttribute('aria-pressed', String(active));
+      chip.append(el('span', null, entry.chat || entry.title));
+      chip.addEventListener('click', () => {
+        if (resultsScope.chat === entry.id) return;
+        resultsScope.chat = entry.id;
+        haptic();
+        renderResultsChatRail(chats);
+        void loadResults();
+      });
+      return chip;
+    }));
+  }
+
+  function renderResultsPeriodTabs() {
+    const switcher = document.querySelector('#resultsPeriod');
+    if (!switcher) return;
+    switcher.replaceChildren(...RESULTS_PERIODS.map((entry) => {
+      const active = entry.id === resultsScope.period;
+      const button = el('button', 'window-chip' + (active ? ' active' : ''), entry.label);
+      button.setAttribute('aria-pressed', String(active));
+      button.addEventListener('click', () => {
+        if (resultsScope.period === entry.id) return;
+        resultsScope.period = entry.id;
+        haptic();
+        renderResultsPeriodTabs();
+        void loadResults();
+      });
+      return button;
+    }));
+  }
+
+  async function loadResults() {
+    const table = document.querySelector('#resultsTable');
+    if (!table) return;
+    // The chat list comes from the chats already loaded for the app's own
+    // filter bar (chatMedalTotal's neighbours) — read from the last
+    // /me/chats response rather than fetched again.
+    renderResultsChatRail(lastChats);
+    renderResultsPeriodTabs();
+    if (resultsScope.chat === null) {
+      table.replaceChildren(emptyLine('Выберите чат, чтобы увидеть зачёт.'));
+      document.querySelector('#resultsHero').hidden = true;
+      document.querySelector('#resultsKpis').replaceChildren();
+      document.querySelector('#resultsBarsBlock').hidden = true;
+      setText('#resultsSample', '');
+      return;
+    }
+    table.replaceChildren(emptyLine('Загружаем…'));
+    try {
+      const body = await fetchJSON(`/api/miniapp/v1/me/results${resultsQuery()}`, { signed: true });
+      renderResults(body);
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      table.replaceChildren(failedLine(describeFailure(error, 'результаты'), loadResults));
+    }
+  }
+
+  function renderResults(data) {
+    const rows = data.rows || [];
+    const hero = document.querySelector('#resultsHero');
+    const kpis = document.querySelector('#resultsKpis');
+    const barsBlock = document.querySelector('#resultsBarsBlock');
+    const bars = document.querySelector('#resultsBars');
+    const table = document.querySelector('#resultsTable');
+    if (!hero || !kpis || !barsBlock || !bars || !table) return;
+
+    setText('#resultsSample', rows.length ? `${data.predictions || 0} прогнозов` : '');
+
+    if (data.your_rank) {
+      hero.hidden = false;
+      setText('#resultsHeroRank', `#${data.your_rank}`);
+      setText('#resultsHeroPoints', `${data.your_points} очк.`);
+      setText('#resultsHeroNote', `место в зачёте из ${data.participants}`);
+    } else {
+      hero.hidden = true;
+    }
+
+    kpis.replaceChildren(
+      kpiTile('УЧАСТНИКОВ', String(data.participants || 0), 'в этом зачёте'),
+      kpiTile('ПРОГНОЗОВ', String(data.predictions || 0), 'в выборке'),
+      kpiTile('ВАШЕ МЕСТО', data.your_rank ? `#${data.your_rank}` : '—', 'в этом чате'),
+    );
+
+    if (rows.length === 0) {
+      barsBlock.hidden = true;
+      table.replaceChildren(emptyLine(scopeIsNarrowed()
+        ? 'В выбранном фильтре завершённых прогнозов пока нет.'
+        : 'В этом чате ещё никто не завершил прогноз в выбранном периоде.'));
+      return;
+    }
+
+    // Bars: points per participant, capped to the leaders — the same
+    // categorical-breakdown shape the analytics screen uses for a game's
+    // accuracy, just keyed by points instead.
+    const top = rows.slice(0, 10);
+    const maxPoints = Math.max(...top.map((r) => r.points), 1);
+    barsBlock.hidden = false;
+    bars.replaceChildren(...top.map((row) => {
+      const rowEl = el('div', 'segment-row');
+      const copy = el('div', 'segment-copy');
+      copy.append(el('strong', null, row.display_name), el('small', null, `${row.predictions} прогнозов`));
+      const meter = el('div', 'segment-meter');
+      const fill = el('i');
+      fill.style.width = `${Math.max(0, Math.min(100, (row.points / maxPoints) * 100))}%`;
+      meter.append(fill);
+      rowEl.append(copy, meter, el('b', null, `${row.points}`));
+      return rowEl;
+    }));
+
+    table.replaceChildren(...rows.map((row) => {
+      const rowEl = el('div', 'team-row' + (row.you ? ' active' : ''));
+      rowEl.append(el('span', 'rank-num', String(row.rank).padStart(2, '0')));
+      const copy = el('div', 'team-copy');
+      copy.append(el('strong', null, row.display_name),
+        el('small', null, `${row.predictions} прогнозов · ${percentText(row.accuracy)}`));
+      rowEl.append(copy, el('em', null, `${row.points}`));
+      return rowEl;
+    }));
+  }
+
   // --- chats -------------------------------------------------------------
+
+  /** lastChats is the chat list from the last /me/chats read — the results
+   * screen's chat picker reuses it instead of fetching its own copy. */
+  let lastChats = [];
 
   async function loadChats() {
     const root = document.querySelector('#chatStandings');
@@ -1161,6 +1322,8 @@
       const body = await fetchJSON(`/api/miniapp/v1/me/chats${scopeQuery()}`, { signed: true });
       renderChats(body.chats || []);
       renderMedals(body.medals || []);
+      lastChats = body.chats || [];
+      void loadResults();
     } catch (error) {
       if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
       root.replaceChildren(failedLine(describeFailure(error, 'статистику по чатам'), loadChats));

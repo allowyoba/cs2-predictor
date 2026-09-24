@@ -150,6 +150,17 @@ func sampleSegments() segmentsDTO {
 	}
 }
 
+func sampleResults() resultsDTO {
+	return resultsDTO{
+		Period: "ALL_TIME", Year: 2026, Month: 3, Chat: -100,
+		Participants: 1, Predictions: 8, YourRank: 1, YourPoints: 12,
+		Rows: []resultRowDTO{{
+			Rank: 1, DisplayName: "Аня", Points: 12, Accuracy: 75,
+			Exact: 3, Predictions: 8, Tournaments: 2, You: true,
+		}},
+	}
+}
+
 func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	script := appScript(t)
 	emitted := jsonKeys(t, sampleDashboard())
@@ -167,6 +178,9 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 		emitted[key] = true
 	}
 	for key := range jsonKeys(t, sampleSegments()) {
+		emitted[key] = true
+	}
+	for key := range jsonKeys(t, sampleResults()) {
 		emitted[key] = true
 	}
 	// The public team endpoint feeds the same page.

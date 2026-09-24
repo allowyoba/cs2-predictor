@@ -57,6 +57,9 @@ type RouterDeps struct {
 	// MiniAppActive backs the two screens that are not about the past:
 	// predictions still running, and medals per chat.
 	MiniAppActive MiniAppActive
+	// MiniAppResults backs the group leaderboard screen — the same
+	// per-chat ranking the bot's own /leaderboard reads, sliced by period.
+	MiniAppResults MiniAppResults
 
 	// Teams backs the Mini App's team/crest endpoint. Nil leaves the route
 	// registered but answering 503, which is a clearer signal to a client
@@ -116,6 +119,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("GET /api/miniapp/v1/me/dashboard", instrument("miniapp_dashboard", dashboardHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/active", instrument("miniapp_active", activeHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/chats", instrument("miniapp_chats", chatsHandler(deps.MiniApp, deps.MiniAppActive)))
+	mux.Handle("GET /api/miniapp/v1/me/results", instrument("miniapp_results", resultsHandler(deps.MiniApp, deps.MiniAppResults)))
 	mux.Handle("GET /api/miniapp/v1/me/history", instrument("miniapp_history", historyHandler(deps.MiniApp, deps.MiniAppHistory)))
 	mux.Handle("GET /api/miniapp/v1/me/segments", instrument("miniapp_segments", segmentsHandler(deps.MiniApp, deps.MiniAppFacts)))
 	mux.Handle("GET /api/miniapp/v1/me/settings", instrument("miniapp_settings", settingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
