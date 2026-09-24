@@ -1152,6 +1152,59 @@
     return `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })} ${time}`;
   }
 
+  // --- cross-chat leaderboard ---------------------------------------------
+
+  /** chatLeaderboardPeriod is the cut the person picked for "which chat
+   * predicts best" — independent of the personal filter bar above it,
+   * since there is no single chat's calendar to anchor a period on across
+   * every chat at once. */
+  let chatLeaderboardPeriod = 'all';
+
+  async function loadChatLeaderboard() {
+    const root = document.querySelector('#chatLeaderboard');
+    if (!root) return;
+    try {
+      const body = await fetchJSON(`/api/miniapp/v1/chats/leaderboard${scopeQuery({ period: chatLeaderboardPeriod })}`, { signed: true });
+      renderChatLeaderboard(body.chats || []);
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      root.replaceChildren(failedLine(describeFailure(error, 'рейтинг чатов'), loadChatLeaderboard));
+    }
+  }
+
+  function renderChatLeaderboard(chats) {
+    const root = document.querySelector('#chatLeaderboard');
+    if (!root) return;
+    if (chats.length === 0) {
+      root.replaceChildren(emptyLine('За этот период ни в одном чате ещё нет завершённых прогнозов.'));
+      return;
+    }
+    root.replaceChildren(...chats.map((chat) => {
+      const row = el('article', 'chat-row');
+      const copy = el('div', 'chat-copy');
+      copy.append(el('strong', null, `${PLACE_ICON[chat.rank] || `${chat.rank}.`} ${chat.chat}`),
+        el('small', null, `${chat.predictions} прогнозов · ${percentText(chat.accuracy)} · ${chat.points} очков`));
+      row.append(copy);
+      return row;
+    }));
+  }
+
+  function initChatLeaderboardPeriodChips() {
+    const rail = document.querySelector('#chatLeaderboardPeriods');
+    if (!rail) return;
+    rail.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-period]');
+      if (!button) return;
+      chatLeaderboardPeriod = button.dataset.period;
+      for (const chip of rail.querySelectorAll('[data-period]')) {
+        chip.classList.toggle('selected', chip === button);
+      }
+      void loadChatLeaderboard();
+    });
+    const initial = rail.querySelector(`[data-period="${chatLeaderboardPeriod}"]`);
+    if (initial) initial.classList.add('selected');
+  }
+
   // --- chats -------------------------------------------------------------
 
   async function loadChats() {
@@ -1811,6 +1864,7 @@
       void loadHistory();
       void loadActive();
       void loadChats();
+      void loadChatLeaderboard();
       void loadSettings();
       void loadSegments();
       void loadResults();
@@ -2177,6 +2231,7 @@
     }
     initFilters();
     initSheet();
+    initChatLeaderboardPeriodChips();
 
     void loadDashboard();
     const screen = params.get('screen');

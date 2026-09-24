@@ -57,6 +57,10 @@ type RouterDeps struct {
 	// MiniAppActive backs the two screens that are not about the past:
 	// predictions still running, and medals per chat.
 	MiniAppActive MiniAppActive
+	// MiniAppChatLeaderboard backs the cross-chat leaderboard: chats
+	// ranked against each other, not users within one. Left nil turns
+	// that one endpoint off rather than serving half an answer.
+	MiniAppChatLeaderboard MiniAppChatLeaderboard
 
 	// Teams backs the Mini App's team/crest endpoint. Nil leaves the route
 	// registered but answering 503, which is a clearer signal to a client
@@ -122,6 +126,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("GET /api/miniapp/v1/me/settings", instrument("miniapp_settings", settingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
 	mux.Handle("PATCH /api/miniapp/v1/me/settings", instrument("miniapp_settings_patch", patchSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
 	mux.Handle("PATCH /api/miniapp/v1/chats/{id}/settings", instrument("miniapp_chat_settings_patch", patchChatSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches, deps.MiniAppAuthz)))
+	mux.Handle("GET /api/miniapp/v1/chats/leaderboard", instrument("miniapp_chat_leaderboard", chatLeaderboardHandler(deps.MiniApp, deps.MiniAppChatLeaderboard)))
 	mux.Handle("GET /api/miniapp/v1/me/access", instrument("miniapp_access", accessHandler(deps.MiniApp)))
 	mux.Handle("POST /api/miniapp/v1/me/access", instrument("miniapp_access_request", accessHandler(deps.MiniApp)))
 	// The Mini App's own page, served from the binary. See

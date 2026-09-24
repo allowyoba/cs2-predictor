@@ -295,6 +295,22 @@
         </section>
 
         <!--
+          Не «мой рейтинг в чате», а чаты друг против друга: какой чат в
+          целом предсказывает лучше. Здесь нет ни одного участника — только
+          название чата и его общий результат, поэтому экран безопасно
+          показывать кому угодно, а не только участникам этого чата.
+        -->
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">МЕЖДУ ЧАТАМИ</div><h2>Рейтинг чатов</h2></div></div>
+          <div class="filter-rail" id="chatLeaderboardPeriods" role="group" aria-label="Период рейтинга чатов">
+            <button type="button" class="chip" data-period="all">Всё время</button>
+            <button type="button" class="chip" data-period="year">Год</button>
+            <button type="button" class="chip" data-period="month">Месяц</button>
+          </div>
+          <div class="chat-list" id="chatLeaderboard"></div>
+        </section>
+
+        <!--
           Что именно за медаль. Три золота — это число; «1 место, IEM
           Katowice, в чате Прогнозы» — то, вместо чего это число стояло.
         -->

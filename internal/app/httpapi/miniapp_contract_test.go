@@ -209,6 +209,13 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 		emitted[key] = true
 	}
 
+	// The cross-chat leaderboard: chat-level totals only, no member row.
+	for key := range jsonKeys(t, chatLeaderboardDTO{Chats: []chatStandingRowDTO{{
+		ID: -100, Chat: "c", Rank: 1, Points: 1, Accuracy: 1, Predictions: 1, Participants: 1,
+	}}}) {
+		emitted[key] = true
+	}
+
 	// Access is the one payload the page reads before it has anything else.
 	for key := range jsonKeys(t, accessDTO{Status: "PENDING", Operator: false}) {
 		emitted[key] = true

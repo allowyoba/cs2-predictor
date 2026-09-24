@@ -204,8 +204,12 @@ func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID) str
 		if s.UserID == viewer {
 			viewerMark = " · 👤"
 		}
-		fmt.Fprintf(&b, "%s %s %s%s · %s%s", prefix, bold(escapeHTML(name)),
-			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), movement, code(strconv.Itoa(s.Points)), viewerMark)
+		wins := ""
+		if s.TournamentWins > 0 {
+			wins = fmt.Sprintf(" · 🏆%d", s.TournamentWins)
+		}
+		fmt.Fprintf(&b, "%s %s %s%s · %s%s%s", prefix, bold(escapeHTML(name)),
+			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), movement, code(strconv.Itoa(s.Points)), wins, viewerMark)
 	}
 	return b.String()
 }
