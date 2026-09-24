@@ -269,12 +269,21 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		}
 		cid := common.ChatID{Value: chatID}
 		err = h.privateBetsMenu(ctx, target, userID, locale, &cid, page, listPage)
+	// The "f:" (filtered) form must also be checked before the bare
+	// "pstats:bets:" prefix below, since it also matches that prefix.
+	case strings.HasPrefix(data, "pstats:bets:f:"):
+		game, chatID, kind, page, parseErr := parseBetsFilterCallback(strings.TrimPrefix(data, "pstats:bets:f:"))
+		if parseErr != nil {
+			err = newValidationError("invalid personal bets filter")
+		} else {
+			err = h.renderPersonalBets(ctx, target, userID, locale, game, chatID, kind, page)
+		}
 	case strings.HasPrefix(data, "pstats:bets:"):
 		page, parseErr := strconv.Atoi(strings.TrimPrefix(data, "pstats:bets:"))
 		if parseErr != nil || page < 0 {
 			err = newValidationError("invalid personal bets page")
 		} else {
-			err = h.privateBetsMenu(ctx, target, userID, locale, nil, page, 0)
+			err = h.renderPersonalBets(ctx, target, userID, locale, "", nil, "", page)
 		}
 	case data == "pstats:locale":
 		next := common.LocaleEN
