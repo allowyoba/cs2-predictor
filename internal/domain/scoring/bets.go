@@ -36,6 +36,32 @@ type UserBet struct {
 	EventTier string
 }
 
+// BetResultKind classifies how a settled bet turned out, for filtering the
+// "my bets" screen: exact-score hit, winner-only hit, or miss. Both hit kinds
+// count as Correct, but calling the winner is worth a point while calling the
+// exact scoreline is worth several — the thing people actually boast about —
+// so they read as different outcomes even though the underlying poll only
+// ever tracked a single win/loss bit.
+type BetResultKind string
+
+const (
+	BetResultExact  BetResultKind = "exact"
+	BetResultWinner BetResultKind = "winner"
+	BetResultMiss   BetResultKind = "miss"
+)
+
+// ResultKind classifies this bet into one of the three BetResultKind values.
+func (b UserBet) ResultKind() BetResultKind {
+	switch {
+	case b.Correct && b.PredictedScore == b.ActualScore:
+		return BetResultExact
+	case b.Correct:
+		return BetResultWinner
+	default:
+		return BetResultMiss
+	}
+}
+
 // UserBetsMaxRows bounds how much history a "my bets" screen reads — enough
 // for the deepest pagination anyone will actually click through, without
 // pulling a heavy user's entire career into memory on every page turn.
