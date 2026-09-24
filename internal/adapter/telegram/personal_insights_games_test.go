@@ -49,7 +49,7 @@ func renderInsights(t *testing.T, predictions []scoring.UserPrediction, game com
 	h, _ := newTestHandler(t, server)
 	h.Scoring = stubScoringWithInsights{predictions: predictions}
 	if err := h.renderPersonalInsights(context.Background(), sendTarget(common.ChatID{Value: 7}, nil),
-		common.UserID{Value: 7}, common.LocaleRU, game); err != nil {
+		common.UserID{Value: 7}, common.LocaleRU, game, nil); err != nil {
 		t.Fatal(err)
 	}
 	var markup []byte

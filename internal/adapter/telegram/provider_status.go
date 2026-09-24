@@ -139,8 +139,11 @@ func (h *UpdateHandler) enrichmentRow(locale common.LocaleCode, source enrichmen
 	lines = append(lines, h.Texts.Get("providers.last_success", locale)+": "+h.age(locale, now, st.LastSuccessAt))
 	if haveExpected && expected > 0 {
 		line := h.Texts.Get("providers.expected", locale, humanAge(h.Texts, locale, expected))
-		if overdue {
-			line += " — " + h.Texts.Get("providers.overdue", locale)
+		if overdue && st.LastSuccessAt != nil {
+			// Say how late it is, not just that it is late: "overdue"
+			// alone reads as a status code, not an explanation.
+			late := now.Sub(*st.LastSuccessAt) - expected
+			line += " — " + h.Texts.Get("providers.overdue", locale, humanAge(h.Texts, locale, late))
 		}
 		lines = append(lines, line)
 	}

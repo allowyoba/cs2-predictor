@@ -173,8 +173,8 @@ func TestProviderStatus_JudgesFreshnessAgainstTheConfiguredInterval(t *testing.T
 	if overdue.severity != severityDown {
 		t.Fatalf("a feed three hours late on a fifteen-minute schedule reads as healthy: %q", overdue.text)
 	}
-	if !strings.Contains(overdue.text, ru(t, "providers.overdue")) {
-		t.Fatalf("expected the screen to say it is overdue, got %q", overdue.text)
+	if !strings.Contains(overdue.text, ru(t, "providers.overdue", humanAge(handler.Texts, common.LocaleRU, 165*time.Minute))) {
+		t.Fatalf("expected the screen to say how overdue it is, got %q", overdue.text)
 	}
 
 	handler.EnrichmentIntervals = map[enrichment.Source]time.Duration{enrichment.SourceGRID: 7 * 24 * time.Hour}

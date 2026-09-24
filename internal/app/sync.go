@@ -187,6 +187,12 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 				continue
 			}
 		}
+		// One combined operator ping for however many team-match requests
+		// this whole run created, not one per request — see
+		// TeamMatchService.FlushOperatorPings.
+		if s.TeamMatch != nil {
+			s.TeamMatch.FlushOperatorPings(ctx)
+		}
 		if err != nil {
 			return err
 		}
@@ -200,6 +206,56 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 		s.Metrics.SyncRuns.WithLabelValues("matches", result).Inc()
 		s.Metrics.SyncEntities.WithLabelValues("matches").Observe(float64(len(loaded)))
 		s.Log.Info("global match snapshot synchronized", "events", len(activeEvents), "matches", len(loaded), "failed", failed)
+		return nil
+	})
+}
+
+// ReconcileEventCompletions is the self-healing sweep for the "the
+// tournament's matches all finished but its recap never went out" case —
+// e.g. a provider that stops updating an event's own status field even
+// though every match under it reached a terminal state, so the
+// status-transition checks in discoverOneEvent/processMatch never fire.
+//
+// It costs nothing to run this on every subscribed event, every time:
+// EventCompletionService.Complete already re-derives "is this event
+// actually over" from the matches themselves rather than trusting
+// event.Status, and completeForChat is hash-guarded per chat, so calling
+// it again for an event that already got its recap is a no-op read.
+func (s *CompetitionSynchronization) ReconcileEventCompletions(ctx context.Context) {
+	s.guarded(ctx, "reconcile-event-completions", func(ctx context.Context) error {
+		eventIDs, err := s.Subscriptions.ActiveEventIDs(ctx)
+		if err != nil {
+			return err
+		}
+		checked, failed := 0, 0
+		seen := map[string]bool{}
+		for _, id := range eventIDs {
+			key := id.Value.String()
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			event, err := s.Catalog.FindEvent(ctx, id)
+			if err != nil {
+				return err
+			}
+			if event == nil {
+				continue
+			}
+			checked++
+			if err := s.EventCompletion.Complete(ctx, *event); err != nil {
+				s.Log.Error("event completion reconciliation failed for one event, continuing with the rest",
+					"eventId", event.ID.Value, "error", err)
+				failed++
+				continue
+			}
+		}
+		result := "success"
+		if failed > 0 {
+			result = "partial"
+		}
+		s.Metrics.SyncRuns.WithLabelValues("event-completions", result).Inc()
+		s.Log.Info("event completion reconciliation swept", "checked", checked, "failed", failed)
 		return nil
 	})
 }
@@ -382,10 +438,20 @@ func (s *CompetitionSynchronization) processMatch(ctx context.Context, incoming 
 			if _, err := s.Settlement.Settle(ctx, *event, incoming); err != nil {
 				return err
 			}
-			if event.Status == competition.EventFinished {
-				if err := s.EventCompletion.Complete(ctx, *event); err != nil {
-					return err
-				}
+			// Gating this on event.Status == EventFinished used to make a
+			// tournament's own status field (only ever refreshed by
+			// DiscoverEvents, from an "upcoming/running/past" listing a
+			// long-since-finished event can fall out of before that
+			// transition is ever observed) a second, independent
+			// precondition for the recap — on top of Complete's own
+			// "every match terminal" check, which is authoritative and
+			// already safe to call unconditionally (a no-op until it's
+			// actually true). A confirmed production incident (missed
+			// recap for an event whose matches all finished normally)
+			// traced back to exactly that: the event never got observed
+			// transitioning to FINISHED, so this branch never even tried.
+			if err := s.EventCompletion.Complete(ctx, *event); err != nil {
+				return err
 			}
 		}
 	}

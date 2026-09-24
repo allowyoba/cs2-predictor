@@ -280,9 +280,15 @@ func (f *fakeChats) MigrateChatID(_ context.Context, oldID, newID common.ChatID)
 func (f *fakeChats) SaveEventTopic(context.Context, chat.EventTopic) error                { return nil }
 func (f *fakeChats) ClearEventTopic(context.Context, common.ChatID, common.EventID) error { return nil }
 
-type fakeMembership struct{ role chat.MemberRole }
+type fakeMembership struct {
+	role chat.MemberRole
+	err  error
+}
 
 func (m fakeMembership) Role(context.Context, common.ChatID, common.UserID) (chat.MemberRole, error) {
+	if m.err != nil {
+		return "", m.err
+	}
 	return m.role, nil
 }
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strconv"
 	"testing"
@@ -554,5 +555,61 @@ func TestEnsureRequests_SkipsGamesTheRankingFeedsDoNotCover(t *testing.T) {
 	}
 	if len(identity.saved) != 0 {
 		t.Fatalf("expected no identity to be auto-accepted, got %+v", identity.saved)
+	}
+}
+
+// TestFlushOperatorPings_SendsOneMessageForEveryRequestSinceLastFlush is
+// the regression test for the flooding this batches away: several teams
+// each opening their own review request (e.g. one sync run across a big
+// tournament's matches) must reach the operator chat as a single message,
+// not one Telegram send per request.
+func TestFlushOperatorPings_SendsOneMessageForEveryRequestSinceLastFlush(t *testing.T) {
+	snapshot := []enrichment.RankedTeam{
+		{Identity: enrichment.TeamIdentity{Name: "Avangar"}, Source: enrichment.SourceValveVRS},
+		{Identity: enrichment.TeamIdentity{Name: "Natus Vincere"}, Source: enrichment.SourceValveVRS},
+	}
+	svc, _, _, _ := newTestTeamMatchService(snapshot)
+	svc.OperatorChatIDs = []int64{111}
+	outbox := svc.Outbox.(*recordingOutbox)
+
+	teamA := competition.Team{ID: common.NewTeamID(), Name: "Avangarr"}
+	teamB := competition.Team{ID: common.NewTeamID(), Name: "Natus Vinc"}
+	ensureRequestSingle(t, svc, teamA)
+	ensureRequestSingle(t, svc, teamB)
+
+	pings := 0
+	for _, e := range outbox.enqueued {
+		if e.eventType == "telegram.team-match-operator-ping" {
+			pings++
+		}
+	}
+	if pings != 0 {
+		t.Fatalf("expected no operator ping before a flush, got %d", pings)
+	}
+
+	svc.FlushOperatorPings(context.Background())
+	var got *common.TeamMatchOperatorPingNotification
+	for _, e := range outbox.enqueued {
+		if e.eventType != "telegram.team-match-operator-ping" {
+			continue
+		}
+		var n common.TeamMatchOperatorPingNotification
+		if err := json.Unmarshal([]byte(e.payload), &n); err != nil {
+			t.Fatal(err)
+		}
+		got = &n
+	}
+	if got == nil {
+		t.Fatal("expected exactly one operator ping after the flush")
+	}
+	if len(got.ExternalNames) != 2 {
+		t.Fatalf("expected both requests batched into the one ping, got %+v", got.ExternalNames)
+	}
+
+	// A second flush with nothing new pending must send nothing more.
+	before := len(outbox.enqueued)
+	svc.FlushOperatorPings(context.Background())
+	if len(outbox.enqueued) != before {
+		t.Fatal("expected an empty flush to enqueue nothing")
 	}
 }

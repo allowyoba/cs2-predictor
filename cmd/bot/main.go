@@ -348,6 +348,9 @@ func run() error {
 	if cfg.SchedulingEnabled {
 		runBackground("discover-events", cfg.SyncEventsDelay, synchronizer.DiscoverEvents)
 		runBackground("synchronize-matches", cfg.SyncMatchesDelay, synchronizer.SynchronizeMatches)
+		// Reuses the event-discovery cadence: this is a cheap DB-only sweep,
+		// not another provider call, so it needs no config of its own.
+		runBackground("reconcile-event-completions", cfg.SyncEventsDelay, synchronizer.ReconcileEventCompletions)
 		runBackground("close-due-polls", cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
 		runBackground("digests", cfg.DigestCheckDelay, digests.Dispatch)
 		if cfg.EventEveLead >= 0 {

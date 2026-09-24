@@ -100,6 +100,15 @@ func (e *APIError) IsUnreachableUser() bool {
 		e.isDescriptionContains("chat not found")
 }
 
+// IsBotRemovedFromChat matches getChatMember's refusal once the bot itself
+// is no longer in the chat: a stale "manage chats" entry from before it was
+// kicked, or a group deleted outright. Distinct from IsUnreachableUser,
+// which is about a private-chat user, not a group the bot used to be in.
+func (e *APIError) IsBotRemovedFromChat() bool {
+	return e.ErrorCode == http.StatusForbidden ||
+		e.isDescriptionContains("bot is not a member", "chat not found", "member list is inaccessible")
+}
+
 // IsNotModified matches editMessageText's error for editing a message with
 // content identical to what it already has (e.g. a double-tap on the same
 // menu button) — not a real failure, safe to treat as a no-op success.

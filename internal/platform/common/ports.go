@@ -261,13 +261,15 @@ type TeamMatchAskNotification struct {
 }
 
 // TeamMatchOperatorPingNotification is the payload for the
-// "telegram.team-match-operator-ping" outbox event type: a one-line heads
-// up to a configured operator chat that a new team-match request needs
-// review (Config.TeamMatchOperatorChatIDs), sent once per request created,
-// not once per crowd response.
+// "telegram.team-match-operator-ping" outbox event type: a single heads-up
+// to a configured operator chat that one or more new team-match requests
+// need review (Config.TeamMatchOperatorChatIDs). Sent at most once per
+// sync run regardless of how many requests it created, not once per
+// request and never once per crowd response — see
+// TeamMatchService.notifyOperators.
 type TeamMatchOperatorPingNotification struct {
-	ChatID       int64  `json:"chatId"`
-	ExternalName string `json:"externalName"`
+	ChatID        int64    `json:"chatId"`
+	ExternalNames []string `json:"externalNames"`
 }
 
 // AdminAlertKind names what an administrator is being told about. The

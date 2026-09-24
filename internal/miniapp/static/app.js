@@ -408,17 +408,7 @@
 
     const gamesRoot = document.querySelector('#analyticsGames');
     if (gamesRoot) {
-      gamesRoot.replaceChildren(...games.map((entry) => {
-        const row = el('div', 'segment-row' + (entry.accuracy < 50 ? ' is-warning' : ''));
-        const copy = el('div', 'segment-copy');
-        copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
-        const meter = el('div', 'segment-meter');
-        const fill = el('i');
-        fill.style.width = `${Math.max(0, Math.min(100, entry.accuracy))}%`;
-        meter.append(fill);
-        row.append(copy, meter, el('b', null, percentText(entry.accuracy)));
-        return row;
-      }));
+      gamesRoot.replaceChildren(...games.map(gameSegmentRow));
       if (!games.length) gamesRoot.replaceChildren(emptyLine('Пока нет завершённых прогнозов.'));
     }
 
@@ -1369,16 +1359,46 @@
       ? `${summary.predictions} прогнозов в ${summary.tournaments} турнирах`
       : 'Здесь появится ваш профиль после первых прогнозов');
 
+    const form = data.form || {};
     const kpis = document.querySelector('#profileKpis');
     if (kpis) {
       kpis.replaceChildren(
         kpiTile('ВСЕГО', String(summary.predictions || 0), 'прогнозов'),
         kpiTile('ТОЧНОСТЬ', summary.predictions ? percentText(summary.accuracy) : '—', 'all-time'),
         kpiTile('ОЧКИ', String(summary.points || 0), 'за всё время'),
+        kpiTile('ЛУЧШАЯ СЕРИЯ', String(form.best_streak || 0), 'побед подряд'),
       );
     }
 
+    // The recent-form strip and its trend delta are the same read as the
+    // dashboard's own "текущая форма" card, just without the big headline
+    // number — the profile already has that in the KPI grid above.
+    const formBlock = document.querySelector('#profileFormBlock');
+    if (formBlock) formBlock.hidden = !(form.recent || []).length;
+    renderFormStrip(form.recent || [], '#profileFormStrip');
+    const trend = data.trend;
+    const trendEl = document.querySelector('#profileTrend');
+    if (trendEl) {
+      trendEl.textContent = trend
+        ? `${trend.delta_pp > 0 ? '↗ +' : trend.delta_pp < 0 ? '↘ −' : '→ '}${Math.abs(trend.delta_pp)} п.п. за 30 дней`
+        : '';
+      trendEl.className = 'delta' + (trend && trend.delta_pp !== 0 ? (trend.delta_pp > 0 ? ' positive' : ' negative') : '');
+    }
+
+    const gamesBlock = document.querySelector('#profileGamesBlock');
+    const playedGames = (data.games || []).filter((g) => g.predictions > 0);
+    if (gamesBlock) gamesBlock.hidden = playedGames.length < 2;
+    const gamesRoot = document.querySelector('#profileGames');
+    if (gamesRoot) gamesRoot.replaceChildren(...playedGames.map(gameSegmentRow));
+
+    // Both ends of the team ranking, same row shape as analytics — a
+    // preview of "who you read well/badly" without leaving the cabinet.
+    const teamsBlock = document.querySelector('#profileTeamsBlock');
+    const bestTeams = (data.best_teams || []).slice(0, 3);
+    if (teamsBlock) teamsBlock.hidden = !bestTeams.length;
+    if (bestTeams.length) renderTeamTable('#profileTeams', bestTeams);
   }
+
 
   function kpiTile(label, value, note) {
     const tile = el('article');
@@ -1517,14 +1537,32 @@
    * guide a sports page uses, and the one place on this screen where the
    * recent run is visible as a shape rather than a number.
    */
-  function renderFormStrip(recent) {
-    const strip = document.querySelector('#formStrip');
+  function renderFormStrip(recent, selector = '#formStrip') {
+    const strip = document.querySelector(selector);
     if (!strip) return;
     strip.replaceChildren(...recent.map((won) => {
       const mark = el('i', won ? 'form-mark won' : 'form-mark lost');
       mark.setAttribute('aria-label', won ? 'верно' : 'ошибка');
       return mark;
     }));
+  }
+
+  /**
+   * gameSegmentRow draws one game's accuracy as a labeled meter — the row
+   * shape the analytics screen's per-game breakdown and the profile's
+   * compact preview of it both use, so a game looks the same wherever its
+   * record turns up.
+   */
+  function gameSegmentRow(entry) {
+    const row = el('div', 'segment-row' + (entry.accuracy < 50 ? ' is-warning' : ''));
+    const copy = el('div', 'segment-copy');
+    copy.append(el('strong', null, gameLabel(entry.game)), el('small', null, `${entry.predictions} прогнозов`));
+    const meter = el('div', 'segment-meter');
+    const fill = el('i');
+    fill.style.width = `${Math.max(0, Math.min(100, entry.accuracy))}%`;
+    meter.append(fill);
+    row.append(copy, meter, el('b', null, percentText(entry.accuracy)));
+    return row;
   }
 
   /**
