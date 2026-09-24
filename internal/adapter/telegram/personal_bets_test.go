@@ -153,7 +153,7 @@ func TestPrivateBets_PaginatesOverflow(t *testing.T) {
 		t.Fatalf("expected only the first page's bets to render, got %q", text)
 	}
 	cds, _ := findKeyboardButtons(*calls)
-	if !slices.Contains(cds, "pstats:bets:1") {
+	if !slices.Contains(cds, "pstats:bets:f::::1") {
 		t.Fatalf("expected a next-page button, got %v", cds)
 	}
 }
