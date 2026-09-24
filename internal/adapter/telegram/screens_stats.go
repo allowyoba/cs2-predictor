@@ -52,6 +52,7 @@ func (h *UpdateHandler) statsMenu(ctx context.Context, target replyTarget, setti
 		{button(latestMonthLabel, fmt.Sprintf("stats:month:%04d-%02d:menu", latest.Year, latest.Month)), button(strconv.Itoa(latest.Year), fmt.Sprintf("stats:year:%d:menu", latest.Year))},
 		{button(h.Texts.Get("stats.all_time", settings.Locale), "stats:all"), button(h.Texts.Get("stats.event", settings.Locale), "stats:events")},
 		{button(h.Texts.Get("stats.other_period", settings.Locale), "stats:years")},
+		{button(h.Texts.Get("stats.teams", settings.Locale), "stats:teams")},
 	}
 	if target.chatID == settings.ChatID {
 		if link, ok := h.statsDeepLink(settings.ChatID); ok {

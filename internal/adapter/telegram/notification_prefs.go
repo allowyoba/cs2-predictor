@@ -104,6 +104,8 @@ func chatNotifyLabelKey(kind common.ChatNotificationKind) string {
 		return "notify.chat.event_finished"
 	case common.ChatNotifyDigests:
 		return "notify.chat.digests"
+	case common.ChatNotifyTargetCrossSell:
+		return "notify.chat.target_cross_sell"
 	default:
 		return "notify.chat.streams"
 	}

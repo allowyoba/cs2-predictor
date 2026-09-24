@@ -169,6 +169,10 @@ var callbackRoutes = []callbackRoute{
 		return false, h.personalStats(ctx, notifTarget, settings, cb.From, common.EventID{Value: id})
 	}},
 	{match: exact("stats:events"), handle: simple((*UpdateHandler).eventStatsMenu)},
+	{match: exact("stats:teams"), handle: simple((*UpdateHandler).targetStatsMenu)},
+	{match: prefixed("stats:target:team:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return false, h.targetTeamStats(ctx, target, settings, strings.TrimPrefix(data, "stats:target:team:"), common.UserID{Value: cb.From.ID})
+	}},
 	{match: prefixed("stats:evbets:me:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		id, err := uuid.Parse(strings.TrimPrefix(data, "stats:evbets:me:"))
 		if err != nil {
@@ -236,6 +240,9 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("settings:games:toggle:"), guard: guardPermission(chat.PermissionManageGroupSettings), handle: routeSettingsGamesToggle},
 	{match: prefixed("subscribe:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.subscribe(ctx, cb, target, settings, strings.TrimPrefix(data, "subscribe:"))
+	}},
+	{match: prefixed(crossSellDismissPrefix), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.dismissCrossSell(ctx, target, settings, trimCrossSellDismiss(data))
 	}},
 	{match: prefixed("unsubscribe:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.unsubscribe(ctx, cb, target, settings, strings.TrimPrefix(data, "unsubscribe:"))

@@ -62,6 +62,11 @@ type StatsPeriod struct {
 	// one is measured against two different fields, and a merged number
 	// belongs to neither.
 	ChatID *common.ChatID
+	// TeamID narrows every figure to matches that team played in; nil
+	// means every match. This is the team-scoped cut a team subscription
+	// grants (subscription.ResolveChatStatsScope) for a chat that has not
+	// also subscribed to the tournament itself.
+	TeamID *common.TeamID
 }
 
 // ForGame narrows a period to one game; an empty code widens it back to
@@ -74,6 +79,13 @@ func (p StatsPeriod) ForGame(game competition.GameCode) StatsPeriod {
 // ForChat narrows a period to one chat; nil widens it back to all of them.
 func (p StatsPeriod) ForChat(chatID *common.ChatID) StatsPeriod {
 	p.ChatID = chatID
+	return p
+}
+
+// ForTeam narrows a period to one team's matches; nil widens it back to
+// every match.
+func (p StatsPeriod) ForTeam(teamID *common.TeamID) StatsPeriod {
+	p.TeamID = teamID
 	return p
 }
 

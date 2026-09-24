@@ -81,6 +81,8 @@ func run() error {
 	chats := pg.NewChatRepository(pool)
 	catalog := pg.NewCompetitionRepository(pool)
 	subscriptions := pg.NewSubscriptionRepository(pool)
+	targetSubscriptions := pg.NewTargetSubscriptionRepository(pool)
+	crossSellOffers := pg.NewTargetCrossSellRepository(pool)
 	predictionsRepo := pg.NewPredictionRepository(pool)
 	scoringRepo := pg.NewScoringRepository(pool)
 	settlementRepo := pg.NewSettlementRepository(pool)
@@ -192,6 +194,7 @@ func run() error {
 		WithRecaps(chats, chatTitle, log)
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
 		WithPersonalRecaps(chats).WithSwitches(chats)
+	targetCrossSell := app.NewTargetCrossSellService(catalog, subscriptions, targetSubscriptions, crossSellOffers, outbox, chats, log)
 
 	// teamMatch resolves a team with no cached ranking against whichever
 	// ranking feeds (teamMatchSources) are actually enabled — pointless
@@ -219,7 +222,7 @@ func run() error {
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
 		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
-		AdminActions: adminActions, Invitations: invitations,
+		AdminActions: adminActions, Invitations: invitations, CrossSell: crossSellOffers, Targets: targetSubscriptions,
 		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 		TeamMatches:              enrichmentRepo,
 		TeamMatchHelpers:         enrichmentRepo,
@@ -244,7 +247,8 @@ func run() error {
 	synchronizer := &app.CompetitionSynchronization{
 		Gateway: gateway, Catalog: catalog, Subscriptions: subscriptions, Chats: chats, ActiveChats: chats,
 		Predictions: predictionService, Settlement: settlement, EventCompletion: completion, TeamMatch: teamMatch,
-		Outbox: outbox, Switches: chats, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
+		TargetCrossSell: targetCrossSell,
+		Outbox:          outbox, Switches: chats, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
 		MatchSyncColdInterval: cfg.SyncMatchesColdInterval,
 	}
 	digests := &app.DigestScheduler{
@@ -290,6 +294,7 @@ func run() error {
 			telegram.WithQuietHours(telegram.NewMonthlyDigestPublisher(telegramClient, chats, texts), chats, clock),
 			telegram.WithQuietHours(telegram.NewAnnualDigestPublisher(telegramClient, chats, texts), chats, clock),
 			telegram.WithQuietHours(telegram.NewBigEventPublisher(telegramClient, chats, texts), chats, clock),
+			telegram.WithQuietHours(telegram.NewTargetCrossSellPublisher(telegramClient, chats, texts), chats, clock),
 			telegram.NewUnsubscribeConfirmationPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewResultRecapPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewPollReminderPublisher(telegramClient, chats, texts, metrics),
