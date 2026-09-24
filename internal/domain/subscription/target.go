@@ -49,13 +49,13 @@ type TargetRepository interface {
 // given team/player subscription — so the offer fires once per
 // (chat, tournament, target) rather than every time new matches sync in.
 type CrossSellOffer struct {
-	ChatID       common.ChatID
-	EventID      common.EventID
-	Kind         TargetKind
-	TargetID     int64
-	OfferedAt    time.Time
-	Dismissed    bool
-	Subscribed   bool
+	ChatID     common.ChatID
+	EventID    common.EventID
+	Kind       TargetKind
+	TargetID   int64
+	OfferedAt  time.Time
+	Dismissed  bool
+	Subscribed bool
 }
 
 // CrossSellRepository tracks which cross-sell offers have already been
