@@ -125,6 +125,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(h.Texts.Get("private.results", locale), "pstats:results")},
 		{button(h.Texts.Get("insights.title", locale), "pstats:insights")},
 		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
+		{button(h.Texts.Get("chatlb.menu_entry", locale), chatLeaderboardCallback(chatLeaderboardAllTime, ""))},
 	}
 	if !hubAccess {
 		// This screen is this person's actual root (no hub exists above
