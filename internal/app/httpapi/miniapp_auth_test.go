@@ -110,16 +110,32 @@ type stubMiniAppStats struct {
 	standing    *scoring.UserStanding
 	predictions []scoring.UserPrediction
 	bias        []scoring.TeamBias
+	months      []scoring.StatsMonth
+	chatStats   []scoring.UserChatStanding
 	askedFor    common.UserID
+	// statsFor, when set, overrides standing per call — used to give
+	// different chats different figures for the same request.
+	statsFor func(scoring.StatsPeriod) *scoring.UserStanding
 }
 
-func (s *stubMiniAppStats) UserStats(_ context.Context, userID common.UserID, _ scoring.StatsPeriod) (*scoring.UserStanding, error) {
+func (s *stubMiniAppStats) UserStats(_ context.Context, userID common.UserID, period scoring.StatsPeriod) (*scoring.UserStanding, error) {
 	s.askedFor = userID
+	if s.statsFor != nil {
+		return s.statsFor(period), nil
+	}
 	return s.standing, nil
 }
 func (s *stubMiniAppStats) UserPredictions(_ context.Context, userID common.UserID, _ int) ([]scoring.UserPrediction, error) {
 	s.askedFor = userID
 	return s.predictions, nil
+}
+func (s *stubMiniAppStats) AvailableUserMonths(_ context.Context, userID common.UserID) ([]scoring.StatsMonth, error) {
+	s.askedFor = userID
+	return s.months, nil
+}
+func (s *stubMiniAppStats) UserChatStats(_ context.Context, userID common.UserID) ([]scoring.UserChatStanding, error) {
+	s.askedFor = userID
+	return s.chatStats, nil
 }
 
 type stubAccess struct {

@@ -141,7 +141,7 @@ main{padding:0 16px calc(84px + var(--safe-bottom))}.screen{display:none;animati
 .load-failed{display:grid;gap:2px;justify-items:start}
 .load-failed .text-action{padding:4px 0}
 
-.window-switch{display:flex;gap:4px}
+.window-switch{display:flex;flex-wrap:wrap;gap:4px}
 .window-chip{min-height:26px;padding:0 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text-3);font-size:10px;font-weight:700;cursor:pointer}
 .window-chip:disabled{opacity:.38;cursor:default}
 .window-chip.active{border-color:rgba(var(--accent-rgb),.32);background:rgba(var(--accent-rgb),.10);color:var(--accent)}

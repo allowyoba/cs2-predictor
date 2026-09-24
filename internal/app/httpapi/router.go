@@ -117,6 +117,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("GET /api/miniapp/v1/me/active", instrument("miniapp_active", activeHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/chats", instrument("miniapp_chats", chatsHandler(deps.MiniApp, deps.MiniAppActive)))
 	mux.Handle("GET /api/miniapp/v1/me/history", instrument("miniapp_history", historyHandler(deps.MiniApp, deps.MiniAppHistory)))
+	mux.Handle("GET /api/miniapp/v1/me/results", instrument("miniapp_results", resultsHandler(deps.MiniApp)))
 	mux.Handle("GET /api/miniapp/v1/me/segments", instrument("miniapp_segments", segmentsHandler(deps.MiniApp, deps.MiniAppFacts)))
 	mux.Handle("GET /api/miniapp/v1/me/settings", instrument("miniapp_settings", settingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
 	mux.Handle("PATCH /api/miniapp/v1/me/settings", instrument("miniapp_settings_patch", patchSettingsHandler(deps.MiniApp, deps.MiniAppSettings, deps.Switches)))
