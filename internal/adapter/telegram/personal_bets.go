@@ -160,30 +160,7 @@ func (h *UpdateHandler) renderPersonalBets(ctx context.Context, target replyTarg
 		return err
 	}
 	zone := h.userZone(ctx, userID)
-
-	// A stale filter button (the game/chat/kind it names no longer appears
-	// in the history) falls back to "all" rather than rendering an empty
-	// screen the picker itself disagrees with.
-	if game != "" && !hasBetGame(bets, game) {
-		game = ""
-	}
-	if chatID != nil && !hasBetChat(bets, *chatID) {
-		chatID = nil
-	}
-	if kind != "" && !hasBetResultKind(bets, kind) {
-		kind = ""
-	}
-
-	selected := bets
-	if game != "" {
-		selected = filterBetsByGame(selected, game)
-	}
-	if chatID != nil {
-		selected = filterBetsByChat(selected, *chatID)
-	}
-	if kind != "" {
-		selected = filterBetsByResultKind(selected, kind)
-	}
+	game, chatID, kind, selected := applyBetsFilter(bets, game, chatID, kind)
 
 	title := bold(h.Texts.Get("bets.title", locale))
 	if len(selected) == 0 {
@@ -217,6 +194,36 @@ func (h *UpdateHandler) renderPersonalBets(ctx context.Context, target replyTarg
 	totalPages := maxPage + 1
 	kb := h.betsFilterKeyboard(ctx, locale, bets, game, chatID, kind, page, totalPages)
 	return h.respond(ctx, target, b.String(), kb)
+}
+
+// applyBetsFilter resets any stale filter value (one naming a game/chat/kind
+// that no longer appears in bets, e.g. a button from a screen rendered
+// before new history arrived) to "all" rather than rendering an empty
+// screen the picker itself disagrees with, then returns the filtered rows
+// alongside the (possibly reset) filter values so the caller can build a
+// keyboard consistent with what was actually applied.
+func applyBetsFilter(bets []scoring.UserBet, game competition.GameCode, chatID *common.ChatID, kind scoring.BetResultKind) (competition.GameCode, *common.ChatID, scoring.BetResultKind, []scoring.UserBet) {
+	if game != "" && !hasBetGame(bets, game) {
+		game = ""
+	}
+	if chatID != nil && !hasBetChat(bets, *chatID) {
+		chatID = nil
+	}
+	if kind != "" && !hasBetResultKind(bets, kind) {
+		kind = ""
+	}
+
+	selected := bets
+	if game != "" {
+		selected = filterBetsByGame(selected, game)
+	}
+	if chatID != nil {
+		selected = filterBetsByChat(selected, *chatID)
+	}
+	if kind != "" {
+		selected = filterBetsByResultKind(selected, kind)
+	}
+	return game, chatID, kind, selected
 }
 
 // betsFilterKeyboard renders the game/chat/result-kind filter rows above the
