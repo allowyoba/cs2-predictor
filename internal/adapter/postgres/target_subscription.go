@@ -31,7 +31,7 @@ func (r *TargetSubscriptionRepository) SubscribeTarget(ctx context.Context, s su
 	return s, err
 }
 
-func (r *TargetSubscriptionRepository) UnsubscribeTarget(ctx context.Context, chatID common.ChatID, kind subscription.TargetKind, targetID int64) error {
+func (r *TargetSubscriptionRepository) UnsubscribeTarget(ctx context.Context, chatID common.ChatID, kind subscription.TargetKind, targetID string) error {
 	_, err := executor(ctx, r.pool).Exec(ctx,
 		`UPDATE target_subscription SET active = false WHERE chat_id = $1 AND kind = $2 AND target_id = $3`,
 		chatID.Value, string(kind), targetID)
@@ -61,7 +61,7 @@ func (r *TargetSubscriptionRepository) TargetSubscriptions(ctx context.Context, 
 	return out, rows.Err()
 }
 
-func (r *TargetSubscriptionRepository) ChatsForTarget(ctx context.Context, kind subscription.TargetKind, targetID int64) ([]common.ChatID, error) {
+func (r *TargetSubscriptionRepository) ChatsForTarget(ctx context.Context, kind subscription.TargetKind, targetID string) ([]common.ChatID, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx,
 		`SELECT chat_id FROM target_subscription WHERE kind = $1 AND target_id = $2 AND active = true`,
 		string(kind), targetID)

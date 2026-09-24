@@ -25,7 +25,7 @@ const (
 type TargetSubscription struct {
 	ChatID       common.ChatID
 	Kind         TargetKind
-	TargetID     int64
+	TargetID     string
 	TargetName   string
 	SubscribedAt time.Time
 	Active       bool
@@ -36,12 +36,12 @@ type TargetSubscription struct {
 // independent concerns that only meet in the scoping logic below.
 type TargetRepository interface {
 	SubscribeTarget(ctx context.Context, s TargetSubscription) (TargetSubscription, error)
-	UnsubscribeTarget(ctx context.Context, chatID common.ChatID, kind TargetKind, targetID int64) error
+	UnsubscribeTarget(ctx context.Context, chatID common.ChatID, kind TargetKind, targetID string) error
 	TargetSubscriptions(ctx context.Context, chatID common.ChatID) ([]TargetSubscription, error)
 	// ChatsForTarget returns chats actively subscribed to the given
 	// team/player — the counterpart of Repository.SubscribedChats, used to
 	// fan out team/player-scoped notifications and cross-sell prompts.
-	ChatsForTarget(ctx context.Context, kind TargetKind, targetID int64) ([]common.ChatID, error)
+	ChatsForTarget(ctx context.Context, kind TargetKind, targetID string) ([]common.ChatID, error)
 }
 
 // CrossSellOffer records that a chat has already been offered a one-tap
@@ -52,7 +52,7 @@ type CrossSellOffer struct {
 	ChatID     common.ChatID
 	EventID    common.EventID
 	Kind       TargetKind
-	TargetID   int64
+	TargetID   string
 	OfferedAt  time.Time
 	Dismissed  bool
 	Subscribed bool

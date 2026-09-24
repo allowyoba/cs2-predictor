@@ -5,11 +5,11 @@ package subscription
 // TargetSubscription uses) are competing in it. Built from match sync data
 // by the caller — this package stays pure and DB-free.
 type TournamentParticipants struct {
-	TeamIDs   []int64
-	PlayerIDs []int64
+	TeamIDs   []string
+	PlayerIDs []string
 }
 
-func containsID(ids []int64, id int64) bool {
+func containsID(ids []string, id string) bool {
 	for _, v := range ids {
 		if v == id {
 			return true
@@ -31,8 +31,8 @@ type ChatStatsScope struct {
 	// FullTournament is false and the corresponding subscription's target
 	// actually plays in this tournament. When FullTournament is true these
 	// are left empty since the tournament view already covers them.
-	TeamIDs   []int64
-	PlayerIDs []int64
+	TeamIDs   []string
+	PlayerIDs []string
 }
 
 // HasAnyAccess reports whether the chat should see anything at all for this
@@ -59,8 +59,8 @@ func ResolveChatStatsScope(subscribedToTournament bool, targets []TargetSubscrip
 	}
 
 	scope := ChatStatsScope{}
-	seenTeam := map[int64]bool{}
-	seenPlayer := map[int64]bool{}
+	seenTeam := map[string]bool{}
+	seenPlayer := map[string]bool{}
 	for _, t := range targets {
 		if !t.Active {
 			continue
