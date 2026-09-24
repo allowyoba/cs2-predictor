@@ -1152,6 +1152,59 @@
     return `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })} ${time}`;
   }
 
+  // --- cross-chat leaderboard ---------------------------------------------
+
+  /** chatLeaderboardPeriod is the cut the person picked for "which chat
+   * predicts best" — independent of the personal filter bar above it,
+   * since there is no single chat's calendar to anchor a period on across
+   * every chat at once. */
+  let chatLeaderboardPeriod = 'all';
+
+  async function loadChatLeaderboard() {
+    const root = document.querySelector('#chatLeaderboard');
+    if (!root) return;
+    try {
+      const body = await fetchJSON(`/api/miniapp/v1/chats/leaderboard${scopeQuery({ period: chatLeaderboardPeriod })}`, { signed: true });
+      renderChatLeaderboard(body.chats || []);
+    } catch (error) {
+      if (error instanceof ForbiddenError || error instanceof UnauthenticatedError) return;
+      root.replaceChildren(failedLine(describeFailure(error, 'рейтинг чатов'), loadChatLeaderboard));
+    }
+  }
+
+  function renderChatLeaderboard(chats) {
+    const root = document.querySelector('#chatLeaderboard');
+    if (!root) return;
+    if (chats.length === 0) {
+      root.replaceChildren(emptyLine('За этот период ни в одном чате ещё нет завершённых прогнозов.'));
+      return;
+    }
+    root.replaceChildren(...chats.map((chat) => {
+      const row = el('article', 'chat-row');
+      const copy = el('div', 'chat-copy');
+      copy.append(el('strong', null, `${PLACE_ICON[chat.rank] || `${chat.rank}.`} ${chat.chat}`),
+        el('small', null, `${chat.predictions} прогнозов · ${percentText(chat.accuracy)} · ${chat.points} очков`));
+      row.append(copy);
+      return row;
+    }));
+  }
+
+  function initChatLeaderboardPeriodChips() {
+    const rail = document.querySelector('#chatLeaderboardPeriods');
+    if (!rail) return;
+    rail.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-period]');
+      if (!button) return;
+      chatLeaderboardPeriod = button.dataset.period;
+      for (const chip of rail.querySelectorAll('[data-period]')) {
+        chip.classList.toggle('selected', chip === button);
+      }
+      void loadChatLeaderboard();
+    });
+    const initial = rail.querySelector(`[data-period="${chatLeaderboardPeriod}"]`);
+    if (initial) initial.classList.add('selected');
+  }
+
   // --- chats -------------------------------------------------------------
 
   async function loadChats() {
@@ -1459,6 +1512,99 @@
    */
   let historyResult = '';
 
+  // --- results (period/chat) --------------------------------------------
+  //
+  // The DM's own "период/чат" menu, redrawn as a screen: the same
+  // granularities (a month, a year, all time), but with a real delta
+  // against the previous window and a per-chat breakdown for that same
+  // window, neither of which fits in a Telegram message.
+
+  /** resultsPeriod is the key the API round-trips ("all", "year:2026", …). */
+  let resultsPeriod = 'all';
+
+  async function loadResults() {
+    const root = document.querySelector('#resultsChats');
+    try {
+      const data = await fetchJSON(`/api/miniapp/v1/me/results${scopeQuery({ period: resultsPeriod })}`, { signed: true });
+      renderResults(data);
+    } catch (error) {
+      setText('#resultsAccuracy', '—');
+      setText('#resultsSub', '');
+      setText('#resultsDelta', '—');
+      root?.replaceChildren(failedLine(describeFailure(error, 'результаты'), loadResults));
+    }
+  }
+
+  /** resultsPeriodOptions builds the switch from what the API says exists,
+   * newest first, capped the way the rolling-window switch is: enough to
+   * choose from, not a directory. */
+  function resultsPeriodOptions(data) {
+    const months = (data.available_months || []).slice(0, 3);
+    const years = (data.available_years || []).slice(0, 3);
+    return [{ key: 'all', label: 'Всё время' }, ...months, ...years];
+  }
+
+  function renderResults(data) {
+    const switcher = document.querySelector('#resultsPeriodSwitch');
+    if (switcher) {
+      switcher.replaceChildren(...resultsPeriodOptions(data).map((option) => {
+        const active = option.key === resultsPeriod;
+        const button = el('button', 'window-chip' + (active ? ' active' : ''), option.label);
+        button.setAttribute('aria-pressed', String(active));
+        button.addEventListener('click', () => {
+          if (resultsPeriod === option.key) return;
+          resultsPeriod = option.key;
+          haptic();
+          void loadResults();
+        });
+        return button;
+      }));
+    }
+
+    const summary = data.summary || {};
+    const hasData = (summary.predictions || 0) > 0;
+    setText('#resultsAccuracy', hasData ? summary.accuracy : '—');
+    setText('#resultsSub', hasData ? `${summary.correct} из ${summary.predictions} верно` : 'нет завершённых прогнозов за этот период');
+    setText('#resultsPoints', hasData ? summary.points : '—');
+    setText('#resultsPredictions', hasData ? summary.predictions : '—');
+    setText('#resultsAccuracySample', hasData ? `${summary.exact} точных счётов` : 'точных счётов');
+    setText('#resultsTournaments', hasData ? summary.tournaments : '—');
+
+    const deltaEl = document.querySelector('#resultsDelta');
+    if (deltaEl) {
+      if (typeof data.delta_pp === 'number') {
+        const sign = data.delta_pp > 0 ? '+' : '';
+        deltaEl.textContent = `${sign}${data.delta_pp} п.п.`;
+        deltaEl.className = 'delta ' + (data.delta_pp > 0 ? 'up' : data.delta_pp < 0 ? 'down' : '');
+      } else {
+        deltaEl.textContent = '—';
+        deltaEl.className = 'delta';
+      }
+    }
+
+    const chatsRoot = document.querySelector('#resultsChats');
+    if (chatsRoot) {
+      const chats = data.chats || [];
+      chatsRoot.replaceChildren(...chats.map(resultsChatRow));
+      if (!chats.length) chatsRoot.replaceChildren(emptyLine('Пока нет прогнозов ни в одном чате за этот период.'));
+    }
+  }
+
+  /** resultsChatRow draws one chat's own record for the selected period —
+   * the same bar-and-percentage row the discipline breakdown uses, so a
+   * magnitude reads the same way everywhere in the app. */
+  function resultsChatRow(chat) {
+    const row = el('div', 'segment-row' + (chat.accuracy < 50 ? ' is-warning' : ''));
+    const copy = el('div', 'segment-copy');
+    copy.append(el('strong', null, chat.title), el('small', null, `${chat.predictions} прогнозов · ${chat.points} очков`));
+    const meter = el('div', 'segment-meter');
+    const fill = el('i');
+    fill.style.width = `${Math.max(0, Math.min(100, chat.accuracy))}%`;
+    meter.append(fill);
+    row.append(copy, meter, el('b', null, percentText(chat.accuracy)));
+    return row;
+  }
+
   async function loadHistory() {
     const feed = document.querySelector('#historyFeed');
     if (!feed) return;
@@ -1718,8 +1864,10 @@
       void loadHistory();
       void loadActive();
       void loadChats();
+      void loadChatLeaderboard();
       void loadSettings();
       void loadSegments();
+      void loadResults();
       const notice = document.querySelector('#accessNotice');
       if (notice) notice.hidden = true;
     } catch (error) {
@@ -2083,6 +2231,7 @@
     }
     initFilters();
     initSheet();
+    initChatLeaderboardPeriodChips();
 
     void loadDashboard();
     const screen = params.get('screen');

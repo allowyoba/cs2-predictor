@@ -62,6 +62,11 @@ type StatsPeriod struct {
 	// one is measured against two different fields, and a merged number
 	// belongs to neither.
 	ChatID *common.ChatID
+	// TeamID narrows every figure to matches that team played in; nil
+	// means every match. This is the team-scoped cut a team subscription
+	// grants (subscription.ResolveChatStatsScope) for a chat that has not
+	// also subscribed to the tournament itself.
+	TeamID *common.TeamID
 }
 
 // ForGame narrows a period to one game; an empty code widens it back to
@@ -74,6 +79,13 @@ func (p StatsPeriod) ForGame(game competition.GameCode) StatsPeriod {
 // ForChat narrows a period to one chat; nil widens it back to all of them.
 func (p StatsPeriod) ForChat(chatID *common.ChatID) StatsPeriod {
 	p.ChatID = chatID
+	return p
+}
+
+// ForTeam narrows a period to one team's matches; nil widens it back to
+// every match.
+func (p StatsPeriod) ForTeam(teamID *common.TeamID) StatsPeriod {
+	p.TeamID = teamID
 	return p
 }
 
@@ -98,9 +110,15 @@ type UserStanding struct {
 	CorrectPredictions int
 	Predictions        int
 	Tournaments        int
-	Rank               int
-	PreviousRank       *int // not set by domain code, filled in ad hoc at call sites (ResultSettlementService)
-	PointsDelta        int  // same as above
+	// TournamentWins counts the tournaments (within this chat, within the
+	// leaderboard's own period) where this user finished #1 (dense rank 1,
+	// ties included) in that tournament's own per-chat leaderboard — a
+	// "prediction win", derived entirely from this bot's own standings,
+	// not a real-world esports result.
+	TournamentWins int
+	Rank           int
+	PreviousRank   *int // not set by domain code, filled in ad hoc at call sites (ResultSettlementService)
+	PointsDelta    int  // same as above
 }
 
 // accuracyPercent rounds correct/total to the nearest whole percent for a
@@ -190,6 +208,74 @@ type UserChatStanding struct {
 
 func (s UserChatStanding) AccuracyPercent() int {
 	return accuracyPercent(s.CorrectPredictions, s.Predictions)
+}
+
+// ChatStanding is one chat's aggregate record in the cross-chat
+// leaderboard: which chat is collectively best at predicting, not who
+// inside it is. Deliberately carries no per-member data — a chat's own
+// roster is not this leaderboard's business, only its title and totals.
+type ChatStanding struct {
+	ChatID             common.ChatID
+	ChatTitle          string
+	Points             int
+	ExactPredictions   int
+	CorrectPredictions int
+	Predictions        int
+	Participants       int
+	Rank               int
+}
+
+func (s ChatStanding) AccuracyPercent() int {
+	return accuracyPercent(s.CorrectPredictions, s.Predictions)
+}
+
+// ChatLeaderboardMaxChats bounds how many chats ChatLeaderboard returns,
+// mirroring LeaderboardMaxParticipants' role for the per-chat leaderboard.
+const ChatLeaderboardMaxChats = 500
+
+// ChatLeaderboardRepository reads the cross-chat leaderboard: chats ranked
+// against each other rather than users within one chat. Kept separate from
+// Repository, like PersonalInsightsRepository, since it is a different
+// question (which chat, not which chat's member) and only the cross-chat
+// screens need it.
+type ChatLeaderboardRepository interface {
+	// ChatLeaderboard returns every chat with at least one finished,
+	// predicted match in period, ranked best-first, up to
+	// ChatLeaderboardMaxChats of them.
+	ChatLeaderboard(ctx context.Context, period StatsPeriod) ([]ChatStanding, error)
+}
+
+// DenseRankChats ranks chats the same way DenseRank ranks users within one
+// chat: points desc, exact predictions desc, predictions desc, chat id asc
+// as the final tie-break, with equal-points chats sharing a rank.
+func DenseRankChats(rows []ChatStanding) []ChatStanding {
+	sorted := make([]ChatStanding, len(rows))
+	copy(sorted, rows)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		if a.Points != b.Points {
+			return a.Points > b.Points
+		}
+		if a.ExactPredictions != b.ExactPredictions {
+			return a.ExactPredictions > b.ExactPredictions
+		}
+		if a.Predictions != b.Predictions {
+			return a.Predictions > b.Predictions
+		}
+		return a.ChatID.Value < b.ChatID.Value
+	})
+
+	rank := 0
+	var previousPoints *int
+	for i := range sorted {
+		if previousPoints == nil || sorted[i].Points != *previousPoints {
+			rank++
+			p := sorted[i].Points
+			previousPoints = &p
+		}
+		sorted[i].Rank = rank
+	}
+	return sorted
 }
 
 // PersonalRepository exposes statistics that are scoped by Telegram user

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cs2predictor/internal/app"
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/prediction"
@@ -291,6 +292,45 @@ func (p *EventFinishedPublisher) Publish(ctx context.Context, message common.Out
 	}
 
 	return sendToChat(ctx, p.client, p.chats, msgPayload)
+}
+
+// TargetCrossSellPublisher publishes the
+// "telegram.target-cross-sell-offer" outbox event type (see
+// app.TargetCrossSellService): the one-tap "this team you follow plays in
+// a tournament you haven't subscribed to" prompt. Subscribe reuses the
+// plain "subscribe:<eventID>" route; dismiss is its own small callback
+// (target_cross_sell_flow.go) so the offer never repeats after being
+// waved off.
+type TargetCrossSellPublisher struct {
+	client *Client
+	chats  chat.Repository
+	texts  *Texts
+}
+
+func NewTargetCrossSellPublisher(client *Client, chats chat.Repository, texts *Texts) *TargetCrossSellPublisher {
+	return &TargetCrossSellPublisher{client: client, chats: chats, texts: texts}
+}
+
+func (p *TargetCrossSellPublisher) Supports(eventType string) bool {
+	return eventType == "telegram.target-cross-sell-offer"
+}
+
+func (p *TargetCrossSellPublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
+	var n app.TargetCrossSellNotification
+	if err := json.Unmarshal([]byte(message.Payload), &n); err != nil {
+		return err
+	}
+	locale := resolveLocale(ctx, p.chats, common.ChatID{Value: n.ChatID})
+	text := p.texts.Get("crosssell.offer", locale, escapeHTML(n.TargetName), escapeHTML(n.EventName))
+	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
+		{button(p.texts.Get("crosssell.subscribe", locale), "subscribe:"+n.EventID)},
+		{button(p.texts.Get("crosssell.dismiss", locale), crossSellDismissPrefix+n.EventID)},
+	}}
+	payload := map[string]any{
+		"chat_id": n.ChatID, "text": text, "parse_mode": "HTML",
+		"reply_markup": kb,
+	}
+	return sendDigest(ctx, p.client, payload)
 }
 
 // MatchResultPublisher publishes the "telegram.match-result" outbox event

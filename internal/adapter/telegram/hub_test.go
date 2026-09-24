@@ -112,6 +112,9 @@ func TestSystemToolsMenu_RootSeesProviderStatusAndOperatorsButDelegateDoesNot(t 
 	if !slicesContainLabel(rootLabels, ru(t, "hub.provider_status")) {
 		t.Fatalf("expected the provider-status button for a root operator, got %v", rootLabels)
 	}
+	if !slicesContainLabel(rootLabels, ru(t, "hub.host_status")) {
+		t.Fatalf("expected the host-status button for a root operator, got %v", rootLabels)
+	}
 
 	*calls = nil
 	if err := handler.handleCallback(context.Background(), teamMatchPrivateCB(2, "hub:system")); err != nil {
@@ -120,6 +123,9 @@ func TestSystemToolsMenu_RootSeesProviderStatusAndOperatorsButDelegateDoesNot(t 
 	delegateLabels := buttonLabels(t, lastKeyboardCall(t, *calls))
 	if slicesContainLabel(delegateLabels, ru(t, "hub.provider_status")) {
 		t.Fatalf("expected no provider-status button for a delegated (non-root) operator, got %v", delegateLabels)
+	}
+	if slicesContainLabel(delegateLabels, ru(t, "hub.host_status")) {
+		t.Fatalf("expected no host-status button for a delegated (non-root) operator, got %v", delegateLabels)
 	}
 	if !slicesContainLabel(delegateLabels, ru(t, "hub.team_matches")) {
 		t.Fatalf("expected a delegated operator to still see team-match review, got %v", delegateLabels)

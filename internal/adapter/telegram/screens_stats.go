@@ -52,6 +52,7 @@ func (h *UpdateHandler) statsMenu(ctx context.Context, target replyTarget, setti
 		{button(latestMonthLabel, fmt.Sprintf("stats:month:%04d-%02d:menu", latest.Year, latest.Month)), button(strconv.Itoa(latest.Year), fmt.Sprintf("stats:year:%d:menu", latest.Year))},
 		{button(h.Texts.Get("stats.all_time", settings.Locale), "stats:all"), button(h.Texts.Get("stats.event", settings.Locale), "stats:events")},
 		{button(h.Texts.Get("stats.other_period", settings.Locale), "stats:years")},
+		{button(h.Texts.Get("stats.teams", settings.Locale), "stats:teams")},
 	}
 	if target.chatID == settings.ChatID {
 		if link, ok := h.statsDeepLink(settings.ChatID); ok {
@@ -203,8 +204,12 @@ func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID) str
 		if s.UserID == viewer {
 			viewerMark = " · 👤"
 		}
-		fmt.Fprintf(&b, "%s %s %s%s · %s%s", prefix, bold(escapeHTML(name)),
-			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), movement, code(strconv.Itoa(s.Points)), viewerMark)
+		wins := ""
+		if s.TournamentWins > 0 {
+			wins = fmt.Sprintf(" · 🏆%d", s.TournamentWins)
+		}
+		fmt.Fprintf(&b, "%s %s %s%s · %s%s%s", prefix, bold(escapeHTML(name)),
+			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), movement, code(strconv.Itoa(s.Points)), wins, viewerMark)
 	}
 	return b.String()
 }

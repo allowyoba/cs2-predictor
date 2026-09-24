@@ -235,6 +235,43 @@
         <p class="legal-note">Команда попадает в списки, когда прогнозов по ней достаточно, чтобы процент что-то значил.</p>
       </section>
 
+      <section class="screen" data-screen="results" aria-labelledby="results-title">
+        <div class="section-heading"><div><div class="eyebrow">ПЕРИОД</div><h1 id="results-title">Результаты</h1></div></div>
+
+        <!--
+          Тот же вопрос, что и в личных сообщениях бота («период/чат»), но
+          с настоящей дельтой к предыдущему окну и разбивкой по чатам за то
+          же самое окно — того и другого в сообщении Telegram не показать.
+        -->
+        <div class="window-switch" id="resultsPeriodSwitch" role="group" aria-label="Период"></div>
+
+        <article class="performance-card">
+          <div class="performance-top">
+            <div class="metric-block">
+              <span class="metric-label">Точность</span>
+              <div class="metric-value"><span id="resultsAccuracy">—</span><small>%</small></div>
+              <p id="resultsSub">нет завершённых прогнозов</p>
+            </div>
+          </div>
+          <div class="delta-row">
+            <span class="delta" id="resultsDelta">—</span>
+            <span class="muted">к предыдущему периоду</span>
+          </div>
+        </article>
+
+        <div class="quick-metrics" aria-label="Ключевые показатели за период">
+          <article><span>Очки</span><strong id="resultsPoints">—</strong><small>за период</small></article>
+          <article><span>Прогнозов</span><strong id="resultsPredictions">—</strong><small id="resultsAccuracySample">точных попаданий</small></article>
+          <article><span>Турниров</span><strong id="resultsTournaments">—</strong><small>за период</small></article>
+        </div>
+
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">ПО ЧАТАМ</div><h2>Разбивка за этот период</h2></div></div>
+          <div class="segment-list" id="resultsChats"></div>
+          <p class="legal-note">Чат появляется здесь только если в этом периоде в нём есть хотя бы один завершённый прогноз.</p>
+        </section>
+      </section>
+
       <section class="screen" data-screen="history" aria-labelledby="history-title">
         <!--
           Без собственных чипов дисциплин: они дублировали панель наверху.
@@ -255,6 +292,22 @@
         <section class="section-block">
           <div class="section-title-row"><div><div class="eyebrow">ПО ЧАТАМ</div><h2>Медали и результат</h2></div></div>
           <div class="chat-list" id="chatStandings"></div>
+        </section>
+
+        <!--
+          Не «мой рейтинг в чате», а чаты друг против друга: какой чат в
+          целом предсказывает лучше. Здесь нет ни одного участника — только
+          название чата и его общий результат, поэтому экран безопасно
+          показывать кому угодно, а не только участникам этого чата.
+        -->
+        <section class="section-block">
+          <div class="section-title-row"><div><div class="eyebrow">МЕЖДУ ЧАТАМИ</div><h2>Рейтинг чатов</h2></div></div>
+          <div class="filter-rail" id="chatLeaderboardPeriods" role="group" aria-label="Период рейтинга чатов">
+            <button type="button" class="chip" data-period="all">Всё время</button>
+            <button type="button" class="chip" data-period="year">Год</button>
+            <button type="button" class="chip" data-period="month">Месяц</button>
+          </div>
+          <div class="chat-list" id="chatLeaderboard"></div>
         </section>
 
         <!--
@@ -325,6 +378,7 @@
     <nav class="bottom-nav" aria-label="Основная навигация">
       <button data-target="dashboard" class="active" aria-current="page"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H5v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>Обзор</span></button>
       <button data-target="analytics"><svg viewBox="0 0 24 24"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></svg><span>Аналитика</span></button>
+      <button data-target="results"><svg viewBox="0 0 24 24"><path d="M8 3h8M8 21h8M9 3v3.6a3 3 0 0 0 1.2 2.4L12 10.5 13.8 9a3 3 0 0 0 1.2-2.4V3M9 21v-3.6a3 3 0 0 1 1.2-2.4L12 13.5l1.8 1.5a3 3 0 0 1 1.2 2.4V21"/></svg><span>Результаты</span></button>
       <button data-target="history"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h11"/></svg><span>История</span></button>
       <button data-target="achievements"><svg viewBox="0 0 24 24"><path d="M8 3h8v6a4 4 0 0 1-8 0V3Z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4M12 13v5M8 21h8"/></svg><span>Награды</span></button>
       <button data-target="profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.3-4 4-6 8-6s6.7 2 8 6"/></svg><span>Профиль</span></button>

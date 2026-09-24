@@ -97,6 +97,16 @@ type UpdateHandler struct {
 	// moderator_invitations.go). Nil disables the "🔗 Создать приглашение"
 	// assignment method.
 	Invitations chat.ModeratorInvitationRepository
+	// CrossSell backs the team/player-subscription tournament cross-sell
+	// prompt's dismiss button (see target_cross_sell.go). Nil disables the
+	// dismiss callback; the subscribe button reuses the plain "subscribe:"
+	// route regardless.
+	CrossSell subscription.CrossSellRepository
+	// Targets backs the "my team's stats" screen (screens_target_stats.go):
+	// a chat's team/player subscriptions, and the cross-tournament
+	// team-scoped cut of its own leaderboard that follows from them (see
+	// scoring.StatsPeriod.ForTeam). Nil disables the screen entirely.
+	Targets subscription.TargetRepository
 	// InboundLimiter caps how often a single Telegram user may trigger the
 	// bot to do any work at all — a lightweight defense against one account
 	// flooding the bot with commands or callback taps. Nil disables
@@ -145,6 +155,22 @@ type UpdateHandler struct {
 	// DeadLetters backs the undelivered-messages panel next to it. Nil
 	// omits the panel, exactly like the sections above.
 	DeadLetters common.DeadLetterStore
+
+	// --- host metrics (see /hub:host_status, host_status.go) ---
+
+	// HostRoot is the filesystem whose free space hostStatusView reports —
+	// the same value HostMonitor.Root is set to. Empty defaults to "/",
+	// same as app.ReadHostUsage.
+	HostRoot string
+	// HostLimits are the thresholds hostStatusView compares a reading
+	// against — the same app.HostLimits HostMonitor alerts on, so the
+	// on-demand screen and the passive alert always agree.
+	HostLimits app.HostLimits
+	// HostUsageReader overrides how hostStatusView reads the machine's
+	// current usage. Nil uses app.ReadHostUsage; tests substitute a fake so
+	// they can exercise the unavailable-read path without real kernel
+	// files.
+	HostUsageReader func(root string) (app.HostUsage, error)
 
 	// Feedback backs the Ideas screen (see suggestions.go). Nil turns the
 	// channel off: the button says so rather than failing on use.
@@ -547,7 +573,7 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 	case strings.HasPrefix(text, "/stats"):
 		return h.privateResultsMenu(ctx, sendTarget(chatID, nil), userID, locale)
 	case strings.HasPrefix(text, "/bets"):
-		return h.privateBetsMenu(ctx, sendTarget(chatID, nil), userID, locale, nil, 0, 0)
+		return h.renderPersonalBets(ctx, sendTarget(chatID, nil), userID, locale, "", nil, "", 0)
 	case strings.HasPrefix(text, "/team_match_admin"):
 		return h.handleCommandError(ctx, chat.Settings{ChatID: chatID, Locale: locale}, nil, text,
 			h.handleTeamMatchAdminCommand(ctx, chatID, userID, locale, strings.TrimSpace(strings.TrimPrefix(text, "/team_match_admin"))))

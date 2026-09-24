@@ -29,6 +29,11 @@ type MiniAppStats interface {
 	UserStats(ctx context.Context, userID common.UserID, period scoring.StatsPeriod) (*scoring.UserStanding, error)
 	UserPredictions(ctx context.Context, userID common.UserID, limit int) ([]scoring.UserPrediction, error)
 	UserTeamBias(ctx context.Context, userID common.UserID, limit int) ([]scoring.TeamBias, error)
+	// AvailableUserMonths backs the Results screen's period picker — the
+	// same months the bot's DM period menu offers, so the two never
+	// disagree about which windows have any data behind them.
+	AvailableUserMonths(ctx context.Context, userID common.UserID) ([]scoring.StatsMonth, error)
+	UserChatStats(ctx context.Context, userID common.UserID) ([]scoring.UserChatStanding, error)
 }
 
 // MiniAppNames resolves the name this person is known by inside the bot.

@@ -97,6 +97,33 @@ func TestDenseRank(t *testing.T) {
 	}
 }
 
+func TestDenseRankChats(t *testing.T) {
+	c := func(id int64, points, exact, predictions int) ChatStanding {
+		return ChatStanding{ChatID: common.ChatID{Value: id}, Points: points, ExactPredictions: exact, Predictions: predictions}
+	}
+
+	rows := []ChatStanding{c(1, 20, 1, 5), c(2, 20, 0, 5), c(3, 18, 0, 5)}
+	ranked := DenseRankChats(rows)
+	got := []int{ranked[0].Rank, ranked[1].Rank, ranked[2].Rank}
+	if want := []int{1, 1, 2}; got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("ranks = %v, want %v", got, want)
+	}
+	// Tie-break: equal points, higher exact-predictions sorts first even
+	// though both share rank 1.
+	if ranked[0].ChatID.Value != 1 {
+		t.Fatalf("ranked[0].ChatID = %d, want 1 (higher exact count breaks the tie)", ranked[0].ChatID.Value)
+	}
+}
+
+func TestChatStandingAccuracyPercent(t *testing.T) {
+	if got := (ChatStanding{CorrectPredictions: 3, Predictions: 4}).AccuracyPercent(); got != 75 {
+		t.Fatalf("AccuracyPercent() = %d, want 75", got)
+	}
+	if got := (ChatStanding{}).AccuracyPercent(); got != 0 {
+		t.Fatalf("zero-prediction AccuracyPercent() = %d, want 0", got)
+	}
+}
+
 func TestTeamSynergyInsightAccuracyPercent(t *testing.T) {
 	if got := (TeamSynergyInsight{Correct: 3, Predictions: 4}).AccuracyPercent(); got != 75 {
 		t.Fatalf("AccuracyPercent() = %d, want 75", got)

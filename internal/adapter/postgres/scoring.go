@@ -175,7 +175,17 @@ func periodClause(period scoring.StatsPeriod, zone *time.Location) (string, []an
 		from := time.Date(period.Day.Year(), period.Day.Month(), period.Day.Day(), 0, 0, 0, 0, zone)
 		clause = betweenClause(from, from.AddDate(0, 0, 1), next)
 	}
-	return clause + gameClause(period.Game, next), args
+	return clause + gameClause(period.Game, next) + teamClause(period.TeamID, next), args
+}
+
+// teamClause narrows a period to matches one team played in, either side —
+// the team-scoped cut a team subscription grants (see
+// subscription.ResolveChatStatsScope). nil means every match.
+func teamClause(teamID *common.TeamID, next func(any) string) string {
+	if teamID == nil {
+		return ""
+	}
+	return " AND EXISTS (SELECT 1 FROM match_team mt WHERE mt.match_id = m.id AND mt.team_id = " + next(teamID.Value) + ")"
 }
 
 // betweenClause bounds a period by when its matches were actually played.
@@ -195,8 +205,9 @@ func gameClause(game competition.GameCode, next func(any) string) string {
 }
 
 // scoringAggregateSelect is the aggregation column list shared by
-// leaderboardQuery (chat-scoped) and userStatsQuery (user-scoped) — kept as
-// one fragment so a column fix/addition only needs to happen once.
+// userStatsQuery (user-scoped) and, in spirit, leaderboardWinsSelect
+// (chat-scoped, with the tournament-win count folded in) — kept as one
+// fragment so a column fix/addition only needs to happen once.
 const scoringAggregateSelect = `
 	SELECT u.id, COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
 	       COALESCE(SUM(a.points), 0) AS points,
@@ -205,13 +216,47 @@ const scoringAggregateSelect = `
 	       COUNT(DISTINCT v.poll_id) AS prediction_count,
 	       COUNT(DISTINCT m.event_id) AS tournament_count`
 
-const leaderboardQuery = scoringAggregateSelect + `
-	  FROM prediction_vote v
-	  JOIN match_poll p ON p.id = v.poll_id
-	  JOIN esport_match m ON m.id = p.match_id
-	  JOIN telegram_user u ON u.id = v.user_id
-	  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
-	 WHERE p.chat_id = $1 AND m.status = 'FINISHED'`
+// leaderboardWinsQuery adds one more figure on top of leaderboardQuery's own
+// aggregate: how many tournaments (within the same chat and period scope)
+// each user finished #1 in. "scoped" re-runs the exact same join/filter
+// leaderboardQuery uses, as one CTE, so both the headline aggregate and the
+// per-tournament win count are guaranteed to agree on which votes count.
+// event_points then re-aggregates per tournament instead of overall, and
+// wins keeps DENSE_RANK() OVER (PARTITION BY event_id ORDER BY points DESC)
+// = 1 — the same "rank only advances when points differ" rule
+// scoring.DenseRank applies in Go, just computed in SQL per event instead
+// of once across the whole chat.
+const leaderboardWinsQuery = `
+	WITH scoped AS (
+		SELECT v.poll_id, v.user_id, m.event_id, a.points, a.kind
+		  FROM prediction_vote v
+		  JOIN match_poll p ON p.id = v.poll_id
+		  JOIN esport_match m ON m.id = p.match_id
+		  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
+		 WHERE p.chat_id = $1 AND m.status = 'FINISHED'`
+
+const leaderboardWinsSelect = `
+	),
+	event_points AS (
+		SELECT event_id, user_id, COALESCE(SUM(points), 0) AS points
+		  FROM scoped GROUP BY event_id, user_id
+	),
+	wins AS (
+		SELECT user_id, COUNT(*) AS win_count FROM (
+			SELECT user_id, DENSE_RANK() OVER (PARTITION BY event_id ORDER BY points DESC) AS rnk
+			  FROM event_points
+		) ranked WHERE rnk = 1 GROUP BY user_id
+	)
+	SELECT u.id, COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
+	       COALESCE(SUM(scoped.points), 0) AS points,
+	       COUNT(scoped.poll_id) FILTER (WHERE scoped.kind = 'EXACT_SCORE') AS exact_count,
+	       COUNT(scoped.poll_id) AS correct_count,
+	       COUNT(DISTINCT scoped.poll_id) AS prediction_count,
+	       COUNT(DISTINCT scoped.event_id) AS tournament_count,
+	       COALESCE(wins.win_count, 0) AS win_count
+	  FROM scoped
+	  JOIN telegram_user u ON u.id = scoped.user_id
+	  LEFT JOIN wins ON wins.user_id = scoped.user_id`
 
 func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatID, period scoring.StatsPeriod) ([]scoring.UserStanding, error) {
 	zone, err := r.chatTimezone(ctx, chatID)
@@ -227,8 +272,8 @@ func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatI
 	// capped result still keeps the true top LeaderboardMaxParticipants
 	// participants (and in the same relative order DenseRank would produce)
 	// rather than an arbitrary DB-order-dependent subset.
-	rows, err := executor(ctx, r.pool).Query(ctx, leaderboardQuery+clause+`
-		 GROUP BY u.id, u.display_name
+	rows, err := executor(ctx, r.pool).Query(ctx, leaderboardWinsQuery+clause+leaderboardWinsSelect+`
+		 GROUP BY u.id, u.display_name, wins.win_count
 		 ORDER BY points DESC, exact_count DESC, prediction_count DESC, u.id ASC
 		 LIMIT `+limitPlaceholder, args...)
 	if err != nil {
@@ -240,7 +285,8 @@ func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatI
 	for rows.Next() {
 		var s scoring.UserStanding
 		var userVal int64
-		if err := rows.Scan(&userVal, &s.DisplayName, &s.Points, &s.ExactPredictions, &s.CorrectPredictions, &s.Predictions, &s.Tournaments); err != nil {
+		if err := rows.Scan(&userVal, &s.DisplayName, &s.Points, &s.ExactPredictions, &s.CorrectPredictions,
+			&s.Predictions, &s.Tournaments, &s.TournamentWins); err != nil {
 			return nil, err
 		}
 		s.UserID = common.UserID{Value: userVal}
@@ -250,6 +296,81 @@ func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatI
 		return nil, err
 	}
 	return scoring.DenseRank(out), nil
+}
+
+// chatPeriodClause is periodClause's cross-chat counterpart: it buckets by
+// calendar date in UTC rather than one chat's own timezone, since a
+// cross-chat leaderboard has no single chat whose zone would be the right
+// one to anchor on. This can shift a match into the neighboring day at the
+// edges of the window compared to a single chat's own view of the same
+// period, which is an acceptable trade for a leaderboard that spans every
+// chat at once instead of a scoping bug.
+func chatPeriodClause(period scoring.StatsPeriod) (string, []any) {
+	// Unlike periodClause, this query has no leading chat/user id argument,
+	// so placeholders are numbered from $1 rather than $2.
+	var args []any
+	next := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	var clause string
+	switch period.Kind {
+	case scoring.PeriodYear:
+		from := time.Date(period.Year, time.January, 1, 0, 0, 0, 0, time.UTC)
+		clause = betweenClause(from, from.AddDate(1, 0, 0), next)
+	case scoring.PeriodMonth:
+		from := time.Date(period.Year, period.Month, 1, 0, 0, 0, 0, time.UTC)
+		clause = betweenClause(from, from.AddDate(0, 1, 0), next)
+	case scoring.PeriodEvent:
+		clause = " AND m.event_id = " + next(period.EventID.Value)
+	}
+	return clause + gameClause(period.Game, next), args
+}
+
+// ChatLeaderboard powers the cross-chat leaderboard: which chat's
+// collective predicting is strongest, not who inside it. Aggregates mirror
+// the per-user leaderboard's own columns exactly (see scoringAggregateSelect)
+// so the two leaderboards can never silently disagree about what "points" or
+// "accuracy" mean, just grouped by chat instead of by user, with no
+// per-member row ever leaving this query.
+func (r *ScoringRepository) ChatLeaderboard(ctx context.Context, period scoring.StatsPeriod) ([]scoring.ChatStanding, error) {
+	clause, extraArgs := chatPeriodClause(period)
+	args := append(extraArgs, scoring.ChatLeaderboardMaxChats)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
+	rows, err := executor(ctx, r.pool).Query(ctx, `
+		SELECT c.id, c.title,
+		       COALESCE(SUM(a.points), 0) AS points,
+		       COUNT(a.poll_id) FILTER (WHERE a.kind = 'EXACT_SCORE') AS exact_count,
+		       COUNT(a.poll_id) AS correct_count,
+		       COUNT(DISTINCT v.poll_id) AS prediction_count,
+		       COUNT(DISTINCT v.user_id) AS participant_count
+		  FROM prediction_vote v
+		  JOIN match_poll p ON p.id = v.poll_id
+		  JOIN telegram_chat c ON c.id = p.chat_id
+		  JOIN esport_match m ON m.id = p.match_id
+		  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
+		 WHERE m.status = 'FINISHED'`+clause+`
+		 GROUP BY c.id, c.title
+		 ORDER BY points DESC, exact_count DESC, prediction_count DESC, c.id ASC
+		 LIMIT `+limitPlaceholder, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []scoring.ChatStanding
+	for rows.Next() {
+		var s scoring.ChatStanding
+		if err := rows.Scan(&s.ChatID.Value, &s.ChatTitle, &s.Points, &s.ExactPredictions, &s.CorrectPredictions,
+			&s.Predictions, &s.Participants); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return scoring.DenseRankChats(out), nil
 }
 
 // PointsProgression returns every settled prediction's contribution to the
@@ -338,7 +459,7 @@ func userPeriodClause(period scoring.StatsPeriod) (string, []any) {
 	if period.ChatID != nil {
 		clause += " AND p.chat_id = " + next(period.ChatID.Value)
 	}
-	return clause + gameClause(period.Game, next), args
+	return clause + gameClause(period.Game, next) + teamClause(period.TeamID, next), args
 }
 
 // UserStats aggregates one Telegram user's finished predictions across every

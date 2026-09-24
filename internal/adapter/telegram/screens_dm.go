@@ -125,6 +125,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		{button(h.Texts.Get("private.results", locale), "pstats:results")},
 		{button(h.Texts.Get("insights.title", locale), "pstats:insights")},
 		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
+		{button(h.Texts.Get("chatlb.menu_entry", locale), chatLeaderboardCallback(chatLeaderboardAllTime, ""))},
 	}
 	if !hubAccess {
 		// This screen is this person's actual root (no hub exists above
@@ -295,9 +296,13 @@ func (h *UpdateHandler) renderPrivateStats(ctx context.Context, target replyTarg
 	if stats == nil || stats.Predictions == 0 {
 		text += "\n\n" + h.Texts.Get("stats.empty", locale)
 	} else {
+		// The bar mirrors "My form"'s own visual language (accuracyBar in
+		// personal_insights.go) rather than inventing a second one: the
+		// same percentage should look the same everywhere it appears.
+		percent := stats.AccuracyPercent()
+		text += "\n\n" + h.Texts.Get("private.accuracy", locale, percent) + "\n" + accuracyBar(percent)
 		text += "\n\n" + h.Texts.Get("private.points", locale, stats.Points)
 		text += "\n" + h.Texts.Get("private.activity", locale, stats.Predictions, stats.Tournaments)
-		text += "\n" + h.Texts.Get("private.accuracy", locale, stats.AccuracyPercent())
 	}
 	rows := [][]InlineButton{{h.backButton(locale, "pstats:results")}}
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})

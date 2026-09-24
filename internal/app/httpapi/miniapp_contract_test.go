@@ -138,6 +138,20 @@ func sampleSettings() settingsDTO {
 	}
 }
 
+func sampleResults() resultsDTO {
+	var body resultsDTO
+	body.Period.Key, body.Period.Label = "month:2026-03", "Март 2026"
+	body.Summary = summaryDTO{Predictions: 5, Correct: 4, Exact: 1, Accuracy: 80, Points: 12, Tournaments: 1}
+	previous := summaryDTO{Predictions: 4, Correct: 2, Exact: 0, Accuracy: 50, Points: 4, Tournaments: 1}
+	body.Previous = &previous
+	delta := 30
+	body.DeltaPP = &delta
+	body.Chats = []resultsChatDTO{{ID: -100, Title: "Прогнозы", Predictions: 5, Accuracy: 80, Points: 12}}
+	body.AvailableMonths = []periodOptionDTO{{Key: "month:2026-03", Label: "Март 2026"}}
+	body.AvailableYears = []periodOptionDTO{{Key: "year:2026", Label: "2026"}}
+	return body
+}
+
 func sampleSegments() segmentsDTO {
 	return segmentsDTO{
 		Total:        120,
@@ -169,6 +183,9 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	for key := range jsonKeys(t, sampleSegments()) {
 		emitted[key] = true
 	}
+	for key := range jsonKeys(t, sampleResults()) {
+		emitted[key] = true
+	}
 	// The public team endpoint feeds the same page.
 	for key := range jsonKeys(t, teamsResponse{Teams: []miniappTeam{{
 		ID: "1", Name: "G2", Location: "EU", Logo: "u", LogoProvider: "u", LogoHLTV: "u", Chip: "dark",
@@ -188,6 +205,13 @@ func TestMiniappContract_ThePageOnlyReadsFieldsTheAPIEmits(t *testing.T) {
 	}
 	for key := range jsonKeys(t, chatsDTO{Chats: []chatStandingDTO{{
 		Chat: "c", Predictions: 1, Accuracy: 1, Points: 1, Tournaments: 1, Gold: 1, Silver: 1, Bronze: 1,
+	}}}) {
+		emitted[key] = true
+	}
+
+	// The cross-chat leaderboard: chat-level totals only, no member row.
+	for key := range jsonKeys(t, chatLeaderboardDTO{Chats: []chatStandingRowDTO{{
+		ID: -100, Chat: "c", Rank: 1, Points: 1, Accuracy: 1, Predictions: 1, Participants: 1,
 	}}}) {
 		emitted[key] = true
 	}
