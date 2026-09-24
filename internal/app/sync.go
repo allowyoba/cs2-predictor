@@ -210,6 +210,56 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 	})
 }
 
+// ReconcileEventCompletions is the self-healing sweep for the "the
+// tournament's matches all finished but its recap never went out" case —
+// e.g. a provider that stops updating an event's own status field even
+// though every match under it reached a terminal state, so the
+// status-transition checks in discoverOneEvent/processMatch never fire.
+//
+// It costs nothing to run this on every subscribed event, every time:
+// EventCompletionService.Complete already re-derives "is this event
+// actually over" from the matches themselves rather than trusting
+// event.Status, and completeForChat is hash-guarded per chat, so calling
+// it again for an event that already got its recap is a no-op read.
+func (s *CompetitionSynchronization) ReconcileEventCompletions(ctx context.Context) {
+	s.guarded(ctx, "reconcile-event-completions", func(ctx context.Context) error {
+		eventIDs, err := s.Subscriptions.ActiveEventIDs(ctx)
+		if err != nil {
+			return err
+		}
+		checked, failed := 0, 0
+		seen := map[string]bool{}
+		for _, id := range eventIDs {
+			key := id.Value.String()
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			event, err := s.Catalog.FindEvent(ctx, id)
+			if err != nil {
+				return err
+			}
+			if event == nil {
+				continue
+			}
+			checked++
+			if err := s.EventCompletion.Complete(ctx, *event); err != nil {
+				s.Log.Error("event completion reconciliation failed for one event, continuing with the rest",
+					"eventId", event.ID.Value, "error", err)
+				failed++
+				continue
+			}
+		}
+		result := "success"
+		if failed > 0 {
+			result = "partial"
+		}
+		s.Metrics.SyncRuns.WithLabelValues("event-completions", result).Inc()
+		s.Log.Info("event completion reconciliation swept", "checked", checked, "failed", failed)
+		return nil
+	})
+}
+
 func (s *CompetitionSynchronization) CloseDuePolls(ctx context.Context) {
 	s.guarded(ctx, "close-due-polls", func(ctx context.Context) error {
 		count, err := s.Predictions.CloseDue(ctx, s.Clock.Now())
