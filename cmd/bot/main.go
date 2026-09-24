@@ -188,9 +188,12 @@ func run() error {
 		}
 		return settings.Title
 	}
-	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
+	// Tournament boards are narrowed for team/player followers everywhere.
+	scopes := app.SubscriptionScopes{Targets: subscriptions}
+	scopedScoring := app.ScopedScoring{Repository: scoringRepo, Scopes: scopes}
+	settlement := app.NewResultSettlementService(predictionsRepo, scopedScoring, settlementRepo, scoringService, outbox, clock, runTx).
 		WithRecaps(chats, chatTitle, log)
-	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
+	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scopedScoring, scoringRepo, outbox, clock, runTx, log).
 		WithPersonalRecaps(chats).WithSwitches(chats)
 
 	// teamMatch resolves a team with no cached ranking against whichever
@@ -240,7 +243,7 @@ func run() error {
 	webhookHandler := telegram.NewWebhookHandler(telegramConfig, updateHandler)
 
 	synchronizer := &app.CompetitionSynchronization{
-		Gateway: gateway, Catalog: catalog, Subscriptions: subscriptions, Chats: chats, ActiveChats: chats,
+		Gateway: gateway, Catalog: catalog, Subscriptions: subscriptions, Targets: subscriptions, Chats: chats, ActiveChats: chats,
 		Predictions: predictionService, Settlement: settlement, EventCompletion: completion, TeamMatch: teamMatch,
 		Outbox: outbox, Switches: chats, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
 		MatchSyncColdInterval: cfg.SyncMatchesColdInterval,
@@ -254,7 +257,7 @@ func run() error {
 	// this chat right now?" sweeps, and neither needs a schedule of its own.
 	eve := &app.EventEveScheduler{
 		Chats: chats, ChatSettings: chats, Subscriptions: subscriptions, Catalog: catalog,
-		Scoring: scoringRepo, Store: reportStore, Outbox: outbox, Switches: chats, Lock: clusterLock,
+		Scoring: scopedScoring, Store: reportStore, Outbox: outbox, Switches: chats, Lock: clusterLock,
 		Clock: clock, Log: log, Lead: cfg.EventEveLead,
 	}
 

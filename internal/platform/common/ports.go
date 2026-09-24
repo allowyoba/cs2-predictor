@@ -245,6 +245,8 @@ type BigEventDiscoveredNotification struct {
 	EventID   string `json:"eventId"`
 	EventName string `json:"eventName"`
 	Tier      string `json:"tier"`
+	// Reason names the followed team/player behind a follow cross-sell.
+	Reason string `json:"reason,omitempty"`
 }
 
 // TeamMatchAskNotification is the payload for the "telegram.team-match-ask"

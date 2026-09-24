@@ -22,7 +22,10 @@ type CompetitionSynchronization struct {
 	Gateway       *CompetitionProviderGateway
 	Catalog       competition.Catalog
 	Subscriptions subscription.Repository
-	Chats         chat.Repository
+	// Targets adds team/player followers to the match sync and poll
+	// fan-out; nil keeps tournament subscriptions only.
+	Targets subscription.TargetRepository
+	Chats   chat.Repository
 	// ActiveChats is the chat-wide fan-out view (announceBigEvent). Declared
 	// as its own narrow dependency rather than type-asserted off Chats at
 	// call time, so a wiring mistake is a compile error instead of a feature
@@ -138,6 +141,13 @@ func (s *CompetitionSynchronization) SynchronizeMatches(ctx context.Context) {
 		eventIDs, err := s.Subscriptions.ActiveEventIDs(ctx)
 		if err != nil {
 			return err
+		}
+		if s.Targets != nil {
+			followed, followErr := s.Targets.FollowedEventIDs(ctx)
+			if followErr != nil {
+				return followErr
+			}
+			eventIDs = append(eventIDs, followed...)
 		}
 		seen := map[string]bool{}
 		var activeEvents []competition.Event
@@ -584,6 +594,16 @@ func (s *CompetitionSynchronization) fanOutNewPolls(ctx context.Context, incomin
 	if err != nil {
 		return err
 	}
+	followers, err := s.followerChats(ctx, incoming, chatIDs)
+	if err != nil {
+		// Followers are additive: tournament subscribers still get polls.
+		s.Log.Error("follower lookup failed", "matchId", incoming.ID.Value, "error", err)
+	}
+	isFollower := make(map[common.ChatID]bool, len(followers))
+	for _, id := range followers {
+		isFollower[id] = true
+	}
+	chatIDs = append(chatIDs, followers...)
 	for _, chatID := range chatIDs {
 		// One chat's lookup failing (a transient DB blip) must not stop
 		// every chat ordered after it in chatIDs from getting this poll —
@@ -614,6 +634,9 @@ func (s *CompetitionSynchronization) fanOutNewPolls(ctx context.Context, incomin
 			continue
 		}
 		s.Metrics.PredictionPolls.WithLabelValues("created").Inc()
+		if isFollower[chatID] {
+			s.crossSell(ctx, *settings, incoming)
+		}
 
 		// This chat's own voters are a natural, contextual crowd to ask
 		// about a team whose Valve VRS identity is still unresolved — they
