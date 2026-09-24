@@ -51,6 +51,19 @@ func (h *UpdateHandler) openManagedChat(ctx context.Context, target replyTarget,
 		if errors.Is(err, chat.ErrAccessDenied) {
 			return denied()
 		}
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.IsBotRemovedFromChat() {
+			// The live recheck itself failed because the bot is no longer
+			// in the chat at all — this is exactly the stale entry that
+			// used to hang here. Prune it like handleMyChatMember would
+			// have, then deny like any other lost access, instead of
+			// bubbling an error the caller can only repeat forever.
+			if settings, findErr := h.Chats.Find(ctx, targetChatID); findErr == nil && settings != nil && settings.Active {
+				settings.Active = false
+				_, _ = h.Chats.Save(ctx, *settings)
+			}
+			return denied()
+		}
 		return err
 	}
 	settings, err := h.Chats.Find(ctx, targetChatID)

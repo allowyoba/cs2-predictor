@@ -178,6 +178,42 @@ func TestPrivateMessage_AdminDeepLinkDeniesNonManager(t *testing.T) {
 	}
 }
 
+// TestOpenManagedChat_PrunesAChatTheBotWasRemovedFrom is the regression
+// test for the reported hang: tapping a stale "manage chats" entry after
+// the bot was kicked used to bubble getChatMember's error straight out of
+// openManagedChat, leaving Telegram's callback unanswered. It must instead
+// deactivate the chat (like handleMyChatMember would have) and deny
+// cleanly, so the entry also stops appearing next time the menu opens.
+func TestOpenManagedChat_PrunesAChatTheBotWasRemovedFrom(t *testing.T) {
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, chats := newTestHandler(t, server)
+	groupChatID := common.ChatID{Value: -1}
+	_, _ = chats.Save(context.Background(), chat.Settings{ChatID: groupChatID, Title: "Managed Chat", Locale: common.LocaleRU, Active: true})
+	handler.Authorization = chat.NewAuthorizationService(handler.Chats, fakeMembership{err: &APIError{ErrorCode: 403, Message: "Forbidden: bot is not a member of the chat"}})
+
+	err := handler.openManagedChat(context.Background(), sendTarget(common.ChatID{Value: 42}, nil), common.UserID{Value: 42}, common.LocaleRU, groupChatID)
+	if err != nil {
+		t.Fatalf("expected the removal to be handled, not returned as an error: %v", err)
+	}
+	settings, findErr := chats.Find(context.Background(), groupChatID)
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	if settings == nil || settings.Active {
+		t.Fatalf("expected the chat to be pruned (marked inactive), got %+v", settings)
+	}
+	found := false
+	for _, c := range *calls {
+		if text, ok := c["text"].(string); ok && strings.Contains(text, "🚫") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected a denial message instead of a hang")
+	}
+}
+
 func TestManagedChatsMenu_ListsChatsFromTheIndex(t *testing.T) {
 	server, _ := newRecordingServer(t)
 	defer server.Close()
