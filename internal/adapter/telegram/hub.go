@@ -38,23 +38,21 @@ func (h *UpdateHandler) startLanding(ctx context.Context, target replyTarget, us
 // dashboard, group management, or (operators only) system tools — never a
 // mix of the three on one screen.
 //
-// Settings and Help sit here too, below the panels: for anyone who sees
-// this screen at all, it IS their root, so this is where "root level"
-// means — the personal dashboard below no longer repeats them (see
-// privateStatsMenu).
+// Settings, System tools and Help sit here too, below the panels, in that
+// order: for anyone who sees this screen at all, it IS their root, so this
+// is where "root level" means — the personal dashboard below no longer
+// repeats them (see privateStatsMenu).
 func (h *UpdateHandler) modeHub(ctx context.Context, target replyTarget, locale common.LocaleCode, managesAnyChat, isOperator bool) error {
 	var rows [][]InlineButton
 	rows = append(rows, []InlineButton{button(h.Texts.Get("hub.personal", locale), "hub:personal")})
 	if managesAnyChat {
 		rows = append(rows, []InlineButton{button(h.Texts.Get("hub.manage", locale), "hub:manage")})
 	}
-	rows = append(rows,
-		[]InlineButton{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
-		[]InlineButton{button(h.Texts.Get("menu.help", locale), "pstats:help")},
-	)
+	rows = append(rows, []InlineButton{button(h.Texts.Get("private.settings", locale), "pstats:settings")})
 	if isOperator {
 		rows = append(rows, []InlineButton{button(h.Texts.Get("hub.system", locale), "hub:system")})
 	}
+	rows = append(rows, []InlineButton{button(h.Texts.Get("menu.help", locale), "pstats:help")})
 	return h.respond(ctx, target, bold(h.Texts.Get("hub.title", locale)), &InlineKeyboard{InlineKeyboard: rows})
 }
 
