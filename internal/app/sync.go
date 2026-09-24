@@ -388,10 +388,20 @@ func (s *CompetitionSynchronization) processMatch(ctx context.Context, incoming 
 			if _, err := s.Settlement.Settle(ctx, *event, incoming); err != nil {
 				return err
 			}
-			if event.Status == competition.EventFinished {
-				if err := s.EventCompletion.Complete(ctx, *event); err != nil {
-					return err
-				}
+			// Gating this on event.Status == EventFinished used to make a
+			// tournament's own status field (only ever refreshed by
+			// DiscoverEvents, from an "upcoming/running/past" listing a
+			// long-since-finished event can fall out of before that
+			// transition is ever observed) a second, independent
+			// precondition for the recap — on top of Complete's own
+			// "every match terminal" check, which is authoritative and
+			// already safe to call unconditionally (a no-op until it's
+			// actually true). A confirmed production incident (missed
+			// recap for an event whose matches all finished normally)
+			// traced back to exactly that: the event never got observed
+			// transitioning to FINISHED, so this branch never even tried.
+			if err := s.EventCompletion.Complete(ctx, *event); err != nil {
+				return err
 			}
 		}
 	}
