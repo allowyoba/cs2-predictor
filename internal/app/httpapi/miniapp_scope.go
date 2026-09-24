@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/scoring"
@@ -103,3 +104,37 @@ func (s scope) filterPredictions(all []scoring.UserPrediction) []scoring.UserPre
 }
 
 var errInvalidChatFilter = errors.New("invalid chat filter")
+
+// periodFrom reads the "period" query parameter the Results screen sends:
+// "all" (the default), "year:YYYY", or "month:YYYY-MM". Anything else is an
+// error rather than a silent fall-back to all-time, for the same reason an
+// unparsable chat filter is — a screen showing the wrong window with no
+// indication it happened is worse than one that fails visibly.
+func periodFrom(r *http.Request) (scoring.StatsPeriod, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("period"))
+	if raw == "" || raw == "all" {
+		return scoring.AllTime(), nil
+	}
+	if year, ok := strings.CutPrefix(raw, "year:"); ok {
+		y, err := strconv.Atoi(year)
+		if err != nil {
+			return scoring.StatsPeriod{}, errInvalidPeriodFilter
+		}
+		return scoring.ForYear(y), nil
+	}
+	if ym, ok := strings.CutPrefix(raw, "month:"); ok {
+		parts := strings.SplitN(ym, "-", 2)
+		if len(parts) != 2 {
+			return scoring.StatsPeriod{}, errInvalidPeriodFilter
+		}
+		y, yErr := strconv.Atoi(parts[0])
+		m, mErr := strconv.Atoi(parts[1])
+		if yErr != nil || mErr != nil || m < 1 || m > 12 {
+			return scoring.StatsPeriod{}, errInvalidPeriodFilter
+		}
+		return scoring.ForMonth(y, time.Month(m)), nil
+	}
+	return scoring.StatsPeriod{}, errInvalidPeriodFilter
+}
+
+var errInvalidPeriodFilter = errors.New("invalid period filter")
