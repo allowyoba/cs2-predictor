@@ -100,19 +100,28 @@ func (m *HostMonitor) evaluate(ctx context.Context, resource string, value, limi
 	if over {
 		m.Log.Error("host resource is running out", "resource", resource, "value", value, "limit", limit)
 		if m.Alerter != nil {
-			m.Alerter.HostPressure(ctx, resource, describeUsage(resource, value), describeUsage(resource, limit))
+			m.Alerter.HostPressure(ctx, resource, DescribeUsage(resource, value), DescribeUsage(resource, limit))
 		}
 		return
 	}
 	m.Log.Info("host resource recovered", "resource", resource, "value", value)
 	if m.Alerter != nil {
-		m.Alerter.HostRecovered(ctx, resource, describeUsage(resource, value))
+		m.Alerter.HostRecovered(ctx, resource, DescribeUsage(resource, value))
 	}
 }
 
-// describeUsage renders a reading the way the resource is normally spoken
+// Breached reports whether value has crossed limit — the same rule evaluate
+// uses to decide when to alert, exposed so an on-demand status screen can
+// show the same verdict without re-running (and re-firing) alert logic.
+func Breached(value, limit float64) bool {
+	return limit > 0 && value >= limit
+}
+
+// DescribeUsage renders a reading the way the resource is normally spoken
 // about: a percentage for the two that are one, a bare number for load.
-func describeUsage(resource string, value float64) string {
+// Exported so an on-demand status screen formats a reading identically to
+// an alert about the same resource.
+func DescribeUsage(resource string, value float64) string {
 	if resource == "load" {
 		return strconv.FormatFloat(value, 'f', 2, 64)
 	}
