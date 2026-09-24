@@ -98,9 +98,15 @@ type UserStanding struct {
 	CorrectPredictions int
 	Predictions        int
 	Tournaments        int
-	Rank               int
-	PreviousRank       *int // not set by domain code, filled in ad hoc at call sites (ResultSettlementService)
-	PointsDelta        int  // same as above
+	// TournamentWins counts the tournaments (within this chat, within the
+	// leaderboard's own period) where this user finished #1 (dense rank 1,
+	// ties included) in that tournament's own per-chat leaderboard — a
+	// "prediction win", derived entirely from this bot's own standings,
+	// not a real-world esports result.
+	TournamentWins int
+	Rank           int
+	PreviousRank   *int // not set by domain code, filled in ad hoc at call sites (ResultSettlementService)
+	PointsDelta    int  // same as above
 }
 
 // accuracyPercent rounds correct/total to the nearest whole percent for a
