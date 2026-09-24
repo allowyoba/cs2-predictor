@@ -72,6 +72,37 @@ func SplitByGame(predictions []UserPrediction, now time.Time) []GameInsights {
 	return out
 }
 
+// ChatInsights is one chat's slice of a person's form, with the chat it
+// belongs to attached so a screen can label it — the same idea as
+// GameInsights, one dimension over.
+type ChatInsights struct {
+	ChatID   common.ChatID
+	Insights PersonalInsights
+}
+
+// SplitByChat buckets predictions per chat and builds each bucket's own
+// insights, most-played chat first — mirrors SplitByGame, since "how am I
+// doing in this room" is the same question as "how am I doing at this
+// game", just filtered on the other axis.
+func SplitByChat(predictions []UserPrediction, now time.Time) []ChatInsights {
+	byChat := map[common.ChatID][]UserPrediction{}
+	for _, p := range predictions {
+		byChat[p.ChatID] = append(byChat[p.ChatID], p)
+	}
+	out := make([]ChatInsights, 0, len(byChat))
+	for chatID, rows := range byChat {
+		out = append(out, ChatInsights{ChatID: chatID, Insights: BuildPersonalInsights(rows, now)})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left, right := len(byChat[out[i].ChatID]), len(byChat[out[j].ChatID])
+		if left != right {
+			return left > right
+		}
+		return out[i].ChatID.Value < out[j].ChatID.Value
+	})
+	return out
+}
+
 // TeamAccuracy is how well someone reads one particular team.
 type TeamAccuracy struct {
 	TeamID      common.TeamID

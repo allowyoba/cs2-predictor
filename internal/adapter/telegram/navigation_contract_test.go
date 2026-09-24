@@ -88,7 +88,7 @@ func navigationScreens() []screenUnderTest {
 			name: "personal form", back: "pstats:menu", private: true,
 			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
 				h.Scoring = stubScoringWithInsights{}
-				return h.renderPersonalInsights(context.Background(), target, common.UserID{Value: 7}, s.Locale, "")
+				return h.renderPersonalInsights(context.Background(), target, common.UserID{Value: 7}, s.Locale, "", nil)
 			},
 		},
 		{

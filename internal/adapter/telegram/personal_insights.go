@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"cs2predictor/internal/domain/competition"
@@ -39,7 +40,7 @@ func (h *UpdateHandler) personalInsights() (scoring.PersonalInsightsRepository, 
 // from any chat's settings, which is what keeps the picker free of rows
 // that would open on "no data yet".
 func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target replyTarget, userID common.UserID,
-	locale common.LocaleCode, game competition.GameCode) error {
+	locale common.LocaleCode, game competition.GameCode, chatID *common.ChatID) error {
 	repo, err := h.personalInsights()
 	if err != nil {
 		return err
@@ -49,18 +50,26 @@ func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target reply
 		return err
 	}
 	perGame := scoring.SplitByGame(predictions, h.Clock.Now())
-	// A game with nothing in it cannot be selected from the picker, so a
-	// stale button falls back to the overall view rather than an empty one.
+	perChat := scoring.SplitByChat(predictions, h.Clock.Now())
+	// A game or chat with nothing in it cannot be selected from the
+	// picker, so a stale button falls back to the overall view rather than
+	// an empty one.
 	if game != "" && !hasGame(perGame, game) {
 		game = ""
+	}
+	if chatID != nil && !hasChat(perChat, *chatID) {
+		chatID = nil
 	}
 
 	selected := predictions
 	if game != "" {
-		selected = filterByGame(predictions, game)
+		selected = filterByGame(selected, game)
+	}
+	if chatID != nil {
+		selected = filterByChat(selected, *chatID)
 	}
 	insights := scoring.BuildPersonalInsights(selected, h.Clock.Now())
-	keyboard := h.insightsKeyboard(ctx, userID, locale, perGame, game)
+	keyboard := h.insightsKeyboard(ctx, userID, locale, perGame, perChat, game, chatID)
 	if !insights.HasData() {
 		return h.respond(ctx, target, h.Texts.Get("insights.empty", locale), keyboard)
 	}
@@ -78,15 +87,30 @@ func (h *UpdateHandler) renderPersonalInsights(ctx context.Context, target reply
 // the cabinet's root, keeps the app framed as "more detail on this", not
 // as an unrelated destination.
 func (h *UpdateHandler) insightsKeyboard(ctx context.Context, userID common.UserID, locale common.LocaleCode,
-	perGame []scoring.GameInsights, selected competition.GameCode) *InlineKeyboard {
+	perGame []scoring.GameInsights, perChat []scoring.ChatInsights, selectedGame competition.GameCode, selectedChat *common.ChatID) *InlineKeyboard {
 	var rows [][]InlineButton
 	if len(perGame) > 1 {
 		row := []InlineButton{button(
-			statsFilterLabel(selected == "", h.Texts.Get("insights.all_games", locale)), "pstats:insights")}
+			statsFilterLabel(selectedGame == "", h.Texts.Get("insights.all_games", locale)), insightsFilterCallback("", selectedChat))}
 		for _, entry := range perGame {
 			row = append(row, button(
-				statsFilterLabel(selected == entry.Game, h.Texts.Get(gameShortLabelKey(entry.Game), locale)),
-				"pstats:insights:"+string(entry.Game)))
+				statsFilterLabel(selectedGame == entry.Game, h.Texts.Get(gameShortLabelKey(entry.Game), locale)),
+				insightsFilterCallback(entry.Game, selectedChat)))
+		}
+		rows = append(rows, row)
+	}
+	// A chat filter is only worth offering when there is more than one room
+	// to tell apart — same reasoning as the game picker above, one axis
+	// over: somebody who plays in a single chat already sees that chat's
+	// whole record on the default screen.
+	if len(perChat) > 1 {
+		row := []InlineButton{button(
+			statsFilterLabel(selectedChat == nil, h.Texts.Get("insights.all_chats", locale)), insightsFilterCallback(selectedGame, nil))}
+		for _, entry := range perChat {
+			chatID := entry.ChatID
+			row = append(row, button(
+				statsFilterLabel(selectedChat != nil && *selectedChat == chatID, h.chatShortLabel(ctx, chatID)),
+				insightsFilterCallback(selectedGame, &chatID)))
 		}
 		rows = append(rows, row)
 	}
@@ -95,6 +119,50 @@ func (h *UpdateHandler) insightsKeyboard(ctx context.Context, userID common.User
 	}
 	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:menu")})
 	return &InlineKeyboard{InlineKeyboard: rows}
+}
+
+// chatShortLabel is the button text for one chat in the insights picker:
+// its title, truncated to keep the row of buttons from wrapping onto too
+// many lines. Falls back to the raw id for a chat the bot can no longer
+// find (e.g. it was removed) rather than failing the whole screen.
+func (h *UpdateHandler) chatShortLabel(ctx context.Context, chatID common.ChatID) string {
+	settings, err := h.Chats.Find(ctx, chatID)
+	if err != nil || settings == nil || settings.Title == "" {
+		return fmt.Sprintf("#%d", chatID.Value)
+	}
+	return truncate(settings.Title, 16)
+}
+
+// insightsCallback builds the callback data for one combination of filters
+// on the "My form" screen. The chat segment is only appended when a chat
+// filter is in play, so a plain game-only pick (or no filter at all) keeps
+// emitting the shorter callback data the screen has always used.
+func insightsFilterCallback(game competition.GameCode, chatID *common.ChatID) string {
+	if chatID == nil {
+		if game == "" {
+			return "pstats:insights"
+		}
+		return "pstats:insights:" + string(game)
+	}
+	return fmt.Sprintf("pstats:insights:%s:%d", game, chatID.Value)
+}
+
+// parseInsightsCallback splits the remainder of a "pstats:insights:" callback
+// into its game and chat segments. The chat segment is optional (plain
+// "cs2" still means "this game, every chat"), which keeps every callback
+// data string the screen has ever emitted still routable.
+func parseInsightsCallback(remainder string) (competition.GameCode, *common.ChatID, error) {
+	parts := strings.SplitN(remainder, ":", 2)
+	game := competition.GameCode(parts[0])
+	if len(parts) < 2 || parts[1] == "" {
+		return game, nil, nil
+	}
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return "", nil, err
+	}
+	chatID := common.ChatID{Value: id}
+	return game, &chatID, nil
 }
 
 func hasGame(perGame []scoring.GameInsights, game competition.GameCode) bool {
@@ -106,10 +174,29 @@ func hasGame(perGame []scoring.GameInsights, game competition.GameCode) bool {
 	return false
 }
 
+func hasChat(perChat []scoring.ChatInsights, chatID common.ChatID) bool {
+	for _, entry := range perChat {
+		if entry.ChatID == chatID {
+			return true
+		}
+	}
+	return false
+}
+
 func filterByGame(predictions []scoring.UserPrediction, game competition.GameCode) []scoring.UserPrediction {
 	out := make([]scoring.UserPrediction, 0, len(predictions))
 	for _, p := range predictions {
 		if p.Game == game {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func filterByChat(predictions []scoring.UserPrediction, chatID common.ChatID) []scoring.UserPrediction {
+	out := make([]scoring.UserPrediction, 0, len(predictions))
+	for _, p := range predictions {
+		if p.ChatID == chatID {
 			out = append(out, p)
 		}
 	}
