@@ -222,7 +222,7 @@ func run() error {
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
 		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
-		AdminActions: adminActions, Invitations: invitations, CrossSell: crossSellOffers,
+		AdminActions: adminActions, Invitations: invitations, CrossSell: crossSellOffers, Targets: targetSubscriptions,
 		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 		TeamMatches:              enrichmentRepo,
 		TeamMatchHelpers:         enrichmentRepo,

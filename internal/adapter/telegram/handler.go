@@ -102,6 +102,11 @@ type UpdateHandler struct {
 	// dismiss callback; the subscribe button reuses the plain "subscribe:"
 	// route regardless.
 	CrossSell subscription.CrossSellRepository
+	// Targets backs the "my team's stats" screen (screens_target_stats.go):
+	// a chat's team/player subscriptions, and the cross-tournament
+	// team-scoped cut of its own leaderboard that follows from them (see
+	// scoring.StatsPeriod.ForTeam). Nil disables the screen entirely.
+	Targets subscription.TargetRepository
 	// InboundLimiter caps how often a single Telegram user may trigger the
 	// bot to do any work at all — a lightweight defense against one account
 	// flooding the bot with commands or callback taps. Nil disables
