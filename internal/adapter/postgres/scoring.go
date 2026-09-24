@@ -222,6 +222,7 @@ const leaderboardWinsQuery = `
 		  FROM prediction_vote v
 		  JOIN match_poll p ON p.id = v.poll_id
 		  JOIN esport_match m ON m.id = p.match_id
+		  LEFT JOIN score_award a ON a.poll_id = v.poll_id AND a.user_id = v.user_id
 		 WHERE p.chat_id = $1 AND m.status = 'FINISHED'`
 
 const leaderboardWinsSelect = `
