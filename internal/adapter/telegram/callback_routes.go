@@ -237,6 +237,9 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("subscribe:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.subscribe(ctx, cb, target, settings, strings.TrimPrefix(data, "subscribe:"))
 	}},
+	{match: prefixed(crossSellDismissPrefix), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.dismissCrossSell(ctx, target, settings, trimCrossSellDismiss(data))
+	}},
 	{match: prefixed("unsubscribe:"), handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.unsubscribe(ctx, cb, target, settings, strings.TrimPrefix(data, "unsubscribe:"))
 	}},

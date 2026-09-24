@@ -36,7 +36,12 @@ type CompetitionSynchronization struct {
 	// review request) — nil disables the whole pipeline, same as any other
 	// optional enrichment dependency here.
 	TeamMatch *TeamMatchService
-	Outbox    common.Outbox
+	// TargetCrossSell offers a one-tap tournament subscribe to chats that
+	// follow a team newly seen playing in it (requirement (b)) — nil
+	// disables the offer entirely, same as every other optional dependency
+	// here.
+	TargetCrossSell *TargetCrossSellService
+	Outbox          common.Outbox
 	// Switches decides which chats asked to hear about new tournaments.
 	Switches common.NotifySwitchboard
 	Lock     common.ClusterLock
@@ -459,9 +464,32 @@ func (s *CompetitionSynchronization) processMatch(ctx context.Context, incoming 
 	if incoming.Status == competition.MatchNotStarted && incoming.ParticipantsKnown() &&
 		incoming.ScheduledAt != nil && incoming.ScheduledAt.After(s.Clock.Now()) &&
 		(previous == nil || !previous.ParticipantsKnown()) {
+		s.offerTargetCrossSell(ctx, incoming)
 		return s.fanOutNewPolls(ctx, incoming, s.ensureTeamsMatched(ctx, incoming))
 	}
 	return nil
+}
+
+// offerTargetCrossSell runs right when a match's two teams first become
+// known — the earliest moment a team can be said to be "playing in this
+// tournament" — so a chat following one of them can be offered the
+// tournament before, not after, the action. Best effort: a cross-sell
+// prompt failing to enqueue must not block poll creation for the match
+// itself.
+func (s *CompetitionSynchronization) offerTargetCrossSell(ctx context.Context, incoming competition.Match) {
+	if s.TargetCrossSell == nil {
+		return
+	}
+	event, err := s.Catalog.FindEvent(ctx, incoming.EventID)
+	if err != nil || event == nil {
+		if err != nil && s.Log != nil {
+			s.Log.Error("target cross-sell lookup failed", "eventId", incoming.EventID.Value, "error", err)
+		}
+		return
+	}
+	if err := s.TargetCrossSell.DiscoverAndOffer(ctx, *event); err != nil && s.Log != nil {
+		s.Log.Error("target cross-sell offer failed", "eventId", event.ID.Value, "error", err)
+	}
 }
 
 // ensureTeamsMatched is the identity-resolution trigger point: a team only

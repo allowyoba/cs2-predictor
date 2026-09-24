@@ -97,6 +97,11 @@ type UpdateHandler struct {
 	// moderator_invitations.go). Nil disables the "🔗 Создать приглашение"
 	// assignment method.
 	Invitations chat.ModeratorInvitationRepository
+	// CrossSell backs the team/player-subscription tournament cross-sell
+	// prompt's dismiss button (see target_cross_sell.go). Nil disables the
+	// dismiss callback; the subscribe button reuses the plain "subscribe:"
+	// route regardless.
+	CrossSell subscription.CrossSellRepository
 	// InboundLimiter caps how often a single Telegram user may trigger the
 	// bot to do any work at all — a lightweight defense against one account
 	// flooding the bot with commands or callback taps. Nil disables
