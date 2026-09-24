@@ -44,6 +44,11 @@ const (
 	ChatNotifyNewEvents ChatNotificationKind = "new_events"
 	// ChatNotifyStreams is the broadcast link a closing poll can post.
 	ChatNotifyStreams ChatNotificationKind = "streams"
+	// ChatNotifyTargetCrossSell is the one-tap "this team/player you
+	// follow is playing in a tournament you're not subscribed to yet"
+	// offer. Reuses this same switchboard rather than a parallel
+	// notification path, same as every other proactive message here.
+	ChatNotifyTargetCrossSell ChatNotificationKind = "target_cross_sell"
 )
 
 // ChatNotificationKinds is the catalogue, in the order the settings screen
@@ -54,6 +59,7 @@ var ChatNotificationKinds = []ChatNotificationKind{
 	ChatNotifyEventFinished,
 	ChatNotifyDigests,
 	ChatNotifyStreams,
+	ChatNotifyTargetCrossSell,
 }
 
 // KnownChatNotification reports whether kind is one of the catalogue's,
