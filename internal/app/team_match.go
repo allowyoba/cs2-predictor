@@ -146,7 +146,7 @@ func (s *TeamMatchService) ensureRequest(ctx context.Context, team competition.T
 	if err := s.Requests.CreateRequest(ctx, req, []enrichment.TeamMatchCandidate{candidate}); err != nil {
 		return nil, err
 	}
-	s.notifyOperators(ctx, req)
+	s.notifyOperators(req)
 	return &req.ID, nil
 }
 
@@ -211,7 +211,7 @@ func bestSnapshotMatch(name string, snapshot []enrichment.RankedTeam) (enrichmen
 // Telegram message per request created, which floods the admin chat when a
 // single run (e.g. a big tournament's matches all landing at once)
 // discovers many unmatched teams together.
-func (s *TeamMatchService) notifyOperators(ctx context.Context, req enrichment.TeamMatchRequest) {
+func (s *TeamMatchService) notifyOperators(req enrichment.TeamMatchRequest) {
 	s.pendingPingMu.Lock()
 	s.pendingPingNames = append(s.pendingPingNames, req.ExternalName)
 	s.pendingPingMu.Unlock()
