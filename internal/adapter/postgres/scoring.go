@@ -175,7 +175,19 @@ func periodClause(period scoring.StatsPeriod, zone *time.Location) (string, []an
 		from := time.Date(period.Day.Year(), period.Day.Month(), period.Day.Day(), 0, 0, 0, 0, zone)
 		clause = betweenClause(from, from.AddDate(0, 0, 1), next)
 	}
-	return clause + gameClause(period.Game, next), args
+	return clause + gameClause(period.Game, next) + teamClause(period, next), args
+}
+
+// teamClause keeps matches involving any of period.Teams. EXISTS rather
+// than a join, so overlapping targets can never multiply a vote.
+func teamClause(period scoring.StatsPeriod, next func(any) string) string {
+	if period.Teams == nil {
+		return ""
+	}
+	if len(period.Teams.IDs) == 0 {
+		return " AND false"
+	}
+	return ` AND EXISTS (SELECT 1 FROM match_team st WHERE st.match_id = m.id AND st.team_id = ANY(` + next(teamUUIDs(period.Teams.IDs)) + `))`
 }
 
 // betweenClause bounds a period by when its matches were actually played.
@@ -338,7 +350,7 @@ func userPeriodClause(period scoring.StatsPeriod) (string, []any) {
 	if period.ChatID != nil {
 		clause += " AND p.chat_id = " + next(period.ChatID.Value)
 	}
-	return clause + gameClause(period.Game, next), args
+	return clause + gameClause(period.Game, next) + teamClause(period, next), args
 }
 
 // UserStats aggregates one Telegram user's finished predictions across every

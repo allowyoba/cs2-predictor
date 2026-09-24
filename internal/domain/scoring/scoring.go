@@ -62,6 +62,19 @@ type StatsPeriod struct {
 	// one is measured against two different fields, and a merged number
 	// belongs to neither.
 	ChatID *common.ChatID
+	// Teams, when set, narrows every figure to matches involving any of
+	// its teams — a team/player follower's slice. A pointer keeps
+	// StatsPeriod comparable; an empty set matches nothing.
+	Teams *TeamSet
+}
+
+// TeamSet is the team filter of a StatsPeriod.
+type TeamSet struct{ IDs []common.TeamID }
+
+// ForTeams narrows a period to matches involving any of teams.
+func (p StatsPeriod) ForTeams(teams []common.TeamID) StatsPeriod {
+	p.Teams = &TeamSet{IDs: teams}
+	return p
 }
 
 // ForGame narrows a period to one game; an empty code widens it back to

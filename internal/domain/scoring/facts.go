@@ -19,6 +19,9 @@ type PredictionFact struct {
 	PlayedAt time.Time
 	Game     competition.GameCode
 	ChatID   common.ChatID
+	// UserID and UserName are who made the call; set by the chat-wide read.
+	UserID   common.UserID
+	UserName string
 	// EventTier is "s", "a", … as the provider reports it; empty when it
 	// does not say.
 	EventTier string
@@ -63,4 +66,10 @@ const PredictionFactsMax = 400
 // FactsRepository reads them, newest first.
 type FactsRepository interface {
 	UserPredictionFacts(ctx context.Context, userID common.UserID, limit int) ([]PredictionFact, error)
+}
+
+// ChatFactsRepository reads every participant's settled predictions in the
+// given chats since a moment, newest first.
+type ChatFactsRepository interface {
+	ChatPredictionFacts(ctx context.Context, chatIDs []common.ChatID, since time.Time, limit int) ([]PredictionFact, error)
 }

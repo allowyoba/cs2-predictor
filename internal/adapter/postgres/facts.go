@@ -2,15 +2,18 @@ package postgres
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
 )
 
-// UserPredictionFacts reads every settled prediction with the match around
-// it: tier, stage, format, both teams and their ranks.
+// predictionFactsQuery reads every settled prediction with the match around
+// it: tier, stage, format, both teams and their ranks. %WHERE% is the
+// voter filter; the final placeholder after it is the row limit.
 //
-// One query for four screens — see scoring.PredictionFact.
+// One query for several screens — see scoring.PredictionFact.
 //
 // Both ranks always come from the SAME feed. That is the whole subtlety
 // here: Valve's standings run to about 390 places and HLTV's to about 100,
@@ -22,11 +25,7 @@ import (
 //
 // A match neither feed ranks on both sides is simply not readable as
 // favourite against underdog, and says so by leaving both ranks null.
-func (r *ScoringRepository) UserPredictionFacts(ctx context.Context, userID common.UserID, limit int) ([]scoring.PredictionFact, error) {
-	if limit <= 0 {
-		return nil, nil
-	}
-	rows, err := executor(ctx, r.pool).Query(ctx, `
+const predictionFactsQuery = `
 WITH ranked AS (
     SELECT team_id, source, global_rank
       FROM team_ranking
@@ -36,6 +35,7 @@ picks AS (
     SELECT COALESCE(m.actual_started_at, m.scheduled_at) AS played_at,
            g.code AS game,
            p.chat_id,
+           v.user_id,
            COALESCE(e.tier, '') AS tier,
            COALESCE(es.name, '') AS stage,
            m.series_kind, m.series_size,
@@ -60,16 +60,18 @@ picks AS (
       LEFT JOIN event_stage es ON es.id = m.stage_id
       LEFT JOIN match_team mt1 ON mt1.match_id = m.id AND mt1.position = 1
       LEFT JOIN match_team mt2 ON mt2.match_id = m.id AND mt2.position = 2
-     WHERE v.user_id = $1
+     WHERE %WHERE%
        AND m.status = 'FINISHED'
        AND m.first_score IS NOT NULL
        AND m.second_score IS NOT NULL
 )
-SELECT k.played_at, k.game, k.chat_id, k.tier, k.stage, k.series_kind, k.series_size,
+SELECT k.played_at, k.game, k.chat_id, k.user_id, COALESCE(NULLIF(u.nickname, ''), u.display_name, ''),
+       k.tier, k.stage, k.series_kind, k.series_size,
        COALESCE(pt.name, ''), COALESCE(ot.name, ''),
        pair.picked_rank, pair.other_rank,
        k.picked_id = k.winner_id AS correct
   FROM picks k
+  JOIN telegram_user u ON u.id = k.user_id
   LEFT JOIN team pt ON pt.id = k.picked_id
   LEFT JOIN team ot ON ot.id = k.other_id
   -- One feed, both sides. HLTV first where it has an opinion: it is the
@@ -86,7 +88,11 @@ SELECT k.played_at, k.game, k.chat_id, k.tier, k.stage, k.series_kind, k.series_
    AND k.winner_id IS NOT NULL
    AND k.played_at IS NOT NULL
  ORDER BY k.played_at DESC
- LIMIT $2`, userID.Value, limit)
+ LIMIT `
+
+func (r *ScoringRepository) queryFacts(ctx context.Context, where, limitPlaceholder string, args ...any) ([]scoring.PredictionFact, error) {
+	sql := strings.Replace(predictionFactsQuery, "%WHERE%", where, 1) + limitPlaceholder
+	rows, err := executor(ctx, r.pool).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +101,8 @@ SELECT k.played_at, k.game, k.chat_id, k.tier, k.stage, k.series_kind, k.series_
 	var out []scoring.PredictionFact
 	for rows.Next() {
 		var fact scoring.PredictionFact
-		if err := rows.Scan(&fact.PlayedAt, &fact.Game, &fact.ChatID.Value, &fact.EventTier, &fact.Stage,
+		if err := rows.Scan(&fact.PlayedAt, &fact.Game, &fact.ChatID.Value, &fact.UserID.Value, &fact.UserName,
+			&fact.EventTier, &fact.Stage,
 			&fact.Format.Kind, &fact.Format.Size,
 			&fact.PickedTeam, &fact.OpponentTeam,
 			&fact.PickedRank, &fact.OpponentRank, &fact.Correct); err != nil {
@@ -106,4 +113,27 @@ SELECT k.played_at, k.game, k.chat_id, k.tier, k.stage, k.series_kind, k.series_
 	return out, rows.Err()
 }
 
-var _ scoring.FactsRepository = (*ScoringRepository)(nil)
+// UserPredictionFacts reads one person's facts across every chat.
+func (r *ScoringRepository) UserPredictionFacts(ctx context.Context, userID common.UserID, limit int) ([]scoring.PredictionFact, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return r.queryFacts(ctx, "v.user_id = $1", "$2", userID.Value, limit)
+}
+
+// ChatPredictionFacts reads every participant's facts in the given chats.
+func (r *ScoringRepository) ChatPredictionFacts(ctx context.Context, chatIDs []common.ChatID, since time.Time, limit int) ([]scoring.PredictionFact, error) {
+	if limit <= 0 || len(chatIDs) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, len(chatIDs))
+	for i, id := range chatIDs {
+		ids[i] = id.Value
+	}
+	return r.queryFacts(ctx, "p.chat_id = ANY($1) AND COALESCE(m.actual_started_at, m.scheduled_at) >= $2", "$3", ids, since, limit)
+}
+
+var (
+	_ scoring.FactsRepository     = (*ScoringRepository)(nil)
+	_ scoring.ChatFactsRepository = (*ScoringRepository)(nil)
+)
