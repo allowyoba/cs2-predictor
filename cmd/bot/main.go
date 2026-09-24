@@ -234,6 +234,8 @@ func run() error {
 		EnrichmentSources:        enrichmentSources,
 		EnrichmentIntervals:      enrichmentBuilt.Intervals,
 		DeadLetters:              outbox,
+		HostRoot:                 "/",
+		HostLimits:               cfg.HostLimits,
 		Feedback:                 feedbackService,
 		MiniAppURL:               cfg.MiniAppURL,
 	}

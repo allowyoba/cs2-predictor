@@ -146,6 +146,22 @@ type UpdateHandler struct {
 	// omits the panel, exactly like the sections above.
 	DeadLetters common.DeadLetterStore
 
+	// --- host metrics (see /hub:host_status, host_status.go) ---
+
+	// HostRoot is the filesystem whose free space hostStatusView reports —
+	// the same value HostMonitor.Root is set to. Empty defaults to "/",
+	// same as app.ReadHostUsage.
+	HostRoot string
+	// HostLimits are the thresholds hostStatusView compares a reading
+	// against — the same app.HostLimits HostMonitor alerts on, so the
+	// on-demand screen and the passive alert always agree.
+	HostLimits app.HostLimits
+	// HostUsageReader overrides how hostStatusView reads the machine's
+	// current usage. Nil uses app.ReadHostUsage; tests substitute a fake so
+	// they can exercise the unavailable-read path without real kernel
+	// files.
+	HostUsageReader func(root string) (app.HostUsage, error)
+
 	// Feedback backs the Ideas screen (see suggestions.go). Nil turns the
 	// channel off: the button says so rather than failing on use.
 	Feedback *app.FeedbackService
