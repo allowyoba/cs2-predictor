@@ -179,7 +179,7 @@ func (h *UpdateHandler) moderatorName(ctx context.Context, chatID common.ChatID,
 // the bundle scanner cannot see. Adding a logAdminAction call site without
 // adding its kind here fails that test.
 var adminActionKinds = []string{
-	"subscribe", "unsubscribe", "locale", "timezone",
+	"subscribe", "unsubscribe", "follow", "unfollow", "locale", "timezone",
 	"top_tier", "auto_subscribe", "stream_language", "notify", "quiet_hours", "logo_source", "flag_source", "games", "event_topic", "moderator_added", "moderator_removed",
 	// stream_announce is retired as a call site — the switch moved into
 	// the notifications screen — but rows written under it are still in

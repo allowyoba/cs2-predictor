@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"cs2predictor/internal/app"
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/scoring"
 	"cs2predictor/internal/platform/common"
@@ -14,7 +15,7 @@ func (h *UpdateHandler) progressionRepo() (scoring.ProgressionRepository, error)
 	if !ok {
 		return nil, fmt.Errorf("scoring repository does not support rating charts")
 	}
-	return repo, nil
+	return app.ScopedProgression{Inner: repo, Scopes: h.Scopes}, nil
 }
 
 // sendProgressionChart renders and uploads a rating-movement chart for

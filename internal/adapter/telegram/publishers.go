@@ -416,7 +416,8 @@ func NewBigEventPublisher(client *Client, chats chat.Repository, texts *Texts) *
 // tournament showed up" fact, just already acted on for a chat that opted
 // into AutoSubscribeTopTier rather than needing a tap to join.
 func (p *BigEventPublisher) Supports(eventType string) bool {
-	return eventType == "telegram.big-event-discovered" || eventType == "telegram.auto-subscribed"
+	return eventType == "telegram.big-event-discovered" || eventType == "telegram.auto-subscribed" ||
+		eventType == "telegram.follow-cross-sell"
 }
 
 func (p *BigEventPublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
@@ -429,10 +430,14 @@ func (p *BigEventPublisher) Publish(ctx context.Context, message common.OutboxMe
 
 	var text string
 	var btn InlineButton
-	if message.Type == "telegram.auto-subscribed" {
+	switch message.Type {
+	case "telegram.auto-subscribed":
 		text = p.texts.Get("bigevent.auto_subscribed", locale, badge+escapeHTML(n.EventName))
 		btn = button(p.texts.Get("events.unsubscribe", locale), "unsubscribe:"+n.EventID)
-	} else {
+	case "telegram.follow-cross-sell":
+		text = p.texts.Get("bigevent.cross_sell", locale, escapeHTML(n.Reason), badge+escapeHTML(n.EventName))
+		btn = button(p.texts.Get("bigevent.subscribe", locale), "subscribe:"+n.EventID)
+	default:
 		text = p.texts.Get("bigevent.announcement", locale, badge+escapeHTML(n.EventName))
 		btn = button(p.texts.Get("bigevent.subscribe", locale), "subscribe:"+n.EventID)
 	}

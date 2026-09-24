@@ -390,7 +390,7 @@ func routeEventBetsForUser(h *UpdateHandler, ctx context.Context, cb *CallbackQu
 	subject := common.UserID{Value: userVal}
 	viewer := common.UserID{Value: cb.From.ID}
 
-	standings, err := h.Scoring.Leaderboard(ctx, settings.ChatID, scoring.ForEvent(eventID))
+	standings, err := h.leaderboard(ctx, settings.ChatID, scoring.ForEvent(eventID))
 	if err != nil {
 		return false, err
 	}

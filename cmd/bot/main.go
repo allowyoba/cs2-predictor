@@ -220,6 +220,10 @@ func run() error {
 	updateHandler := &telegram.UpdateHandler{
 		Dedup: dedup, Predictions: predictionService, Chats: chats, Authorization: authorization,
 		Catalog: catalog, Subscriptions: subscriptions, Scoring: scoringRepo, Texts: texts,
+		Scopes: scopes,
+		Follows: &app.FollowService{
+			Targets: subscriptions, Catalog: catalog, Predictions: predictionService, Chats: chats, Clock: clock, Log: log,
+		},
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
 		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations,

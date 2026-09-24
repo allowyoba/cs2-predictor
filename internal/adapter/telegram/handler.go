@@ -108,6 +108,11 @@ type UpdateHandler struct {
 	// aren't rendered (see dmDeepLink).
 	BotUsername string
 
+	// Follows backs team/player subscriptions; nil hides them. Scopes
+	// narrows tournament boards for team/player followers.
+	Follows *app.FollowService
+	Scopes  app.SubscriptionScopes
+
 	// --- team-identity review (see internal/app.TeamMatchService) ---
 
 	TeamMatches        enrichment.TeamMatchRepository
@@ -591,6 +596,8 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		return h.handleCommandError(ctx, settings, nil, text, h.searchEvents(ctx, msg, settings, strings.TrimSpace(strings.TrimPrefix(text, "/events"))))
 	case strings.HasPrefix(text, "/timezone "):
 		return h.handleCommandError(ctx, settings, nil, text, h.changeTimezone(ctx, msg, settings, strings.TrimSpace(strings.TrimPrefix(text, "/timezone "))))
+	case strings.HasPrefix(text, "/follow"):
+		return h.handleCommandError(ctx, settings, nil, text, h.searchFollowTargets(ctx, msg, settings, strings.TrimSpace(strings.TrimPrefix(text, "/follow"))))
 	default:
 		// In a 1:1 chat, free-form text with no more specific meaning is most
 		// useful as a shortcut back to the personal dashboard instead of the

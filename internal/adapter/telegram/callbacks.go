@@ -81,7 +81,7 @@ func (h *UpdateHandler) routeCallback(ctx context.Context, cb *CallbackQuery, se
 		return false, nil
 	}
 	actor := common.UserID{Value: cb.From.ID}
-	for _, route := range callbackRoutes {
+	for _, route := range allCallbackRoutes {
 		if !route.match(data) {
 			continue
 		}

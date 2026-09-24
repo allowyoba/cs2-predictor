@@ -61,7 +61,7 @@ const eventParticipantPickerPageSize = 20
 // see their match-by-match results — the "table for a chosen participant"
 // half of the feature, as opposed to renderEventBets's "my own" half.
 func (h *UpdateHandler) renderEventParticipantPicker(ctx context.Context, target replyTarget, settings chat.Settings, eventID common.EventID, page int, backData string) error {
-	standings, err := h.Scoring.Leaderboard(ctx, settings.ChatID, scoring.ForEvent(eventID))
+	standings, err := h.leaderboard(ctx, settings.ChatID, scoring.ForEvent(eventID))
 	if err != nil {
 		return err
 	}

@@ -53,6 +53,9 @@ func (h *UpdateHandler) statsMenu(ctx context.Context, target replyTarget, setti
 		{button(h.Texts.Get("stats.all_time", settings.Locale), "stats:all"), button(h.Texts.Get("stats.event", settings.Locale), "stats:events")},
 		{button(h.Texts.Get("stats.other_period", settings.Locale), "stats:years")},
 	}
+	if h.Follows != nil {
+		rows = append(rows, []InlineButton{button(h.Texts.Get("stats.by_follow", settings.Locale), "stats:follows")})
+	}
 	if target.chatID == settings.ChatID {
 		if link, ok := h.statsDeepLink(settings.ChatID); ok {
 			rows = append(rows, []InlineButton{urlButton(h.Texts.Get("stats.open_dm", settings.Locale), link)})
@@ -163,7 +166,7 @@ func (h *UpdateHandler) eventStatsMenu(ctx context.Context, target replyTarget, 
 }
 
 func (h *UpdateHandler) personalStats(ctx context.Context, target replyTarget, settings chat.Settings, from User, eventID common.EventID) error {
-	standings, err := h.Scoring.Leaderboard(ctx, settings.ChatID, scoring.ForEvent(eventID))
+	standings, err := h.leaderboard(ctx, settings.ChatID, scoring.ForEvent(eventID))
 	if err != nil {
 		return err
 	}
@@ -324,7 +327,7 @@ func (h *UpdateHandler) leaderboardKeyboard(settings chat.Settings, period scori
 
 //nolint:gocyclo // pre-existing complexity, predates gocyclo being enabled; tracked for a future dedicated refactor rather than fixed as a side effect of adding this linter
 func (h *UpdateHandler) renderLeaderboard(ctx context.Context, target replyTarget, settings chat.Settings, period scoring.StatsPeriod, backData string, viewer common.UserID, pageOpt ...int) error {
-	standings, err := h.Scoring.Leaderboard(ctx, settings.ChatID, period)
+	standings, err := h.leaderboard(ctx, settings.ChatID, period)
 	if err != nil {
 		return err
 	}
