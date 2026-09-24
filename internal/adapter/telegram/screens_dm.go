@@ -124,7 +124,7 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("private.results", locale), "pstats:results")},
 		{button(h.Texts.Get("insights.title", locale), "pstats:insights")},
-		{button(h.Texts.Get("private.bets", locale), "pstats:bets:0")},
+		{button(h.Texts.Get("private.bets", locale), betsCallback(betsFilter{}, 0, 0))},
 	}
 	if !hubAccess {
 		// This screen is this person's actual root (no hub exists above
@@ -367,7 +367,7 @@ func (h *UpdateHandler) renderPrivateChatStats(ctx context.Context, target reply
 	text += "\n" + h.Texts.Get("private.activity", locale, selected.Predictions, selected.Tournaments)
 	text += "\n" + h.Texts.Get("private.accuracy", locale, selected.AccuracyPercent())
 	rows := [][]InlineButton{
-		{button(h.Texts.Get("private.chat_bets", locale), betsCallback(&chatID, page, 0))},
+		{button(h.Texts.Get("private.chat_bets", locale), betsCallback(betsFilter{ChatID: &chatID}, page, 0))},
 		{h.backButton(locale, fmt.Sprintf("pstats:chats:%d", page))},
 	}
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})
