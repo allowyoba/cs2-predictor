@@ -299,6 +299,22 @@
       <section class="screen" data-screen="profile" aria-labelledby="profile-title">
         <div class="profile-hero"><div class="profile-avatar" id="profileAvatar">—</div><div><div class="eyebrow">ANALYST PROFILE</div><h1 id="profile-title">—</h1><p id="profileSubtitle">—</p></div></div>
         <div class="profile-kpis" id="profileKpis"></div>
+
+        <section class="section-block" id="profileFormBlock" hidden>
+          <div class="section-title-row"><div><div class="eyebrow">ФОРМА</div><h2>Последние прогнозы</h2></div><span class="delta" id="profileTrend"></span></div>
+          <div class="form-strip" id="profileFormStrip" aria-label="Последние результаты"></div>
+        </section>
+
+        <section class="section-block" id="profileGamesBlock" hidden>
+          <div class="section-title-row"><div><div class="eyebrow">ПО ИГРАМ</div><h2>Точность</h2></div></div>
+          <div class="segment-list" id="profileGames"></div>
+        </section>
+
+        <section class="section-block" id="profileTeamsBlock" hidden>
+          <div class="section-title-row"><div><div class="eyebrow">КОМАНДЫ</div><h2>Читаете лучше всего</h2></div></div>
+          <div class="team-table" id="profileTeams"></div>
+        </section>
+
         <button class="wide-link" data-go="analytics">Разбор по играм и командам <span>→</span></button>
         <button class="wide-link" data-go="settings">Настройки <span>→</span></button>
         <section class="section-block"><div class="eyebrow">ИСТОЧНИКИ</div><article class="style-card"><div class="style-orb">i</div><div><h2>Откуда цифры</h2><p>Все показатели считаются из ваших завершённых прогнозов в чатах, где работает бот. Ничего не моделируется и не достраивается: если данных не хватает, показатель не выводится.</p></div></article></section>
