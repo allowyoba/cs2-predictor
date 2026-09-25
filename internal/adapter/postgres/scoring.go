@@ -216,16 +216,18 @@ const scoringAggregateSelect = `
 	       COUNT(DISTINCT v.poll_id) AS prediction_count,
 	       COUNT(DISTINCT m.event_id) AS tournament_count`
 
-// leaderboardWinsQuery adds one more figure on top of leaderboardQuery's own
-// aggregate: how many tournaments (within the same chat and period scope)
-// each user finished #1 in. "scoped" re-runs the exact same join/filter
-// leaderboardQuery uses, as one CTE, so both the headline aggregate and the
-// per-tournament win count are guaranteed to agree on which votes count.
-// event_points then re-aggregates per tournament instead of overall, and
-// wins keeps DENSE_RANK() OVER (PARTITION BY event_id ORDER BY points DESC)
-// = 1 — the same "rank only advances when points differ" rule
-// scoring.DenseRank applies in Go, just computed in SQL per event instead
-// of once across the whole chat.
+// leaderboardWinsQuery adds three more figures on top of leaderboardQuery's
+// own aggregate: how many tournaments (within the same chat and period
+// scope) each user finished dense rank 1, 2 or 3 in. "scoped" re-runs the
+// exact same join/filter leaderboardQuery uses, as one CTE, so both the
+// headline aggregate and the per-tournament medal counts are guaranteed to
+// agree on which votes count. event_points then re-aggregates per
+// tournament instead of overall, and medals keeps
+// DENSE_RANK() OVER (PARTITION BY event_id ORDER BY points DESC) — the same
+// "rank only advances when points differ" rule scoring.DenseRank applies in
+// Go, just computed in SQL per event instead of once across the whole chat
+// — and buckets rnk 1/2/3 into gold/silver/bronze counts with FILTER,
+// following the same style as exact_count/correct_count below.
 const leaderboardWinsQuery = `
 	WITH scoped AS (
 		SELECT v.poll_id, v.user_id, m.event_id, a.points, a.kind
@@ -241,11 +243,15 @@ const leaderboardWinsSelect = `
 		SELECT event_id, user_id, COALESCE(SUM(points), 0) AS points
 		  FROM scoped GROUP BY event_id, user_id
 	),
-	wins AS (
-		SELECT user_id, COUNT(*) AS win_count FROM (
+	medals AS (
+		SELECT user_id,
+		       COUNT(*) FILTER (WHERE rnk = 1) AS gold_count,
+		       COUNT(*) FILTER (WHERE rnk = 2) AS silver_count,
+		       COUNT(*) FILTER (WHERE rnk = 3) AS bronze_count
+		  FROM (
 			SELECT user_id, DENSE_RANK() OVER (PARTITION BY event_id ORDER BY points DESC) AS rnk
 			  FROM event_points
-		) ranked WHERE rnk = 1 GROUP BY user_id
+		) ranked WHERE rnk <= 3 GROUP BY user_id
 	)
 	SELECT u.id, COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
 	       COALESCE(SUM(scoped.points), 0) AS points,
@@ -253,10 +259,12 @@ const leaderboardWinsSelect = `
 	       COUNT(scoped.poll_id) FILTER (WHERE scoped.kind IS NOT NULL) AS correct_count,
 	       COUNT(DISTINCT scoped.poll_id) AS prediction_count,
 	       COUNT(DISTINCT scoped.event_id) AS tournament_count,
-	       COALESCE(wins.win_count, 0) AS win_count
+	       COALESCE(medals.gold_count, 0) AS gold_count,
+	       COALESCE(medals.silver_count, 0) AS silver_count,
+	       COALESCE(medals.bronze_count, 0) AS bronze_count
 	  FROM scoped
 	  JOIN telegram_user u ON u.id = scoped.user_id
-	  LEFT JOIN wins ON wins.user_id = scoped.user_id`
+	  LEFT JOIN medals ON medals.user_id = scoped.user_id`
 
 func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatID, period scoring.StatsPeriod) ([]scoring.UserStanding, error) {
 	zone, err := r.chatTimezone(ctx, chatID)
@@ -273,7 +281,7 @@ func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatI
 	// participants (and in the same relative order DenseRank would produce)
 	// rather than an arbitrary DB-order-dependent subset.
 	rows, err := executor(ctx, r.pool).Query(ctx, leaderboardWinsQuery+clause+leaderboardWinsSelect+`
-		 GROUP BY u.id, u.display_name, wins.win_count
+		 GROUP BY u.id, u.display_name, medals.gold_count, medals.silver_count, medals.bronze_count
 		 ORDER BY points DESC, exact_count DESC, prediction_count DESC, u.id ASC
 		 LIMIT `+limitPlaceholder, args...)
 	if err != nil {
@@ -286,7 +294,7 @@ func (r *ScoringRepository) Leaderboard(ctx context.Context, chatID common.ChatI
 		var s scoring.UserStanding
 		var userVal int64
 		if err := rows.Scan(&userVal, &s.DisplayName, &s.Points, &s.ExactPredictions, &s.CorrectPredictions,
-			&s.Predictions, &s.Tournaments, &s.TournamentWins); err != nil {
+			&s.Predictions, &s.Tournaments, &s.GoldMedals, &s.SilverMedals, &s.BronzeMedals); err != nil {
 			return nil, err
 		}
 		s.UserID = common.UserID{Value: userVal}
