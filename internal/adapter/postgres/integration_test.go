@@ -3806,11 +3806,11 @@ func TestScoringRepository_LeaderboardCountsRealLosses(t *testing.T) {
 	}
 }
 
-// TestScoringRepository_LeaderboardCountsTournamentWins guards the per-chat
-// ⭐N badge (introduced alongside the now-removed cross-chat leaderboard):
-// each user's win_count must reflect the tournaments they actually topped,
-// not everyone who merely participated.
-func TestScoringRepository_LeaderboardCountsTournamentWins(t *testing.T) {
+// TestScoringRepository_LeaderboardCountsMedals guards the per-chat medal
+// counts (formerly a win-only ⭐N badge): each user's gold/silver/bronze
+// count must reflect the tournaments they actually finished dense rank
+// 1/2/3 in, not everyone who merely participated.
+func TestScoringRepository_LeaderboardCountsMedals(t *testing.T) {
 	pool, ctx := newTestPool(t)
 	chats := pg.NewChatRepository(pool)
 	catalog := pg.NewCompetitionRepository(pool)
@@ -3829,10 +3829,12 @@ func TestScoringRepository_LeaderboardCountsTournamentWins(t *testing.T) {
 	}
 	alex := common.UserID{Value: 8501}
 	bob := common.UserID{Value: 8502}
+	carl := common.UserID{Value: 8503}
 
 	// seedEvent gives one tournament a single finished match, then awards
-	// exact-score points to alex and bob so exactly one of them tops it.
-	seedEvent := func(external string, alexPoints, bobPoints int) {
+	// exact-score points to each of alex/bob/carl (0 skips that user
+	// entirely) so their per-event dense rank is deterministic.
+	seedEvent := func(external string, alexPoints, bobPoints, carlPoints int) {
 		event := competition.Event{
 			ID: common.NewEventID(), Game: competition.GameCS2, Name: external + " Cup",
 			ExternalID: external + "-event", Status: competition.EventRunning, Provider: "PANDASCORE",
@@ -3861,26 +3863,28 @@ func TestScoringRepository_LeaderboardCountsTournamentWins(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: alex, OptionIndex: 0, DisplayName: "Alex", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
-			t.Fatal(err)
-		}
-		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: bob, OptionIndex: 0, DisplayName: "Bob", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
-			t.Fatal(err)
+		for _, u := range []struct {
+			id   common.UserID
+			name string
+		}{{alex, "Alex"}, {bob, "Bob"}, {carl, "Carl"}} {
+			if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: u.id, OptionIndex: 0, DisplayName: u.name, VotedAt: playedAt.Add(-time.Minute)}); err != nil {
+				t.Fatal(err)
+			}
 		}
 		var awards []scoring.Award
-		if alexPoints > 0 {
-			awards = append(awards, scoring.Award{PollID: saved.ID, UserID: alex, Points: alexPoints, Kind: scoring.AwardExactScore, AwardedAt: playedAt})
-		}
-		if bobPoints > 0 {
-			awards = append(awards, scoring.Award{PollID: saved.ID, UserID: bob, Points: bobPoints, Kind: scoring.AwardExactScore, AwardedAt: playedAt})
+		for id, points := range map[common.UserID]int{alex: alexPoints, bob: bobPoints, carl: carlPoints} {
+			if points > 0 {
+				awards = append(awards, scoring.Award{PollID: saved.ID, UserID: id, Points: points, Kind: scoring.AwardExactScore, AwardedAt: playedAt})
+			}
 		}
 		if err := scoringRepo.ReplaceAwards(ctx, saved.ID, awards); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Alex tops the first tournament, Bob tops the second.
-	seedEvent("first", 3, 1)
-	seedEvent("second", 1, 3)
+	// First tournament: Alex gold, Bob silver, Carl bronze.
+	// Second tournament: Bob gold, Carl silver, Alex bronze.
+	seedEvent("first", 3, 2, 1)
+	seedEvent("second", 1, 3, 2)
 
 	standings, err := scoringRepo.Leaderboard(ctx, chatID, scoring.AllTime())
 	if err != nil {
@@ -3890,11 +3894,14 @@ func TestScoringRepository_LeaderboardCountsTournamentWins(t *testing.T) {
 	for _, s := range standings {
 		byUser[s.UserID] = s
 	}
-	if got := byUser[alex].TournamentWins; got != 1 {
-		t.Fatalf("alex TournamentWins = %d, want 1: %+v", got, standings)
+	if got := byUser[alex]; got.GoldMedals != 1 || got.SilverMedals != 0 || got.BronzeMedals != 1 {
+		t.Fatalf("alex medals = gold=%d silver=%d bronze=%d, want gold=1 silver=0 bronze=1: %+v", got.GoldMedals, got.SilverMedals, got.BronzeMedals, standings)
 	}
-	if got := byUser[bob].TournamentWins; got != 1 {
-		t.Fatalf("bob TournamentWins = %d, want 1: %+v", got, standings)
+	if got := byUser[bob]; got.GoldMedals != 1 || got.SilverMedals != 1 || got.BronzeMedals != 0 {
+		t.Fatalf("bob medals = gold=%d silver=%d bronze=%d, want gold=1 silver=1 bronze=0: %+v", got.GoldMedals, got.SilverMedals, got.BronzeMedals, standings)
+	}
+	if got := byUser[carl]; got.GoldMedals != 0 || got.SilverMedals != 1 || got.BronzeMedals != 1 {
+		t.Fatalf("carl medals = gold=%d silver=%d bronze=%d, want gold=0 silver=1 bronze=1: %+v", got.GoldMedals, got.SilverMedals, got.BronzeMedals, standings)
 	}
 }
 

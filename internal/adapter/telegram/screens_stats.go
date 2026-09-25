@@ -185,7 +185,17 @@ func (h *UpdateHandler) personalStats(ctx context.Context, target replyTarget, s
 // marks that row with 👤 when it matches one of the standings; the zero
 // common.UserID never matches a real Telegram user, so callers with no
 // viewer to highlight can simply pass it.
-func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID) string {
+//
+// eventScoped selects which board is being rendered. A single event's own
+// leaderboard (mid-tournament and after it completes are the same call, same
+// rendering — see renderLeaderboard's callers) already marks that event's
+// own top 3 with a medal prefix; an aggregate medal count on the same row
+// would just repeat the one bit that prefix already says (a win count in
+// that scope is always 0 or 1). A period board (all-time/game/year/month/
+// team) has no such single-event medal prefix of its own, so it is where an
+// aggregate "medals won during this period" figure actually adds
+// information, and only there is it shown.
+func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID, eventScoped bool) string {
 	var b strings.Builder
 	for i, s := range standings {
 		name := truncate(s.DisplayName, 24)
@@ -204,14 +214,44 @@ func leaderboardRows(standings []scoring.UserStanding, viewer common.UserID) str
 		if s.UserID == viewer {
 			viewerMark = " · 👤"
 		}
-		wins := ""
-		if s.TournamentWins > 0 {
-			wins = fmt.Sprintf(" · ⭐%d", s.TournamentWins)
+		fmt.Fprintf(&b, "%s %s %s%s · %s%s", prefix, bold(escapeHTML(name)),
+			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), movement, code(strconv.Itoa(s.Points)), viewerMark)
+		// The main line above is already close to a comfortable width on a
+		// phone held in portrait orientation (rank/medal, a bold name up to
+		// 24 chars, a code-formatted accuracy breakdown, an optional
+		// movement arrow, and the points figure). Appending a medal-count
+		// tail there risks an ugly mid-word wrap on a narrow screen, so —
+		// mirroring betLine's own result-line/metadata-line split in
+		// personal_bets.go — it gets its own indented, italicized sub-line
+		// instead, and only when this board isn't event-scoped and the user
+		// actually has a nonzero count to show.
+		if !eventScoped {
+			if medals := medalSummary(s); medals != "" {
+				fmt.Fprintf(&b, "\n%s", italic(medals))
+			}
 		}
-		fmt.Fprintf(&b, "%s %s %s%s · %s%s%s", prefix, bold(escapeHTML(name)),
-			code(statsBreakdown(s.ExactPredictions, s.CorrectPredictions, s.Predictions)), movement, code(strconv.Itoa(s.Points)), wins, viewerMark)
 	}
 	return b.String()
+}
+
+// medalSummary formats "🥇×N 🥈×N 🥉×N", the medal-type counts a user earned
+// during the leaderboard's period, omitting zero-count types entirely — the
+// same "don't show a meaningless zero" convention this codebase already
+// applies elsewhere (e.g. the old TournamentWins > 0 gate). "×" reads as a
+// multiplication mark separating glyph from count, and a single space between
+// the (at most three) parts keeps the line short and scannable.
+func medalSummary(s scoring.UserStanding) string {
+	var parts []string
+	if s.GoldMedals > 0 {
+		parts = append(parts, fmt.Sprintf("🥇×%d", s.GoldMedals))
+	}
+	if s.SilverMedals > 0 {
+		parts = append(parts, fmt.Sprintf("🥈×%d", s.SilverMedals))
+	}
+	if s.BronzeMedals > 0 {
+		parts = append(parts, fmt.Sprintf("🥉×%d", s.BronzeMedals))
+	}
+	return strings.Join(parts, " ")
 }
 
 func standingMovement(s scoring.UserStanding) string {
@@ -362,7 +402,7 @@ func (h *UpdateHandler) renderLeaderboard(ctx context.Context, target replyTarge
 	visible := standings[start:end]
 	body := h.Texts.Get("stats.empty", settings.Locale)
 	if len(visible) > 0 {
-		body = leaderboardRows(visible, viewer)
+		body = leaderboardRows(visible, viewer, period.Kind == scoring.PeriodEvent)
 	}
 	viewerVisible := viewerIndex >= start && viewerIndex < end
 	if viewerIndex >= 0 && !viewerVisible {

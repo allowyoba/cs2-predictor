@@ -111,7 +111,7 @@ func TestLeaderboardRows_AreCompactAndDoNotUseSpacePaddedColumns(t *testing.T) {
 	rows := leaderboardRows([]scoring.UserStanding{
 		{Rank: 1, DisplayName: "Очень длинное имя игрока", Points: 123},
 		{Rank: 4, DisplayName: "Alex", Points: 9, ExactPredictions: 2, CorrectPredictions: 5, Predictions: 8},
-	}, common.UserID{})
+	}, common.UserID{}, false)
 	if strings.Contains(rows, "                        ") {
 		t.Fatalf("leaderboard must not use fixed-width space padding: %q", rows)
 	}
@@ -120,22 +120,32 @@ func TestLeaderboardRows_AreCompactAndDoNotUseSpacePaddedColumns(t *testing.T) {
 	}
 }
 
-func TestLeaderboardRows_ShowsTournamentWinsOnlyWhenPositive(t *testing.T) {
+func TestLeaderboardRows_ShowsMedalSummaryOnPeriodBoardsOnlyWhenPositive(t *testing.T) {
 	rows := leaderboardRows([]scoring.UserStanding{
-		{Rank: 1, DisplayName: "Alex", Points: 9, TournamentWins: 3},
-		{Rank: 2, DisplayName: "Sam", Points: 5},
-	}, common.UserID{})
-	if !strings.Contains(rows, "⭐3") {
-		t.Fatalf("expected the tournament-win count for Alex, got %q", rows)
+		{UserID: common.UserID{Value: 1}, Rank: 1, DisplayName: "Alex", Points: 9, GoldMedals: 3, SilverMedals: 1},
+		{UserID: common.UserID{Value: 2}, Rank: 4, DisplayName: "Sam", Points: 5},
+	}, common.UserID{Value: -1}, false)
+	lines := strings.Split(rows, "\n")
+	if !strings.Contains(lines[1], "🥇×3 🥈×1") {
+		t.Fatalf("expected the medal summary for Alex, got %q", rows)
 	}
-	if strings.Count(rows, "⭐") != 1 {
-		t.Fatalf("Sam has no tournament wins and must not show a star: %q", rows)
+	if len(lines) != 3 {
+		t.Fatalf("Sam has no medals and must not show a medal-summary sub-line: %q", rows)
+	}
+}
+
+func TestLeaderboardRows_EventScopedNeverShowsMedalSummary(t *testing.T) {
+	rows := leaderboardRows([]scoring.UserStanding{
+		{UserID: common.UserID{Value: 1}, Rank: 1, DisplayName: "Alex", Points: 9, GoldMedals: 3, SilverMedals: 1, BronzeMedals: 2},
+	}, common.UserID{Value: -1}, true)
+	if strings.Contains(rows, "×") {
+		t.Fatalf("event-scoped leaderboard must never show an aggregate medal summary: %q", rows)
 	}
 }
 
 func TestLeaderboardRows_ShowsMovementWhenAvailable(t *testing.T) {
 	prev := 6
-	rows := leaderboardRows([]scoring.UserStanding{{Rank: 4, PreviousRank: &prev, DisplayName: "Alex", Points: 9}}, common.UserID{})
+	rows := leaderboardRows([]scoring.UserStanding{{Rank: 4, PreviousRank: &prev, DisplayName: "Alex", Points: 9}}, common.UserID{}, false)
 	if !strings.Contains(rows, "↑2") {
 		t.Fatalf("expected rank movement, got %q", rows)
 	}
