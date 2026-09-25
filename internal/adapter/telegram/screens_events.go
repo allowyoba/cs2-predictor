@@ -109,6 +109,7 @@ func (h *UpdateHandler) emptySubscriptionsText(settings chat.Settings, dmContext
 func (h *UpdateHandler) eventMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("events.add", settings.Locale), "events:add"), button(h.Texts.Get("events.mine", settings.Locale), "events:mine")},
+		{button(h.Texts.Get("targets.menu_entry", settings.Locale), "menu:targets")},
 		{h.backButton(settings.Locale, "menu:main")},
 	}
 	return h.respond(ctx, target, managedScreenContext(target, settings, bold(escapeHTML(h.Texts.Get("menu.events", settings.Locale)))), &InlineKeyboard{InlineKeyboard: rows})
