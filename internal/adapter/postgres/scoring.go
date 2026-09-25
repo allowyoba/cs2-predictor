@@ -250,7 +250,7 @@ const leaderboardWinsSelect = `
 	SELECT u.id, COALESCE(NULLIF(u.nickname, ''), u.display_name) AS display_name,
 	       COALESCE(SUM(scoped.points), 0) AS points,
 	       COUNT(scoped.poll_id) FILTER (WHERE scoped.kind = 'EXACT_SCORE') AS exact_count,
-	       COUNT(scoped.poll_id) AS correct_count,
+	       COUNT(scoped.poll_id) FILTER (WHERE scoped.kind IS NOT NULL) AS correct_count,
 	       COUNT(DISTINCT scoped.poll_id) AS prediction_count,
 	       COUNT(DISTINCT scoped.event_id) AS tournament_count,
 	       COALESCE(wins.win_count, 0) AS win_count
