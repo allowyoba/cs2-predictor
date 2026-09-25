@@ -3806,6 +3806,98 @@ func TestScoringRepository_LeaderboardCountsRealLosses(t *testing.T) {
 	}
 }
 
+// TestScoringRepository_LeaderboardCountsTournamentWins guards the per-chat
+// 🏆N badge (introduced alongside the now-removed cross-chat leaderboard):
+// each user's win_count must reflect the tournaments they actually topped,
+// not everyone who merely participated.
+func TestScoringRepository_LeaderboardCountsTournamentWins(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	playedAt := time.Now().UTC().Add(-time.Hour)
+	chatID := common.ChatID{Value: -200798}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Wins", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	var options []prediction.Option
+	for i, score := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: score})
+	}
+	alex := common.UserID{Value: 8501}
+	bob := common.UserID{Value: 8502}
+
+	// seedEvent gives one tournament a single finished match, then awards
+	// exact-score points to alex and bob so exactly one of them tops it.
+	seedEvent := func(external string, alexPoints, bobPoints int) {
+		event := competition.Event{
+			ID: common.NewEventID(), Game: competition.GameCS2, Name: external + " Cup",
+			ExternalID: external + "-event", Status: competition.EventRunning, Provider: "PANDASCORE",
+		}
+		if _, err := catalog.SaveEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+		score := competition.MatchScore{First: 2, Second: 0}
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: external + "-match",
+			FirstTeam:   &competition.Team{ID: common.NewTeamID(), Name: "A", ExternalID: external + "-a"},
+			SecondTeam:  &competition.Team{ID: common.NewTeamID(), Name: "B", ExternalID: external + "-b"},
+			ScheduledAt: &playedAt, ActualStartedAt: &playedAt, Status: competition.MatchFinished,
+			Format: format, Score: &score,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := external + "-poll"
+		messageID := int64(len(external))
+		saved, err := predictions.SavePoll(ctx, prediction.Poll{
+			ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID,
+			TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: playedAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: alex, OptionIndex: 0, DisplayName: "Alex", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: bob, OptionIndex: 0, DisplayName: "Bob", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		var awards []scoring.Award
+		if alexPoints > 0 {
+			awards = append(awards, scoring.Award{PollID: saved.ID, UserID: alex, Points: alexPoints, Kind: scoring.AwardExactScore, AwardedAt: playedAt})
+		}
+		if bobPoints > 0 {
+			awards = append(awards, scoring.Award{PollID: saved.ID, UserID: bob, Points: bobPoints, Kind: scoring.AwardExactScore, AwardedAt: playedAt})
+		}
+		if err := scoringRepo.ReplaceAwards(ctx, saved.ID, awards); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Alex tops the first tournament, Bob tops the second.
+	seedEvent("first", 3, 1)
+	seedEvent("second", 1, 3)
+
+	standings, err := scoringRepo.Leaderboard(ctx, chatID, scoring.AllTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUser := map[common.UserID]scoring.UserStanding{}
+	for _, s := range standings {
+		byUser[s.UserID] = s
+	}
+	if got := byUser[alex].TournamentWins; got != 1 {
+		t.Fatalf("alex TournamentWins = %d, want 1: %+v", got, standings)
+	}
+	if got := byUser[bob].TournamentWins; got != 1 {
+		t.Fatalf("bob TournamentWins = %d, want 1: %+v", got, standings)
+	}
+}
+
 // Crests come from two places and are kept in two columns: the match
 // provider's (every game, arriving with the ordinary sync) and HLTV's
 // ranking (Counter-Strike, ranked teams only). Which one is shown is a
