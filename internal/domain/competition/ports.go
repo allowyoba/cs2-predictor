@@ -44,6 +44,11 @@ type Catalog interface {
 	// games restricts results to those GameCodes — a chat that hasn't
 	// enabled any game (empty games) sees nothing, not everything.
 	SearchEvents(ctx context.Context, query string, limit int, topTierOnly bool, games []GameCode) ([]Event, error)
+	// SearchTeams finds teams by a case-insensitive substring of their name,
+	// restricted to games (same "no games enabled, no results" rule as
+	// SearchEvents), for the team-follow subscribe flow's search-then-pick
+	// step.
+	SearchTeams(ctx context.Context, query string, limit int, games []GameCode) ([]Team, error)
 	FindEvent(ctx context.Context, id common.EventID) (*Event, error)
 	// FindEvents batch-fetches events by id in a single round trip — used to
 	// avoid an N+1 query pattern when rendering a list backed by several

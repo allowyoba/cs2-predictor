@@ -81,10 +81,30 @@ func (r *inMemoryPredictions) RemoveVote(context.Context, common.PollID, common.
 type dataCatalog struct {
 	events           map[common.EventID]competition.Event
 	unstartedMatches map[common.EventID][]competition.Match
+	teams            []competition.Team
 }
 
 func (c *dataCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return nil, nil
+}
+
+// SearchTeams is a plain case-insensitive substring match over the fake's
+// fixed team list — enough to exercise the search-then-pick flow without a
+// real database.
+func (c *dataCatalog) SearchTeams(_ context.Context, query string, limit int, games []competition.GameCode) ([]competition.Team, error) {
+	if len(games) == 0 {
+		return nil, nil
+	}
+	var out []competition.Team
+	for _, t := range c.teams {
+		if strings.Contains(strings.ToLower(t.Name), strings.ToLower(query)) {
+			out = append(out, t)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 func (c *dataCatalog) FindEvent(_ context.Context, id common.EventID) (*competition.Event, error) {
 	if e, ok := c.events[id]; ok {

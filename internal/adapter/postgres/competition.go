@@ -269,6 +269,46 @@ func (r *CompetitionRepository) TeamsForGame(ctx context.Context, game competiti
 	return out, rows.Err()
 }
 
+// SearchTeams implements competition.Catalog.SearchTeams: an ILIKE search
+// over team names, the same case-insensitive-substring shape SearchEvents
+// uses, restricted to the requested games.
+func (r *CompetitionRepository) SearchTeams(ctx context.Context, query string, limit int, games []competition.GameCode) ([]competition.Team, error) {
+	if limit < 1 {
+		limit = 1
+	} else if limit > 1000 {
+		limit = 1000
+	}
+	if len(games) == 0 {
+		return nil, nil
+	}
+	codes := make([]string, len(games))
+	for i, g := range games {
+		codes[i] = string(g)
+	}
+	rows, err := executor(ctx, r.pool).Query(ctx, `
+		SELECT t.id, t.name, t.external_id, COALESCE(t.location, ''),
+		       COALESCE(t.logo_url, ''), COALESCE(t.hltv_logo_url, ''), COALESCE(t.hltv_location, '')
+		  FROM team t
+		  JOIN game g ON g.id = t.game_id
+		 WHERE t.name ILIKE ('%' || $1 || '%') ESCAPE '\'
+		   AND g.code = ANY($3)
+		 ORDER BY t.name ASC
+		 LIMIT $2`, escapeLikePattern(query), limit, codes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []competition.Team
+	for rows.Next() {
+		var t competition.Team
+		if err := rows.Scan(&t.ID.Value, &t.Name, &t.ExternalID, &t.Location, &t.LogoURL, &t.HLTVLogoURL, &t.HLTVLocation); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // FindEvents batch-fetches events by id in one round trip (see the Catalog
 // doc comment for why: avoids an N+1 query pattern in list renderers).
 func (r *CompetitionRepository) FindEvents(ctx context.Context, ids []common.EventID) ([]competition.Event, error) {
