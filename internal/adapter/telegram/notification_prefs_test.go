@@ -38,7 +38,7 @@ func TestNotifications_DefaultToOff(t *testing.T) {
 	_, labels := findKeyboardButtons(*calls)
 	for _, label := range labels {
 		if strings.Contains(label, handler.Texts.Get("notify.recaps", common.LocaleRU)) &&
-			!strings.Contains(label, handler.Texts.Get("notify.disabled", common.LocaleRU)) {
+			!strings.HasPrefix(label, "❌ ") {
 			t.Fatalf("recaps switch does not read as off: %q", label)
 		}
 	}
@@ -135,7 +135,7 @@ func TestChatNotifications_DefaultToOffAndToggleIndependently(t *testing.T) {
 		}
 	}
 	for _, label := range labels {
-		if strings.Contains(label, handler.Texts.Get("notify.enabled", common.LocaleRU)) {
+		if !strings.HasPrefix(label, "❌ ") {
 			t.Fatalf("a chat switch reads as on before anybody asked: %q", label)
 		}
 	}
@@ -150,6 +150,21 @@ func TestChatNotifications_DefaultToOffAndToggleIndependently(t *testing.T) {
 	for _, kind := range common.ChatNotificationKinds {
 		if kind != common.ChatNotifyDigests && prefs[string(kind)] {
 			t.Fatalf("turning digests on also turned %s on", kind)
+		}
+	}
+
+	// The toggled switch's own button must now read as on, and every other
+	// switch must still read as off — the state has to be visible per
+	// button, not just true in the database.
+	_, labels = findKeyboardButtons(*calls)
+	digestsLabel := handler.Texts.Get(chatNotifyLabelKey(common.ChatNotifyDigests), common.LocaleRU)
+	for _, label := range labels {
+		wantOn := strings.Contains(label, digestsLabel)
+		if wantOn && !strings.HasPrefix(label, "✅ ") {
+			t.Fatalf("digests switch does not read as on: %q", label)
+		}
+		if !wantOn && !strings.HasPrefix(label, "❌ ") {
+			t.Fatalf("an untouched chat switch does not read as off: %q", label)
 		}
 	}
 }
@@ -171,7 +186,7 @@ func TestOperatorAlerts_EveryKindHasASwitchAndStartsOff(t *testing.T) {
 		}
 	}
 	for _, label := range labels {
-		if strings.Contains(label, handler.Texts.Get("notify.enabled", common.LocaleRU)) {
+		if !strings.HasPrefix(label, "❌ ") {
 			t.Fatalf("an alert reads as on before anybody asked: %q", label)
 		}
 	}
