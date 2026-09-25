@@ -499,6 +499,8 @@ func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 	var cmdErr error
 	if !strings.HasPrefix(text, "/") && isEventSearchReply(msg, settings.Locale, h.Texts) {
 		cmdErr = h.searchEvents(ctx, msg, settings, text)
+	} else if !strings.HasPrefix(text, "/") && isTargetSearchReply(msg, settings.Locale, h.Texts) {
+		cmdErr = h.searchTargets(ctx, msg, settings, text)
 	} else {
 		switch {
 		case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"):
@@ -613,6 +615,8 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 	switch {
 	case !strings.HasPrefix(text, "/") && isEventSearchReply(msg, settings.Locale, h.Texts):
 		return h.handleCommandError(ctx, settings, nil, text, h.searchEvents(ctx, msg, settings, text))
+	case !strings.HasPrefix(text, "/") && isTargetSearchReply(msg, settings.Locale, h.Texts):
+		return h.handleCommandError(ctx, settings, nil, text, h.searchTargets(ctx, msg, settings, text))
 	case strings.HasPrefix(text, "/events"):
 		return h.handleCommandError(ctx, settings, nil, text, h.searchEvents(ctx, msg, settings, strings.TrimSpace(strings.TrimPrefix(text, "/events"))))
 	case strings.HasPrefix(text, "/timezone "):

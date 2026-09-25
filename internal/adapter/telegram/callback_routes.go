@@ -83,6 +83,17 @@ var callbackRoutes = []callbackRoute{
 	{match: exact("menu:main"), handle: routeMenuMain},
 	{match: exact("menu:stats"), handle: simple((*UpdateHandler).statsMenu)},
 	{match: exact("menu:events"), handle: simple((*UpdateHandler).eventMenu)},
+	{match: exact("menu:targets"), guard: guardManager, handle: simple((*UpdateHandler).targetsMenu)},
+	{match: exact("targets:search"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return false, h.requestTargetSearch(ctx, cb, settings)
+	}},
+	{match: exact("targets:mine"), guard: guardManager, handle: simple((*UpdateHandler).targetsMine)},
+	{match: prefixed("targets:sub:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.subscribeTarget(ctx, cb, target, settings, strings.TrimPrefix(data, "targets:sub:"))
+	}},
+	{match: prefixed("targets:unsub:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.unsubscribeTarget(ctx, cb, target, settings, strings.TrimPrefix(data, "targets:unsub:"))
+	}},
 	{match: exact("events:add"), guard: guardManager, handle: simple((*UpdateHandler).eventAddMenu)},
 	{match: exact("events:search"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return false, h.requestEventSearch(ctx, cb, settings)

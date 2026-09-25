@@ -30,13 +30,17 @@ func (h *UpdateHandler) switchboard() (common.NotifySwitchboard, error) {
 	return switchboardOf(h.Chats)
 }
 
-// switchRow renders one switch as a button that toggles it.
+// switchRow renders one switch as a button that toggles it. The on/off
+// state is a leading ✅/❌ mark — the same convention personal_bets.go and
+// screens_events.go already use for a result mark — rather than a trailing
+// word, since a long label plus an appended "enabled"/"disabled" routinely
+// ran past Telegram's per-button width and left the actual state cut off.
 func (h *UpdateHandler) switchRow(locale common.LocaleCode, labelKey, callback string, on bool) []InlineButton {
-	stateKey := "notify.disabled"
+	mark := "❌"
 	if on {
-		stateKey = "notify.enabled"
+		mark = "✅"
 	}
-	return []InlineButton{button(h.Texts.Get(labelKey, locale)+": "+h.Texts.Get(stateKey, locale), callback)}
+	return []InlineButton{button(mark+" "+h.Texts.Get(labelKey, locale), callback)}
 }
 
 // --- a person's own DM ------------------------------------------------

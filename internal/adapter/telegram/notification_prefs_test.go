@@ -35,12 +35,9 @@ func TestNotifications_DefaultToOff(t *testing.T) {
 			t.Fatalf("%s is on, want everything off until asked for", kind)
 		}
 	}
-	_, labels := findKeyboardButtons(*calls)
-	for _, label := range labels {
-		if strings.Contains(label, handler.Texts.Get("notify.recaps", common.LocaleRU)) &&
-			!strings.Contains(label, handler.Texts.Get("notify.disabled", common.LocaleRU)) {
-			t.Fatalf("recaps switch does not read as off: %q", label)
-		}
+	label := allButtonLabels(*calls)["notify:toggle:"+string(common.NotifyResultRecaps)]
+	if !strings.HasPrefix(label, "❌ ") {
+		t.Fatalf("recaps switch does not read as off: %q", label)
 	}
 }
 
@@ -128,15 +125,16 @@ func TestChatNotifications_DefaultToOffAndToggleIndependently(t *testing.T) {
 	if err := handler.chatNotificationsMenu(ctx, replyTarget{chatID: common.ChatID{Value: 42}}, chatID, common.LocaleRU); err != nil {
 		t.Fatal(err)
 	}
-	cds, labels := findKeyboardButtons(*calls)
+	cds, _ := findKeyboardButtons(*calls)
 	for _, kind := range common.ChatNotificationKinds {
 		if !slices.Contains(cds, "settings:notify:"+string(kind)) {
 			t.Fatalf("no switch for %s, so it could never be turned off: %v", kind, cds)
 		}
 	}
-	for _, label := range labels {
-		if strings.Contains(label, handler.Texts.Get("notify.enabled", common.LocaleRU)) {
-			t.Fatalf("a chat switch reads as on before anybody asked: %q", label)
+	for _, kind := range common.ChatNotificationKinds {
+		label := allButtonLabels(*calls)["settings:notify:"+string(kind)]
+		if !strings.HasPrefix(label, "❌ ") {
+			t.Fatalf("%s switch reads as on before anybody asked: %q", kind, label)
 		}
 	}
 
@@ -152,6 +150,23 @@ func TestChatNotifications_DefaultToOffAndToggleIndependently(t *testing.T) {
 			t.Fatalf("turning digests on also turned %s on", kind)
 		}
 	}
+
+	// The toggled switch's own button must now read as on, and every other
+	// switch must still read as off — the state has to be visible per
+	// button, not just true in the database.
+	afterToggle := allButtonLabels([]map[string]any{(*calls)[len(*calls)-1]})
+	for _, kind := range common.ChatNotificationKinds {
+		label := afterToggle["settings:notify:"+string(kind)]
+		if kind == common.ChatNotifyDigests {
+			if !strings.HasPrefix(label, "✅ ") {
+				t.Fatalf("digests switch does not read as on: %q", label)
+			}
+			continue
+		}
+		if !strings.HasPrefix(label, "❌ ") {
+			t.Fatalf("%s switch does not read as off: %q", kind, label)
+		}
+	}
 }
 
 // Every operator alert must be reachable from the alerts screen, or it is
@@ -164,15 +179,16 @@ func TestOperatorAlerts_EveryKindHasASwitchAndStartsOff(t *testing.T) {
 	if err := handler.alertsMenu(context.Background(), replyTarget{chatID: common.ChatID{Value: 42}}, common.ChatID{Value: 42}, common.LocaleRU); err != nil {
 		t.Fatal(err)
 	}
-	cds, labels := findKeyboardButtons(*calls)
+	cds, _ := findKeyboardButtons(*calls)
 	for _, kind := range common.AdminAlertKinds {
 		if !slices.Contains(cds, "alerts:toggle:"+string(kind)) {
 			t.Fatalf("no switch for the %s alert: %v", kind, cds)
 		}
 	}
-	for _, label := range labels {
-		if strings.Contains(label, handler.Texts.Get("notify.enabled", common.LocaleRU)) {
-			t.Fatalf("an alert reads as on before anybody asked: %q", label)
+	for _, kind := range common.AdminAlertKinds {
+		label := allButtonLabels(*calls)["alerts:toggle:"+string(kind)]
+		if !strings.HasPrefix(label, "❌ ") {
+			t.Fatalf("%s alert reads as on before anybody asked: %q", kind, label)
 		}
 	}
 }
