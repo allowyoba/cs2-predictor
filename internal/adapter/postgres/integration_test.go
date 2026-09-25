@@ -3719,6 +3719,93 @@ func TestScoringRepository_LeaderboardNarrowsToOneGame(t *testing.T) {
 	}
 }
 
+// TestScoringRepository_LeaderboardCountsRealLosses guards against a
+// regression where correct_count was derived from the votes row instead of
+// the score_award join, which silently made every miss count as a win (the
+// leaderboard, and everything downstream of CorrectPredictions/Predictions,
+// always showed zero losses regardless of how many predictions actually
+// missed).
+func TestScoringRepository_LeaderboardCountsRealLosses(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+
+	playedAt := time.Now().UTC().Add(-3 * time.Hour)
+	chatID := common.ChatID{Value: -200797}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Losses", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	var options []prediction.Option
+	for i, score := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: score})
+	}
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameCS2, Name: "Loss Cup",
+		ExternalID: "loss-event", Status: competition.EventRunning, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	player := common.UserID{Value: 8402}
+
+	// seedMatch saves one finished match+poll+vote, awarding points only
+	// when won is true — a false vote never gets a score_award row, exactly
+	// like a real miss.
+	seedMatch := func(external string, won bool) {
+		score := competition.MatchScore{First: 2, Second: 0}
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: external + "-match",
+			FirstTeam:   &competition.Team{ID: common.NewTeamID(), Name: "A", ExternalID: external + "-a"},
+			SecondTeam:  &competition.Team{ID: common.NewTeamID(), Name: "B", ExternalID: external + "-b"},
+			ScheduledAt: &playedAt, ActualStartedAt: &playedAt, Status: competition.MatchFinished,
+			Format: format, Score: &score,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := external + "-poll"
+		messageID := int64(len(external))
+		saved, err := predictions.SavePoll(ctx, prediction.Poll{
+			ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID,
+			TelegramPollID: &telegramPollID, TelegramMessageID: &messageID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: playedAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{PollID: saved.ID, UserID: player, OptionIndex: 0, DisplayName: "Player", VotedAt: playedAt.Add(-time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		if !won {
+			return
+		}
+		if err := scoringRepo.ReplaceAwards(ctx, saved.ID, []scoring.Award{{
+			PollID: saved.ID, UserID: player,
+			Points: 3, Kind: scoring.AwardExactScore, AwardedAt: playedAt,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedMatch("win", true)
+	seedMatch("loss", false)
+
+	standings, err := scoringRepo.Leaderboard(ctx, chatID, scoring.AllTime())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(standings) != 1 {
+		t.Fatalf("expected 1 standing, got %d: %+v", len(standings), standings)
+	}
+	s := standings[0]
+	losses := s.Predictions - s.CorrectPredictions
+	if s.Predictions != 2 || s.CorrectPredictions != 1 || losses != 1 {
+		t.Fatalf("unexpected standing: %+v (losses=%d), want Predictions=2 CorrectPredictions=1 losses=1", s, losses)
+	}
+}
+
 // Crests come from two places and are kept in two columns: the match
 // provider's (every game, arriving with the ordinary sync) and HLTV's
 // ranking (Counter-Strike, ranked teams only). Which one is shown is a
