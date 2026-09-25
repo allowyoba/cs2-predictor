@@ -3807,7 +3807,7 @@ func TestScoringRepository_LeaderboardCountsRealLosses(t *testing.T) {
 }
 
 // TestScoringRepository_LeaderboardCountsTournamentWins guards the per-chat
-// 🏆N badge (introduced alongside the now-removed cross-chat leaderboard):
+// ⭐N badge (introduced alongside the now-removed cross-chat leaderboard):
 // each user's win_count must reflect the tournaments they actually topped,
 // not everyone who merely participated.
 func TestScoringRepository_LeaderboardCountsTournamentWins(t *testing.T) {
