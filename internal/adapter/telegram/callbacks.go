@@ -310,9 +310,6 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		} else {
 			err = h.renderPersonalInsights(ctx, target, userID, locale, game, chatID)
 		}
-	case strings.HasPrefix(data, "pstats:chatlb:"):
-		period, game := parseChatLeaderboardCallback(strings.TrimPrefix(data, "pstats:chatlb:"))
-		err = h.renderChatLeaderboard(ctx, target, locale, period, game)
 	case data == "pstats:help":
 		var back string
 		if back, err = h.personalRootBack(ctx, userID); err == nil {

@@ -393,7 +393,6 @@ func run() error {
 		Logos:                  enrichmentRepo,
 		MiniAppHistory:         scoringRepo,
 		MiniAppActive:          scoringRepo,
-		MiniAppChatLeaderboard: scoringRepo,
 		MiniApp: httpapi.MiniAppDeps{
 			BotToken: cfg.Telegram.Token, Stats: scoringRepo, Access: chats, Names: chats, Prefs: chats,
 			Logos:     enrichmentRepo,
