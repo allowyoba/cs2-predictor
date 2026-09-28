@@ -242,3 +242,77 @@ func TestUpcomingEvents_NeverPutsQueryParametersInThePath(t *testing.T) {
 		t.Fatalf("expected a clean Dota2 past-tournaments path, got %v", paths)
 	}
 }
+
+// The Counter-Strike roster request must not carry the videogame_title
+// filter. PandaScore rejects it on /{game}/teams with HTTP 400 ("Provided
+// attributes do not exist for this resource"), so every CS2 roster — and
+// with it every CS2 crest the full team object would have filled in —
+// silently failed, while Dota 2, which has no such filter, worked fine.
+func TestRosters_DoesNotSendTheGameFilterToTheTeamsEndpoint(t *testing.T) {
+	var gotQueries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.RawQuery, "videogame_title") {
+			// Exactly what the real API does with it.
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"Parameter Error","message":"Provided attributes do not exist for this resource."}`))
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":3210,"name":"Astralis","image_url":"https://cdn/astralis.png","location":"DK",
+			"players":[{"id":11,"name":"device","first_name":"Nicolai","last_name":"Reedtz","nationality":"DK"}]}]`))
+	}))
+	defer server.Close()
+
+	config := DefaultConfig()
+	config.BaseURL = server.URL
+	config.Token = "panda-token"
+	provider := NewProvider(config, server.Client())
+
+	rosters, err := provider.Rosters(context.Background(), competition.GameCS2, []string{"3210"})
+	if err != nil {
+		t.Fatalf("the Counter-Strike roster request failed: %v", err)
+	}
+	for _, query := range gotQueries {
+		if strings.Contains(query, "videogame_title") {
+			t.Fatalf("the teams endpoint was sent the game filter it rejects: %s", query)
+		}
+	}
+	if len(rosters) != 1 || rosters[0].ExternalTeamID != "3210" {
+		t.Fatalf("expected one roster for team 3210, got %+v", rosters)
+	}
+	if len(rosters[0].Players) != 1 || rosters[0].Players[0].Nickname != "device" {
+		t.Fatalf("expected the roster read back, got %+v", rosters[0].Players)
+	}
+	// The crest rides along on the same response — the reason CS2 teams had
+	// a country stored and no picture.
+	if rosters[0].LogoURL != "https://cdn/astralis.png" || rosters[0].Location != "DK" {
+		t.Fatalf("expected the crest and country off the full team object, got %+v", rosters[0])
+	}
+}
+
+// Dota 2 has no game filter to leave out, and must still work.
+func TestRosters_WorksForAGameWithNoFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/dota2/teams") {
+			_, _ = w.Write([]byte(`[{"id":1804,"name":"Team Yandex","players":[{"id":9,"name":"Yatoro"}]}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	config := DefaultConfig()
+	config.BaseURL = server.URL
+	config.Token = "panda-token"
+	provider := NewProvider(config, server.Client())
+
+	rosters, err := provider.Rosters(context.Background(), competition.GameDota2, []string{"1804"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rosters) != 1 || len(rosters[0].Players) != 1 {
+		t.Fatalf("expected one Dota 2 roster, got %+v", rosters)
+	}
+}
