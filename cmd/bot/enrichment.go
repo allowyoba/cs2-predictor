@@ -126,13 +126,19 @@ func buildEnrichment(
 		// against.
 		b.Intervals[enrichment.SourceValveVRS] = cfg.ValveVRSSyncInterval
 		if !cfg.ValveVRSEnabled {
-			b.Intervals[enrichment.SourceValveVRS] = cfg.ApifyRankingCheckInterval
+			// The paid feed alone: how often its job is ticked says nothing
+			// about how fresh its data can be, because ApifyRankingGate lets
+			// at most one fetch per week through.
+			b.Intervals[enrichment.SourceValveVRS] = app.ApifyRankingPeriod
 		}
 	}
 	if cfg.HLTVEnabled {
 		b.Sources = append(b.Sources, enrichment.SourceHLTV)
 		b.TeamMatchSources = append(b.TeamMatchSources, enrichment.SourceHLTV)
-		b.Intervals[enrichment.SourceHLTV] = cfg.ApifyRankingCheckInterval
+		// Weekly, for the same reason — the check interval is how often the
+		// gate is asked, not how often it opens. Reporting the tick here is
+		// what showed a perfectly healthy HLTV as "overdue by 6 days".
+		b.Intervals[enrichment.SourceHLTV] = app.ApifyRankingPeriod
 	}
 
 	if cfg.GRIDEnabled {

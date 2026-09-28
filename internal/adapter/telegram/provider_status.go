@@ -127,6 +127,15 @@ func providerSeverity(st *enrichment.SyncState, now time.Time, expected time.Dur
 	return severityOK, false
 }
 
+// resolved reports whether the recorded error predates the last success, so
+// it can be labelled as something that is over rather than something that is
+// happening. A source with failures still accumulating is never resolved,
+// however the timestamps fall.
+func resolved(st *enrichment.SyncState) bool {
+	return st.ConsecutiveFailures == 0 && st.LastSuccessAt != nil && st.LastErrorAt != nil &&
+		st.LastSuccessAt.After(*st.LastErrorAt)
+}
+
 // enrichmentRow renders one source, and judges its freshness against how
 // often it is actually configured to run.
 func (h *UpdateHandler) enrichmentRow(locale common.LocaleCode, source enrichment.Source, st *enrichment.SyncState) providerRow {
@@ -151,7 +160,15 @@ func (h *UpdateHandler) enrichmentRow(locale common.LocaleCode, source enrichmen
 		lines = append(lines, h.Texts.Get("providers.consecutive_failures", locale)+": "+strconv.Itoa(st.ConsecutiveFailures))
 	}
 	if st.LastErrorAt != nil {
-		lines = append(lines, h.Texts.Get("providers.last_error", locale)+": "+h.age(locale, now, st.LastErrorAt))
+		// An error the source has already recovered from is history, and
+		// printing it the same way as a live one makes a working provider
+		// read as a broken one — a two-week-old Apify timeout sat under a
+		// green HLTV looking like the current state of affairs.
+		label := "providers.last_error"
+		if resolved(st) {
+			label = "providers.last_error_resolved"
+		}
+		lines = append(lines, h.Texts.Get(label, locale)+": "+h.age(locale, now, st.LastErrorAt))
 		if msg := strings.TrimSpace(st.LastError); msg != "" {
 			lines = append(lines, code(escapeHTML(truncate(msg, 120))))
 		}

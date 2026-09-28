@@ -21,6 +21,16 @@ type RankingSyncGate interface {
 // exact publish time.
 const apifyEndOfDayHour = 23 // UTC
 
+// ApifyRankingPeriod is how often a source behind this gate can actually
+// produce a new ranking, whatever interval its job is ticked at.
+//
+// It is exported because it is the only honest answer to "how fresh should
+// this be?" for these sources, and the status screen needs that answer. The
+// tick interval is not it: this gate lets at most one fetch per calendar
+// week through, so judging a weekly source against an hourly tick paints it
+// red for six days out of every seven — which is exactly what it did.
+const ApifyRankingPeriod = 7 * 24 * time.Hour
+
 // ApifyRankingGate caps a paid, Apify-backed RankingSync to at most one
 // fetch per calendar week: it opens at the Monday end-of-day cutoff above
 // and stays open for the rest of that week until this job's own run has

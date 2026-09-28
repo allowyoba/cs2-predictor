@@ -189,3 +189,44 @@ func TestProviderStatus_JudgesFreshnessAgainstTheConfiguredInterval(t *testing.T
 		t.Fatalf("provider names are still raw constants: %q", fine.text)
 	}
 }
+
+// An error the source has already recovered from must not be presented as
+// the current state of affairs. A two-week-old Apify timeout sitting under a
+// healthy HLTV, labelled exactly like a live fault, is what made a working
+// provider look broken.
+func TestProviderStatus_MarksAnErrorTheSourceRecoveredFromAsPast(t *testing.T) {
+	server, _ := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+	now := handler.Clock.Now()
+	handler.EnrichmentIntervals = map[enrichment.Source]time.Duration{enrichment.SourceHLTV: 7 * 24 * time.Hour}
+
+	failedLongAgo := now.Add(-13 * 24 * time.Hour)
+	succeededSince := now.Add(-24 * time.Hour)
+	recovered := handler.enrichmentRow(common.LocaleRU, enrichment.SourceHLTV, &enrichment.SyncState{
+		Provider: enrichment.SourceHLTV, LastSuccessAt: &succeededSince, LastErrorAt: &failedLongAgo,
+		LastError: "apify hltv ranking request failed",
+	})
+	if recovered.severity != severityOK {
+		t.Fatalf("a weekly source that succeeded yesterday is healthy: %q", recovered.text)
+	}
+	if !strings.Contains(recovered.text, ru(t, "providers.last_error_resolved")) {
+		t.Fatalf("expected the old error labelled as resolved, got %q", recovered.text)
+	}
+	// The message itself is still worth showing — it just is not current.
+	if !strings.Contains(recovered.text, "apify hltv ranking request failed") {
+		t.Fatalf("expected the error text kept for context, got %q", recovered.text)
+	}
+
+	// A source still failing says so plainly, with no softening label.
+	failing := handler.enrichmentRow(common.LocaleRU, enrichment.SourceHLTV, &enrichment.SyncState{
+		Provider: enrichment.SourceHLTV, LastSuccessAt: &failedLongAgo, LastErrorAt: &succeededSince,
+		LastError: "apify hltv ranking request failed", ConsecutiveFailures: 3,
+	})
+	if failing.severity != severityDown {
+		t.Fatalf("a source with failures piling up is down: %q", failing.text)
+	}
+	if strings.Contains(failing.text, ru(t, "providers.last_error_resolved")) {
+		t.Fatalf("a live failure must not be labelled resolved: %q", failing.text)
+	}
+}

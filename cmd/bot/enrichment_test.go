@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"testing"
+	"time"
 
 	pg "cs2predictor/internal/adapter/postgres"
 	"cs2predictor/internal/app"
@@ -92,5 +93,39 @@ func TestBuildEnrichment_GRIDAndLiquipediaRegisterIndependently(t *testing.T) {
 	// sources (VRS/HLTV) resolve team identity.
 	if len(b.TeamMatchSources) != 0 {
 		t.Fatalf("expected no team-match sources from GRID/Liquipedia, got %+v", b.TeamMatchSources)
+	}
+}
+
+// The freshness a status screen judges an Apify-gated source against is the
+// gate's cadence, never the interval its job is ticked at. ApifyRankingGate
+// lets at most one fetch per calendar week through, so reporting the check
+// interval (an hour) made a perfectly healthy HLTV read as "overdue by 6
+// days" for six days out of every seven.
+func TestBuildEnrichment_GatedSourcesReportTheWeeklyCadenceNotTheTick(t *testing.T) {
+	cfg := app.EnrichmentConfig{
+		HLTVEnabled: true, HLTVAPIToken: "tok", ApifyMaxTeams: 100,
+		ApifyRankingCheckInterval: time.Hour,
+	}
+	b := buildEnrichment(cfg, newTestEnrichmentRepo(), newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
+
+	if got := b.Intervals[enrichment.SourceHLTV]; got != app.ApifyRankingPeriod {
+		t.Fatalf("HLTV cadence = %s, want the gate's %s", got, app.ApifyRankingPeriod)
+	}
+	// The paid Valve feed is behind the same gate, so with the free one off
+	// it is weekly too.
+	if got := b.Intervals[enrichment.SourceValveVRS]; got != app.ApifyRankingPeriod {
+		t.Fatalf("Apify-only VALVE_VRS cadence = %s, want the gate's %s", got, app.ApifyRankingPeriod)
+	}
+
+	// With the free feed also running, VALVE_VRS is as fresh as that one —
+	// the faster of the two is what its timestamp should be read against.
+	cfg.ValveVRSEnabled, cfg.ValveVRSSyncInterval = true, 15*time.Minute
+	withFree := buildEnrichment(cfg, newTestEnrichmentRepo(), newTestEnrichmentRepo(), nil, nil, nil, common.SystemUTCClock(), nil, slog.Default())
+	if got := withFree.Intervals[enrichment.SourceValveVRS]; got != 15*time.Minute {
+		t.Fatalf("VALVE_VRS cadence with the free feed on = %s, want 15m", got)
+	}
+	// HLTV has no free counterpart, so it stays weekly either way.
+	if got := withFree.Intervals[enrichment.SourceHLTV]; got != app.ApifyRankingPeriod {
+		t.Fatalf("HLTV cadence = %s, want the gate's %s", got, app.ApifyRankingPeriod)
 	}
 }

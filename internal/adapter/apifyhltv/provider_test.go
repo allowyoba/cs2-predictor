@@ -548,3 +548,108 @@ func TestFetchLatestCached_NoFinishedRunIsNotAnError(t *testing.T) {
 		t.Fatal("expected no run to be started")
 	}
 }
+
+// movingClock lets a test push time forward, which is what the in-flight
+// patience bound has to be exercised against.
+type movingClock struct{ at time.Time }
+
+func (c *movingClock) Now() time.Time { return c.at }
+
+func newProviderWithClock(t *testing.T, server *httptest.Server, clock common.Clock) *Provider {
+	t.Helper()
+	config := Config{
+		BaseURL: server.URL, ActorID: "paco_nassa~hltv-org-team-ranking", Token: "test-token", MaxTeams: 30,
+		RankingType: "hltv", Source: enrichment.SourceHLTV,
+	}
+	return NewProvider(config, server.Client(), newMemoryRunStore(), clock)
+}
+
+// A run that never leaves RUNNING used to stall the source forever and in
+// total silence: every tick answered ErrFetchPending, which records neither
+// a success nor a failure, so nothing was logged, no alert fired, and the
+// only trace was a last-success timestamp drifting into the past.
+func TestFetchRankings_AbandonsARunStuckInFlight(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
+	defer server.Close()
+	clock := &movingClock{at: testNow}
+	provider := newProviderWithClock(t, server, clock)
+
+	if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("first tick: err = %v, want ErrFetchPending", err)
+	}
+	fake.runsByID["run-new"] = runInfo{ID: "run-new", Status: statusRunning}
+
+	// Still inside the patience window: still pending, still nothing said.
+	clock.at = testNow.Add(runPatience - time.Minute)
+	if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("inside the window: err = %v, want ErrFetchPending", err)
+	}
+
+	// Past it: a real error, not another silent pending.
+	clock.at = testNow.Add(runPatience + time.Minute)
+	_, err := provider.FetchRankings(context.Background())
+	if err == nil {
+		t.Fatal("expected a stalled run to be reported as an error")
+	}
+	if errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("a stalled run must not stay pending forever: %v", err)
+	}
+	if !strings.Contains(err.Error(), "run-new") {
+		t.Fatalf("the error should name the run it gave up on: %v", err)
+	}
+
+	run, err := provider.runs.Run(context.Background(), enrichment.SourceHLTV, "hltv")
+	if err != nil || run == nil {
+		t.Fatalf("expected the period's record kept, got %+v, %v", run, err)
+	}
+	if run.RunID != "" || run.Status != enrichment.RunStatusAbandoned {
+		t.Fatalf("expected the run id cleared and the period marked abandoned, got %+v", *run)
+	}
+	if run.Attempts != 1 {
+		t.Fatalf("the abandoned run was still paid for, so it must still count: attempts = %d", run.Attempts)
+	}
+
+	// And the next tick is free to try again rather than re-polling a run
+	// that is never going to finish.
+	if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("expected a fresh attempt after abandoning, got %v", err)
+	}
+	if fake.startedRuns() != 2 {
+		t.Fatalf("started %d runs, want a second one after the first was abandoned", fake.startedRuns())
+	}
+	after, _ := provider.runs.Run(context.Background(), enrichment.SourceHLTV, "hltv")
+	if after == nil || after.Attempts != 2 {
+		t.Fatalf("expected the retry counted against the same weekly budget, got %+v", after)
+	}
+}
+
+// Abandoning must stay inside the weekly budget: a stalled run cannot be a
+// way to buy unlimited runs.
+func TestFetchRankings_AbandoningStillRespectsTheRunBudget(t *testing.T) {
+	fake := newFakeApify(t)
+	server := fake.serve()
+	defer server.Close()
+	clock := &movingClock{at: testNow}
+	provider := newProviderWithClock(t, server, clock)
+	provider.config.MaxRunsPerPeriod = 2
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := provider.FetchRankings(context.Background()); !errors.Is(err, enrichment.ErrFetchPending) {
+			t.Fatalf("attempt %d: err = %v, want ErrFetchPending", attempt, err)
+		}
+		fake.runsByID["run-new"] = runInfo{ID: "run-new", Status: statusRunning}
+		clock.at = clock.at.Add(runPatience + time.Minute)
+		if _, err := provider.FetchRankings(context.Background()); err == nil || errors.Is(err, enrichment.ErrFetchPending) {
+			t.Fatalf("attempt %d: expected the stalled run abandoned, got %v", attempt, err)
+		}
+	}
+	// Budget spent: no third run, and it says so.
+	_, err := provider.FetchRankings(context.Background())
+	if err == nil || errors.Is(err, enrichment.ErrFetchPending) {
+		t.Fatalf("expected the exhausted budget reported, got %v", err)
+	}
+	if fake.startedRuns() != 2 {
+		t.Fatalf("started %d runs, want no more than the budget of 2", fake.startedRuns())
+	}
+}
