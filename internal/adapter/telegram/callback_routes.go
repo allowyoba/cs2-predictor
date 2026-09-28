@@ -94,6 +94,12 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("targets:unsub:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.unsubscribeTarget(ctx, cb, target, settings, strings.TrimPrefix(data, "targets:unsub:"))
 	}},
+	{match: prefixed("targets:browse:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return false, h.browseTargets(ctx, target, settings, browseTeams, parseBrowsePage(data, "targets:browse:"))
+	}},
+	{match: prefixed("targets:pbrowse:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return false, h.browseTargets(ctx, target, settings, browsePlayers, parseBrowsePage(data, "targets:pbrowse:"))
+	}},
 	{match: exact("targets:psearch"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return false, h.requestPlayerSearch(ctx, cb, settings)
 	}},

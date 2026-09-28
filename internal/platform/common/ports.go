@@ -571,3 +571,28 @@ type UnsubscribeConfirmationNotification struct {
 	Requester string `json:"requester"`
 	Locale    string `json:"locale"`
 }
+
+// MilestoneNotification is the payload for the "telegram.milestone" outbox
+// event type: somebody in this chat has just passed a round number of
+// exactly-right predictions, with the figures that say what it took.
+//
+// Every figure is carried rather than the raw timestamps, because the
+// publisher's job is to write the sentence, not to work out what the numbers
+// mean — and a renderer doing arithmetic is a renderer that can disagree
+// with the screen that shows the same achievement elsewhere.
+type MilestoneNotification struct {
+	ChatID      int64  `json:"chatId"`
+	UserID      int64  `json:"userId"`
+	DisplayName string `json:"displayName"`
+	Milestone   int    `json:"milestone"`
+	Predictions int    `json:"predictions"`
+	Events      int    `json:"events"`
+	// AccuracyPercent is the milestone as a share of every finished
+	// prediction — what makes 100 mean different things for different people.
+	AccuracyPercent int `json:"accuracyPercent"`
+	// Days is how long the whole run took; DaysSincePrevious how long the
+	// last stretch did. Either can be zero, which means "leave that line
+	// out" rather than "it took no time".
+	Days              int `json:"days"`
+	DaysSincePrevious int `json:"daysSincePrevious"`
+}

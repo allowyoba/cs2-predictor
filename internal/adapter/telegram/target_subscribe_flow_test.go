@@ -124,7 +124,7 @@ func TestTargets_MenuIsReachableFromEventsMenu(t *testing.T) {
 		t.Fatal(err)
 	}
 	cds, _ = findKeyboardButtons(*calls)
-	if !slices.Contains(cds, "targets:search") || !slices.Contains(cds, "targets:mine") {
+	if !slices.Contains(cds, "targets:browse:0") || !slices.Contains(cds, "targets:mine") {
 		t.Fatalf("targets menu missing follow/mine buttons: %v", cds)
 	}
 }

@@ -33,25 +33,44 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 	topTierLabel := h.Texts.Get("settings.tournaments_label", settings.Locale, tournamentMode)
 	autoSubscribeLabel := h.Texts.Get("settings.auto_subscribe_label", settings.Locale, h.autoSubscribeState(settings))
 	streamLanguageLabel := h.Texts.Get("settings.stream_language_label", settings.Locale, h.localeName(settings.StreamLocale(), settings.Locale))
-	rows := [][]InlineButton{
-		{button(languageLabel, "settings:locale")},
-		{button(timezoneLabel, "settings:timezone")},
-		{button(streamLanguageLabel, "settings:stream_language")},
-		{button(h.Texts.Get("settings.notifications", settings.Locale), "settings:notify")},
-		{button(h.quietHoursLabel(settings), "settings:quiet")},
-		{button(topTierLabel, "settings:top_tier")},
-		{button(autoSubscribeLabel, "settings:auto_subscribe")},
-		{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
-		{button(h.Texts.Get("settings.moderators", settings.Locale), "settings:moderators")},
-		{button(h.Texts.Get("settings.history", settings.Locale), "settings:history")},
-	}
+	// Grouped rather than listed. Eleven settings in one undifferentiated
+	// column is a wall you read top to bottom every time you want one of
+	// them; under four headings — what the chat follows, what the bot says,
+	// how it looks, who may change it — you go straight to the group your
+	// question belongs to. The headings are disabled buttons, the same
+	// device the tournament list already uses for its per-game sections.
+	//
+	// It costs four rows and buys the reason people can find anything on it.
+	rows := h.settingsSection(settings.Locale, "settings.section_tournaments",
+		[]InlineButton{button(h.Texts.Get("settings.games", settings.Locale), "settings:games")},
+		[]InlineButton{button(topTierLabel, "settings:top_tier")},
+		[]InlineButton{button(autoSubscribeLabel, "settings:auto_subscribe")},
+	)
+	rows = append(rows, h.settingsSection(settings.Locale, "settings.section_messages",
+		[]InlineButton{button(h.Texts.Get("settings.notifications", settings.Locale), "settings:notify")},
+		[]InlineButton{button(h.quietHoursLabel(settings), "settings:quiet")},
+		[]InlineButton{button(timezoneLabel, "settings:timezone")},
+		[]InlineButton{button(streamLanguageLabel, "settings:stream_language")},
+	)...)
+
 	// The flag source is offered only where it can do anything: HLTV
 	// publishes a country for the Counter-Strike teams it ranks and for
 	// nothing else, so a chat that does not follow CS2 would be choosing
 	// between the provider's answer and the provider's answer.
+	appearance := [][]InlineButton{{button(languageLabel, "settings:locale")}}
 	if settings.GameEnabled(competition.GameCS2) {
-		rows = append(rows[:5], append([][]InlineButton{{button(h.flagSourceLabel(settings), "settings:flags")}}, rows[5:]...)...)
+		appearance = append(appearance, []InlineButton{button(h.flagSourceLabel(settings), "settings:flags")})
 	}
+	rows = append(rows, h.settingsSection(settings.Locale, "settings.section_appearance", appearance...)...)
+
+	// Two to a row: both are short, neither carries state, and they are the
+	// pair people open together when something needs explaining.
+	rows = append(rows, h.settingsSection(settings.Locale, "settings.section_access",
+		[]InlineButton{
+			button(h.Texts.Get("settings.moderators", settings.Locale), "settings:moderators"),
+			button(h.Texts.Get("settings.history", settings.Locale), "settings:history"),
+		},
+	)...)
 	kb := InlineKeyboard{InlineKeyboard: rows}
 	// Copying settings between chats only makes sense from the DM panel,
 	// where "the chats you manage" is the frame the user is already in; in
@@ -62,6 +81,16 @@ func (h *UpdateHandler) settingsView(ctx context.Context, target replyTarget, se
 	}
 	kb.InlineKeyboard = append(kb.InlineKeyboard, []InlineButton{h.backButton(settings.Locale, "menu:main")})
 	return h.respond(ctx, target, managedScreenContext(target, settings, text), &kb)
+}
+
+// settingsSection prefixes a group of rows with its heading — a disabled
+// button, since Telegram has no other way to label a run of keys.
+func (h *UpdateHandler) settingsSection(locale common.LocaleCode, titleKey string, rows ...[]InlineButton) [][]InlineButton {
+	if len(rows) == 0 {
+		return nil
+	}
+	heading := []InlineButton{button("— "+h.Texts.Get(titleKey, locale)+" —", "noop")}
+	return append([][]InlineButton{heading}, rows...)
 }
 
 // gameLabelKey maps a GameCode to its i18n key — the only place that

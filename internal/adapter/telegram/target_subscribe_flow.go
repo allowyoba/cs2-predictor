@@ -32,9 +32,12 @@ const maxTargetSearchResults = 20
 // chat follows" sits next to "what this chat is subscribed to"): follow a
 // new team, or see/undo what is already followed.
 func (h *UpdateHandler) targetsMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
+	// The lists come first and the typing second: picking from what is
+	// actually there asks less of the reader than knowing how a handle is
+	// spelled, and this menu used to offer only the latter.
 	rows := [][]InlineButton{
-		{button(h.Texts.Get("targets.follow_team", settings.Locale), "targets:search")},
-		{button(h.Texts.Get("targets.follow_player", settings.Locale), "targets:psearch")},
+		{button(h.Texts.Get("targets.follow_team", settings.Locale), "targets:browse:0")},
+		{button(h.Texts.Get("targets.follow_player", settings.Locale), "targets:pbrowse:0")},
 		{button(h.Texts.Get("targets.mine", settings.Locale), "targets:mine")},
 		{h.backButton(settings.Locale, "menu:events")},
 	}

@@ -191,8 +191,13 @@ func run() error {
 		}
 		return settings.Title
 	}
+	milestoneRepo := pg.NewMilestoneRepository(pool)
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
-		WithRecaps(chats, chatTitle, log)
+		WithRecaps(chats, chatTitle, log).
+		WithMilestones(&app.MilestoneService{
+			Milestones: milestoneRepo, Outbox: outbox,
+			Gate: app.NotifyGate{Switches: chats}, Clock: clock, Log: log,
+		})
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
 		WithPersonalRecaps(chats).WithSwitches(chats)
 	rosterRepo := pg.NewRosterRepository(pool)
@@ -240,6 +245,7 @@ func run() error {
 		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations, CrossSell: crossSellOffers, Targets: targetSubscriptions,
 		Rosters:                  rosterRepo,
+		Milestones:               milestoneRepo,
 		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 		TeamMatches:              enrichmentRepo,
 		TeamMatchHelpers:         enrichmentRepo,
@@ -319,6 +325,7 @@ func run() error {
 			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
 			telegram.WithQuietHours(telegram.NewEventEvePublisher(telegramClient, chats, texts), chats, clock),
+			telegram.WithQuietHours(telegram.NewMilestonePublisher(telegramClient, chats, texts), chats, clock),
 			telegram.NewSuggestionPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewMiniAppAccessPublisher(telegramClient, chats, texts, metrics),
 		},
@@ -449,7 +456,12 @@ func run() error {
 	// Off the boot path and time-bounded. Run inline, it delayed serving by
 	// as long as the provider took to answer, and the scheduled jobs that
 	// had already started burned their own timeouts waiting behind it.
-	for _, task := range enrichmentBuilt.StartupTasks {
+	// Filling the folded search keys is the same shape of task: off the boot
+	// path, once, and harmless to lose — a name with no key is still
+	// searchable by its spelling.
+	startupTasks := append([]func(ctx context.Context){}, enrichmentBuilt.StartupTasks...)
+	startupTasks = append(startupTasks, (&app.SearchKeyBackfill{Store: rosterRepo, Lock: clusterLock, Log: log}).Run)
+	for _, task := range startupTasks {
 		backgroundJobs.Add(1)
 		go func(task func(ctx context.Context)) {
 			defer backgroundJobs.Done()

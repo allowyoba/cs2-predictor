@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -285,15 +286,21 @@ func (r *CompetitionRepository) SearchTeams(ctx context.Context, query string, l
 	for i, g := range games {
 		codes[i] = string(g)
 	}
+	// Matched on the folded key, not the stored spelling: "спирит" has to
+	// find "Team Spirit" and "ропз" has to find "r0pz". The name is still
+	// tested too, so a row whose key has not been backfilled yet (see
+	// migration 0059) is no worse off than it was before.
+	folded := competition.FoldForSearch(query)
 	rows, err := executor(ctx, r.pool).Query(ctx, `
 		SELECT t.id, t.name, t.external_id, COALESCE(t.location, ''),
 		       COALESCE(t.logo_url, ''), COALESCE(t.hltv_logo_url, ''), COALESCE(t.hltv_location, '')
 		  FROM team t
 		  JOIN game g ON g.id = t.game_id
-		 WHERE t.name ILIKE ('%' || $1 || '%') ESCAPE '\'
+		 WHERE (t.search_key LIKE ('%' || $1 || '%') ESCAPE '\'
+		        OR t.name ILIKE ('%' || $4 || '%') ESCAPE '\')
 		   AND g.code = ANY($3)
-		 ORDER BY t.name ASC
-		 LIMIT $2`, escapeLikePattern(query), limit, codes)
+		 ORDER BY length(t.name), t.name ASC
+		 LIMIT $2`, escapeLikePattern(folded), searchFetchLimit(limit), codes, escapeLikePattern(query))
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +313,39 @@ func (r *CompetitionRepository) SearchTeams(ctx context.Context, query string, l
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rankSearchResults(out, folded, func(t competition.Team) string { return t.Name })
+	return trimTo(out, limit), nil
+}
+
+// searchFetchLimit reads a few more rows than are shown, so ranking has
+// something to choose between: the database orders by length and the ranking
+// below reorders by how closely each name answers the query, and a fetch
+// capped at exactly the display limit would have already discarded the best
+// answer before ranking ever saw it.
+func searchFetchLimit(limit int) int {
+	return min(limit*5, 200)
+}
+
+// rankSearchResults puts the closest answers first — exact, then prefix,
+// then merely containing — keeping the database's length order inside each
+// band. Stable so equally-ranked names stay in the order they came in.
+func rankSearchResults[T any](rows []T, foldedQuery string, name func(T) string) {
+	if foldedQuery == "" {
+		return
+	}
+	sort.SliceStable(rows, func(a, b int) bool {
+		return competition.SearchRank(name(rows[a]), foldedQuery) < competition.SearchRank(name(rows[b]), foldedQuery)
+	})
+}
+
+func trimTo[T any](rows []T, limit int) []T {
+	if len(rows) > limit {
+		return rows[:limit]
+	}
+	return rows
 }
 
 // FillTeamAppearance writes the provider's crest and country for a team, but
@@ -703,13 +742,15 @@ func (r *CompetitionRepository) saveTeam(ctx context.Context, gameID, providerID
 		// stored. Providers are inconsistent about including them, and a
 		// logo that disappears from the Mini App every other sync would
 		// look like a bug in the Mini App.
-		`INSERT INTO team(id, game_id, provider_id, external_id, name, location, logo_url, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), now(), now())
+		`INSERT INTO team(id, game_id, provider_id, external_id, name, location, logo_url, search_key, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, now(), now())
 		 ON CONFLICT (id) DO UPDATE SET name = excluded.name,
 		   location = COALESCE(excluded.location, team.location),
 		   logo_url = COALESCE(excluded.logo_url, team.logo_url),
+		   search_key = excluded.search_key,
 		   updated_at = now()`,
-		t.ID.Value, gameID, providerID, t.ExternalID, t.Name, t.Location, t.LogoURL)
+		t.ID.Value, gameID, providerID, t.ExternalID, t.Name, t.Location, t.LogoURL,
+		competition.SearchKeyBlob(t.Name))
 	return err
 }
 

@@ -301,6 +301,8 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = h.notificationsMenu(ctx, target, userID, locale)
 	case strings.HasPrefix(data, "notify:toggle:"):
 		err = h.toggleNotification(ctx, target, userID, locale, strings.TrimPrefix(data, "notify:toggle:"))
+	case data == "pstats:achievements":
+		err = h.achievementsView(ctx, target, userID, locale)
 	case data == "pstats:insights":
 		err = h.renderPersonalInsights(ctx, target, userID, locale, "", nil)
 	case strings.HasPrefix(data, "pstats:insights:"):
