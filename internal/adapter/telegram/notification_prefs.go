@@ -71,7 +71,7 @@ func (h *UpdateHandler) notificationsMenu(ctx context.Context, target replyTarge
 	for _, kind := range common.PersonalNotificationKinds {
 		rows = append(rows, h.switchRow(locale, personalLabelKey(kind), "notify:toggle:"+string(kind), prefs[string(kind)]))
 	}
-	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:settings")})
+	rows = append(rows, []InlineButton{h.backButton(locale, "hub:settings")})
 
 	text := bold(h.Texts.Get("notify.title", locale)) + "\n\n" + h.Texts.Get("notify.explainer", locale)
 	return h.respond(ctx, target, text, &InlineKeyboard{InlineKeyboard: rows})

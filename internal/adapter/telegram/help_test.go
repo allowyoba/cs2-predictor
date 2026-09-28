@@ -89,7 +89,7 @@ func TestPstatsHelpCallback_RendersAndBacksToPersonalMenu(t *testing.T) {
 	defer srv.Close()
 	handler, _ := newTestHandler(t, srv)
 
-	data := "pstats:help"
+	data := "hub:help"
 	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Any"}, Message: &Message{MessageID: 1, Chat: Chat{ID: 1, Type: "private"}}, Data: &data}
 	if err := handler.handleCallback(context.Background(), cb); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestPstatsHelpCallback_WithHubAccessBacksToHub(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := "pstats:help"
+	data := "hub:help"
 	cb := &CallbackQuery{ID: "cb1", From: User{ID: 1, FirstName: "Any"}, Message: &Message{MessageID: 1, Chat: Chat{ID: 1, Type: "private"}}, Data: &data}
 	if err := handler.handleCallback(context.Background(), cb); err != nil {
 		t.Fatal(err)

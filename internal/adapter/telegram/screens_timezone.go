@@ -104,7 +104,7 @@ func (h *UpdateHandler) userTimezoneView(ctx context.Context, target replyTarget
 		}
 		rows = append(rows, row)
 	}
-	rows = append(rows, []InlineButton{h.backButton(locale, "pstats:settings")})
+	rows = append(rows, []InlineButton{h.backButton(locale, "hub:settings")})
 
 	text := bold(h.Texts.Get("dm.timezone", locale)) + "\n\n" +
 		h.Texts.Get("settings.timezone_current", locale, code(escapeHTML(current))) + "\n\n" +

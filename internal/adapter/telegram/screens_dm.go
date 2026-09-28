@@ -131,8 +131,8 @@ func (h *UpdateHandler) privateStatsMenu(ctx context.Context, target replyTarget
 		// This screen is this person's actual root (no hub exists above
 		// it), so Settings and Help live here rather than nowhere.
 		rows = append(rows,
-			[]InlineButton{button(h.Texts.Get("private.settings", locale), "pstats:settings")},
-			[]InlineButton{button(h.Texts.Get("menu.help", locale), "pstats:help")},
+			[]InlineButton{button(h.Texts.Get("private.settings", locale), "hub:settings")},
+			[]InlineButton{button(h.Texts.Get("menu.help", locale), "hub:help")},
 		)
 	} else {
 		rows = append(rows, []InlineButton{h.backButton(locale, "hub:root")})

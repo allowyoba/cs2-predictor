@@ -48,11 +48,11 @@ func (h *UpdateHandler) modeHub(ctx context.Context, target replyTarget, locale 
 	if managesAnyChat {
 		rows = append(rows, []InlineButton{button(h.Texts.Get("hub.manage", locale), "hub:manage")})
 	}
-	rows = append(rows, []InlineButton{button(h.Texts.Get("private.settings", locale), "pstats:settings")})
+	rows = append(rows, []InlineButton{button(h.Texts.Get("private.settings", locale), "hub:settings")})
 	if isOperator {
 		rows = append(rows, []InlineButton{button(h.Texts.Get("hub.system", locale), "hub:system")})
 	}
-	rows = append(rows, []InlineButton{button(h.Texts.Get("menu.help", locale), "pstats:help")})
+	rows = append(rows, []InlineButton{button(h.Texts.Get("menu.help", locale), "hub:help")})
 	return h.respond(ctx, target, bold(h.Texts.Get("hub.title", locale)), &InlineKeyboard{InlineKeyboard: rows})
 }
 

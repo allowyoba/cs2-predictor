@@ -26,7 +26,7 @@ import (
 func (h *UpdateHandler) suggestionMenu(ctx context.Context, target replyTarget, locale common.LocaleCode) error {
 	if h.Feedback == nil {
 		return h.respond(ctx, target, h.Texts.Get("idea.unavailable", locale),
-			&InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "pstats:settings")}}})
+			&InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "hub:settings")}}})
 	}
 	policy := h.Feedback.Policy
 	text := bold(h.Texts.Get("idea.title", locale)) + "\n\n" +
@@ -34,7 +34,7 @@ func (h *UpdateHandler) suggestionMenu(ctx context.Context, target replyTarget, 
 		italic(h.Texts.Get("idea.limits", locale, policy.MaxRunes, policy.Quota, int(policy.QuotaWindow.Hours())))
 	kb := InlineKeyboard{InlineKeyboard: [][]InlineButton{
 		{button(h.Texts.Get("idea.write", locale), "idea:write")},
-		{h.backButton(locale, "pstats:settings")},
+		{h.backButton(locale, "hub:settings")},
 	}}
 	return h.respond(ctx, target, text, &kb)
 }
@@ -99,7 +99,7 @@ func (h *UpdateHandler) applySuggestionReply(ctx context.Context, msg *Message, 
 	}
 
 	chatID := common.ChatID{Value: msg.Chat.ID}
-	back := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "pstats:settings")}}}
+	back := &InlineKeyboard{InlineKeyboard: [][]InlineButton{{h.backButton(locale, "hub:settings")}}}
 	text := h.suggestionOutcomeText(decision, locale)
 	return h.respond(ctx, sendTarget(chatID, nil), text, back)
 }

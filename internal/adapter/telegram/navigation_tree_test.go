@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -150,4 +151,56 @@ func handledOutsideTheRouteTable(data string) bool {
 		}
 	}
 	return false
+}
+
+// The two hub-level screens were renamed from pstats:* to hub:*, because
+// that is the level they sit at. Every keyboard the bot has already posted
+// still carries the old spelling, and a callback is only ever as good as the
+// message it is attached to — so both forms have to keep working for as long
+// as those messages exist, which is forever.
+func TestNavigationTree_TheOldHubCallbackSpellingsStillWork(t *testing.T) {
+	// Asserting the screen, not merely that something rendered: an unknown
+	// callback here falls through to the personal cabinet, so a lost route
+	// looks like a working button that goes to the wrong place.
+	cases := []struct {
+		legacy string
+		modern string
+	}{
+		{"pstats:settings", "hub:settings"},
+		{"pstats:help", "hub:help"},
+	}
+	for _, c := range cases {
+		want := renderPrivateCallback(t, c.modern)
+		got := renderPrivateCallback(t, c.legacy)
+		if got != want {
+			t.Fatalf("%s no longer opens what %s does.\nold: %q\nnew: %q", c.legacy, c.modern, got, want)
+		}
+	}
+}
+
+// renderPrivateCallback taps one callback in a DM and returns the text it
+// rendered.
+func renderPrivateCallback(t *testing.T, data string) string {
+	t.Helper()
+	server, calls := newRecordingServer(t)
+	defer server.Close()
+	handler, _ := newTestHandler(t, server)
+
+	cb := &CallbackQuery{
+		ID: "cb", From: User{ID: 7, FirstName: "A"},
+		Message: &Message{MessageID: 1, Chat: Chat{ID: 7, Type: "private"}}, Data: &data,
+	}
+	if err := handler.handlePrivateCallback(context.Background(), cb); err != nil {
+		t.Fatalf("%s failed: %v", data, err)
+	}
+	var body strings.Builder
+	for _, call := range *calls {
+		if text, ok := call["text"].(string); ok {
+			body.WriteString(text + "\n")
+		}
+	}
+	if body.Len() == 0 {
+		t.Fatalf("%s rendered nothing", data)
+	}
+	return body.String()
 }

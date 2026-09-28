@@ -129,7 +129,12 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		err = nil
 	case data == "pstats:menu":
 		err = h.privateStatsMenu(ctx, target, userID, locale)
-	case data == "pstats:settings":
+	// Both spellings: these two sit at hub level, so they are named for it,
+	// but keyboards already posted carry the old pstats:* form and have to
+	// keep working. Without the old name they do not fail — they fall
+	// through to the default below and quietly open the cabinet instead,
+	// which is worse than an error.
+	case data == "hub:settings", data == "pstats:settings":
 		err = h.privateSettingsMenu(ctx, target, userID, locale)
 	case data == "hub:root":
 		err = h.startLanding(ctx, target, userID, locale)
@@ -312,7 +317,7 @@ func (h *UpdateHandler) handlePrivateCallback(ctx context.Context, cb *CallbackQ
 		} else {
 			err = h.renderPersonalInsights(ctx, target, userID, locale, game, chatID)
 		}
-	case data == "pstats:help":
+	case data == "hub:help", data == "pstats:help":
 		var back string
 		if back, err = h.personalRootBack(ctx, userID); err == nil {
 			err = h.helpView(ctx, target, locale, back, true)

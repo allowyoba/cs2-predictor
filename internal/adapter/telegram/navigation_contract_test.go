@@ -67,7 +67,7 @@ func navigationScreens() []screenUnderTest {
 			},
 		},
 		{
-			name: "personal timezone", back: "pstats:settings", private: true,
+			name: "personal timezone", back: "hub:settings", private: true,
 			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
 				return h.userTimezoneView(context.Background(), target, common.UserID{Value: 7}, s.Locale)
 			},
@@ -109,7 +109,7 @@ func navigationScreens() []screenUnderTest {
 			},
 		},
 		{
-			name: "ideas", back: "pstats:settings", private: true,
+			name: "ideas", back: "hub:settings", private: true,
 			render: func(t *testing.T, h *UpdateHandler, s chat.Settings, target replyTarget) error {
 				return h.suggestionMenu(context.Background(), target, s.Locale)
 			},
