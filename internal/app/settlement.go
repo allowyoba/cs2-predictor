@@ -36,6 +36,10 @@ type ResultSettlementService struct {
 	audience   common.NotificationAudience
 	chatTitles ChatTitleLookup
 	log        *slog.Logger
+	// milestones congratulates whoever just passed a round number of
+	// exactly-right predictions. Optional: left nil, settlement behaves
+	// exactly as it did before.
+	milestones *MilestoneService
 }
 
 // ChatTitleLookup names a chat for a message sent outside it — a recap
@@ -48,6 +52,13 @@ type ChatTitleLookup func(ctx context.Context, chatID common.ChatID) string
 // test that only cares about settlement) stays untouched.
 func (s *ResultSettlementService) WithRecaps(audience common.NotificationAudience, titles ChatTitleLookup, log *slog.Logger) *ResultSettlementService {
 	s.audience, s.chatTitles, s.log = audience, titles, log
+	return s
+}
+
+// WithMilestones enables the exact-score congratulations, on the same
+// opt-in terms as WithRecaps.
+func (s *ResultSettlementService) WithMilestones(milestones *MilestoneService) *ResultSettlementService {
+	s.milestones = milestones
 	return s
 }
 
@@ -117,6 +128,10 @@ func (s *ResultSettlementService) settleOne(ctx context.Context, event competiti
 	if err != nil {
 		return err
 	}
+	// Captured before the cut below: the standings are trimmed to the top
+	// five for the message, and somebody sixth can still have just passed a
+	// milestone worth naming them for.
+	names := displayNames(after)
 	if len(after) > 5 {
 		after = after[:5]
 	}
@@ -161,6 +176,10 @@ func (s *ResultSettlementService) settleOne(ctx context.Context, event competiti
 	if err := s.enqueueRecaps(ctx, poll, match, event, hash, deltas); err != nil {
 		return err
 	}
+	// Inside the same transaction as the awards that caused it: a
+	// congratulation for a settlement that rolled back would be a
+	// congratulation for predictions nobody has.
+	s.milestones.Record(ctx, poll.ChatID, names, awards)
 	return s.settlements.MarkSettled(ctx, poll.ID, hash, s.clock.Now())
 }
 
@@ -244,4 +263,14 @@ func (s *ResultSettlementService) logf(msg string, args ...any) {
 	if s.log != nil {
 		s.log.Warn(msg, args...)
 	}
+}
+
+// displayNames indexes a leaderboard by user, so a message about one person
+// can name them without a lookup of its own.
+func displayNames(standings []scoring.UserStanding) map[common.UserID]string {
+	names := make(map[common.UserID]string, len(standings))
+	for _, st := range standings {
+		names[st.UserID] = st.DisplayName
+	}
+	return names
 }

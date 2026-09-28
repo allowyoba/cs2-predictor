@@ -191,8 +191,13 @@ func run() error {
 		}
 		return settings.Title
 	}
+	milestoneRepo := pg.NewMilestoneRepository(pool)
 	settlement := app.NewResultSettlementService(predictionsRepo, scoringRepo, settlementRepo, scoringService, outbox, clock, runTx).
-		WithRecaps(chats, chatTitle, log)
+		WithRecaps(chats, chatTitle, log).
+		WithMilestones(&app.MilestoneService{
+			Milestones: milestoneRepo, Outbox: outbox,
+			Gate: app.NotifyGate{Switches: chats}, Clock: clock, Log: log,
+		})
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
 		WithPersonalRecaps(chats).WithSwitches(chats)
 	rosterRepo := pg.NewRosterRepository(pool)
@@ -240,6 +245,7 @@ func run() error {
 		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations, CrossSell: crossSellOffers, Targets: targetSubscriptions,
 		Rosters:                  rosterRepo,
+		Milestones:               milestoneRepo,
 		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 		TeamMatches:              enrichmentRepo,
 		TeamMatchHelpers:         enrichmentRepo,
@@ -319,6 +325,7 @@ func run() error {
 			telegram.NewTeamMatchOperatorPingPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewAdminAlertPublisher(telegramClient, chats, texts, metrics),
 			telegram.WithQuietHours(telegram.NewEventEvePublisher(telegramClient, chats, texts), chats, clock),
+			telegram.WithQuietHours(telegram.NewMilestonePublisher(telegramClient, chats, texts), chats, clock),
 			telegram.NewSuggestionPublisher(telegramClient, chats, texts, metrics),
 			telegram.NewMiniAppAccessPublisher(telegramClient, chats, texts, metrics),
 		},

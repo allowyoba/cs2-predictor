@@ -44,6 +44,9 @@ const (
 	ChatNotifyNewEvents ChatNotificationKind = "new_events"
 	// ChatNotifyStreams is the broadcast link a closing poll can post.
 	ChatNotifyStreams ChatNotificationKind = "streams"
+	// ChatNotifyMilestones is the congratulation when somebody in the room
+	// passes a round number of exactly-right predictions.
+	ChatNotifyMilestones ChatNotificationKind = "milestones"
 	// ChatNotifyTargetCrossSell is the one-tap "this team/player you
 	// follow is playing in a tournament you're not subscribed to yet"
 	// offer. Reuses this same switchboard rather than a parallel
@@ -59,6 +62,7 @@ var ChatNotificationKinds = []ChatNotificationKind{
 	ChatNotifyEventFinished,
 	ChatNotifyDigests,
 	ChatNotifyStreams,
+	ChatNotifyMilestones,
 	ChatNotifyTargetCrossSell,
 }
 

@@ -112,6 +112,10 @@ type UpdateHandler struct {
 	// id has to resolve. Nil leaves the player half off — the team half needs
 	// nothing from it.
 	Rosters competition.RosterRepository
+	// Milestones backs the achievements shelf in the personal cabinet. Nil
+	// leaves the screen saying there is nothing yet, which is also what it
+	// says before anybody has earned one.
+	Milestones scoring.MilestoneRepository
 	// InboundLimiter caps how often a single Telegram user may trigger the
 	// bot to do any work at all — a lightweight defense against one account
 	// flooding the bot with commands or callback taps. Nil disables

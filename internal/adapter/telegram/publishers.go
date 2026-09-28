@@ -1017,3 +1017,62 @@ func (p *EventEvePublisher) Publish(ctx context.Context, message common.OutboxMe
 
 	return sendToChat(ctx, p.client, p.chats, msgPayload)
 }
+
+// MilestonePublisher publishes the "telegram.milestone" outbox event type:
+// somebody in this room has just passed a round number of exactly-right
+// predictions.
+//
+// The message leads with the number and then says what it took — how many
+// predictions, across how many tournaments, over how long. A bare "100!"
+// carries no information the leaderboard does not already show; the effort
+// behind it is the part worth reading.
+type MilestonePublisher struct {
+	client *Client
+	chats  chat.Repository
+	texts  *Texts
+}
+
+func NewMilestonePublisher(client *Client, chats chat.Repository, texts *Texts) *MilestonePublisher {
+	return &MilestonePublisher{client: client, chats: chats, texts: texts}
+}
+
+func (p *MilestonePublisher) Supports(eventType string) bool {
+	return eventType == "telegram.milestone"
+}
+
+func (p *MilestonePublisher) Publish(ctx context.Context, message common.OutboxMessage) error {
+	var n common.MilestoneNotification
+	if err := json.Unmarshal([]byte(message.Payload), &n); err != nil {
+		return err
+	}
+	locale := resolveLocale(ctx, p.chats, common.ChatID{Value: n.ChatID})
+	payload := map[string]any{
+		"chat_id": n.ChatID, "text": milestoneText(p.texts, locale, n), "parse_mode": "HTML",
+	}
+	return sendDigest(ctx, p.client, payload)
+}
+
+// milestoneText builds the congratulation, leaving out whatever is not known
+// rather than printing a zero: a first milestone has no previous stretch to
+// compare against, and a chat with no recorded start has no span.
+func milestoneText(texts *Texts, locale common.LocaleCode, n common.MilestoneNotification) string {
+	lines := []string{texts.Get("milestone.headline", locale, escapeHTML(n.DisplayName), n.Milestone)}
+
+	var facts []string
+	if n.Predictions > 0 {
+		facts = append(facts, texts.Get("milestone.of_predictions", locale, n.Predictions, n.AccuracyPercent))
+	}
+	if n.Events > 0 {
+		facts = append(facts, texts.Get("milestone.across_events", locale, n.Events))
+	}
+	if n.Days > 0 {
+		facts = append(facts, texts.Get("milestone.over_days", locale, n.Days))
+	}
+	if len(facts) > 0 {
+		lines = append(lines, "", strings.Join(facts, "\n"))
+	}
+	if n.DaysSincePrevious > 0 {
+		lines = append(lines, "", texts.Get("milestone.since_previous", locale, n.DaysSincePrevious))
+	}
+	return strings.Join(lines, "\n")
+}

@@ -4678,3 +4678,144 @@ func TestSearch_FindsNamesTheWayPeopleTypeThem(t *testing.T) {
 		t.Fatalf("after backfill the folded search must work, got %+v (%v)", found, err)
 	}
 }
+
+// TestMilestoneRepository_ClaimsOnceAndReportsWhatItTook covers the two
+// halves against real SQL: the claim that makes a congratulation happen
+// exactly once, and the journey figures the congratulation quotes.
+func TestMilestoneRepository_ClaimsOnceAndReportsWhatItTook(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+	milestones := pg.NewMilestoneRepository(pool)
+
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	chatID := common.ChatID{Value: -330011}
+	other := common.ChatID{Value: -330012}
+	for _, c := range []common.ChatID{chatID, other} {
+		if _, err := chats.Save(ctx, chat.Settings{ChatID: c, Title: "Milestone chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	voter := common.UserID{Value: 4242}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	var options []prediction.Option
+	for i, s := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: s})
+	}
+
+	// Two tournaments, so the "across N tournaments" figure has something to
+	// count; three predictions, two of them exactly right.
+	seed := func(c common.ChatID, eventName, external string, at time.Time, exact bool) {
+		event := competition.Event{
+			ID: common.NewEventID(), Game: competition.GameCS2, Name: eventName,
+			ExternalID: "ms-" + external, Status: competition.EventRunning, StartsAt: &at, Provider: "PANDASCORE",
+		}
+		if _, err := catalog.SaveEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+		score := competition.MatchScore{First: 2, Second: 0}
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: "ms-m-" + external,
+			ScheduledAt: &at, ActualStartedAt: &at, Status: competition.MatchFinished,
+			Format: format, Score: &score,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		telegramPollID := "ms-poll-" + external
+		saved, err := predictions.SavePoll(ctx, prediction.Poll{
+			ID: common.NewPollID(), ChatID: c, MatchID: match.ID, TelegramPollID: &telegramPollID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: at,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{
+			PollID: saved.ID, UserID: voter, OptionIndex: 0, DisplayName: "Alex", VotedAt: at.Add(-time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if exact {
+			if err := scoringRepo.ReplaceAwards(ctx, saved.ID, []scoring.Award{{
+				PollID: saved.ID, UserID: voter, Points: 3, Kind: scoring.AwardExactScore, AwardedAt: at,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	seed(chatID, "First Cup", "a", now.Add(-72*time.Hour), true)
+	seed(chatID, "Second Cup", "b", now.Add(-48*time.Hour), true)
+	seed(chatID, "Second Cup Again", "c", now.Add(-24*time.Hour), false)
+	// Another chat's exact score counts for the person, not for this chat.
+	seed(other, "Elsewhere", "d", now.Add(-12*time.Hour), true)
+
+	inChat, err := milestones.ExactCount(ctx, chatID, voter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inChat != 2 {
+		t.Fatalf("exact count in this chat = %d, want 2 (the other chat's must not leak in)", inChat)
+	}
+	total, err := milestones.UserExactTotal(ctx, voter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 {
+		t.Fatalf("exact total across chats = %d, want 3", total)
+	}
+
+	journey, err := milestones.MilestoneJourney(ctx, chatID, voter, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journey.Predictions != 3 {
+		t.Fatalf("predictions = %d, want the 3 finished ones in this chat", journey.Predictions)
+	}
+	if journey.Events != 3 {
+		t.Fatalf("tournaments = %d, want 3", journey.Events)
+	}
+	if journey.FirstPredictionAt.IsZero() {
+		t.Fatal("the journey has no start, so the congratulation can say nothing about how long it took")
+	}
+	if !journey.PreviousMilestoneAt.IsZero() {
+		t.Fatal("there is no earlier milestone yet")
+	}
+
+	// The claim: once per (chat, person, milestone), and per chat.
+	claimed, err := milestones.ClaimMilestone(ctx, chatID, voter, 10, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claimed {
+		t.Fatal("expected the first claim to win")
+	}
+	again, err := milestones.ClaimMilestone(ctx, chatID, voter, 10, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again {
+		t.Fatal("a second claim must lose — this is what stops the congratulation repeating")
+	}
+	if elsewhere, err := milestones.ClaimMilestone(ctx, other, voter, 10, now); err != nil || !elsewhere {
+		t.Fatalf("the same milestone in another chat is its own moment, got %v (%v)", elsewhere, err)
+	}
+
+	// With one on record, the next milestone's journey can date the last leg.
+	next, err := milestones.MilestoneJourney(ctx, chatID, voter, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.PreviousMilestoneAt.Equal(now) {
+		t.Fatalf("previous milestone = %v, want %v", next.PreviousMilestoneAt, now)
+	}
+
+	shelf, err := milestones.UserMilestones(ctx, voter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shelf) != 2 {
+		t.Fatalf("the shelf spans every chat, got %+v", shelf)
+	}
+}
