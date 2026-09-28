@@ -294,6 +294,10 @@ func (m fakeMembership) Role(context.Context, common.ChatID, common.UserID) (cha
 
 type fakeCatalog struct{}
 
+func (fakeCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (fakeCatalog) SearchTeams(context.Context, string, int, []competition.GameCode) ([]competition.Team, error) {
 	return nil, nil
 }

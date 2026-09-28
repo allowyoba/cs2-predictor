@@ -36,6 +36,10 @@ type fakeSyncCatalog struct {
 func newFakeSyncCatalog() *fakeSyncCatalog {
 	return &fakeSyncCatalog{events: map[common.EventID]competition.Event{}, matches: map[common.MatchID]competition.Match{}}
 }
+func (f *fakeSyncCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (f *fakeSyncCatalog) SearchTeams(context.Context, string, int, []competition.GameCode) ([]competition.Team, error) {
 	return nil, nil
 }
@@ -200,10 +204,19 @@ func newTestSync(t *testing.T, provider *fixedProvider, catalog *fakeSyncCatalog
 	if err != nil {
 		t.Fatal(err)
 	}
+	clock := common.SystemUTCClock()
 	return &CompetitionSynchronization{
 		Switches: allNotificationsOn{},
 		Gateway:  gw, Catalog: catalog, Subscriptions: subs, Chats: chats, ActiveChats: chats, Outbox: outbox,
-		Lock: fakeClusterLock{}, Clock: common.SystemUTCClock(), Metrics: newTestMetrics(), Log: slog.Default(),
+		// The announcement's decision lives in EventOfferReconciler now, so
+		// DiscoverEvents cannot announce anything without it wired — the
+		// same one main.go builds, minus the schedule.
+		EventOffers: &EventOfferReconciler{
+			Chats: chats, Catalog: catalog, Subscriptions: subs, Offers: newOfferStore(),
+			Outbox: outbox, Switches: allNotificationsOn{}, Lock: fakeClusterLock{}, Clock: clock,
+			Log: slog.Default(),
+		},
+		Lock: fakeClusterLock{}, Clock: clock, Metrics: newTestMetrics(), Log: slog.Default(),
 	}
 }
 

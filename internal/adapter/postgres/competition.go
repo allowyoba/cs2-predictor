@@ -309,6 +309,50 @@ func (r *CompetitionRepository) SearchTeams(ctx context.Context, query string, l
 	return out, rows.Err()
 }
 
+// FillTeamAppearance writes the provider's crest and country for a team, but
+// only into columns that are still empty.
+//
+// The roster sync brings these from the provider's full team object, which
+// carries a crest in plenty of cases where the opponent object nested inside
+// a match does not — 71 of the 100 teams most recently in play had a country
+// stored and no picture at all. COALESCE rather than assignment because this
+// is filling a gap, not taking over the column: a crest already stored (from
+// a match payload that did have one) is the one chats have been seeing.
+func (r *CompetitionRepository) FillTeamAppearance(ctx context.Context, teamID common.TeamID, logoURL, location string) error {
+	if logoURL == "" && location == "" {
+		return nil
+	}
+	_, err := executor(ctx, r.pool).Exec(ctx,
+		`UPDATE team
+		    SET logo_url = COALESCE(logo_url, NULLIF($2, '')),
+		        location = COALESCE(location, NULLIF($3, '')),
+		        updated_at = now()
+		  WHERE id = $1
+		    AND (logo_url IS NULL AND NULLIF($2, '') IS NOT NULL
+		      OR location IS NULL AND NULLIF($3, '') IS NOT NULL)`,
+		teamID.Value, logoURL, location)
+	return err
+}
+
+// FindTeam resolves one team by id — the read a callback carrying only an id
+// needs, in place of paging SearchTeams("") per game and hoping the team was
+// on one of the pages.
+func (r *CompetitionRepository) FindTeam(ctx context.Context, id common.TeamID) (*competition.Team, error) {
+	var t competition.Team
+	err := executor(ctx, r.pool).QueryRow(ctx, `
+		SELECT t.id, t.name, t.external_id, COALESCE(t.location, ''),
+		       COALESCE(t.logo_url, ''), COALESCE(t.hltv_logo_url, ''), COALESCE(t.hltv_location, '')
+		  FROM team t WHERE t.id = $1`, id.Value).
+		Scan(&t.ID.Value, &t.Name, &t.ExternalID, &t.Location, &t.LogoURL, &t.HLTVLogoURL, &t.HLTVLocation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 // FindEvents batch-fetches events by id in one round trip (see the Catalog
 // doc comment for why: avoids an N+1 query pattern in list renderers).
 func (r *CompetitionRepository) FindEvents(ctx context.Context, ids []common.EventID) ([]competition.Event, error) {

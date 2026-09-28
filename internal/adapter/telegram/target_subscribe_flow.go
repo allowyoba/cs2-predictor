@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 
 	"cs2predictor/internal/domain/chat"
-	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/subscription"
 	"cs2predictor/internal/platform/common"
 )
@@ -35,6 +34,7 @@ const maxTargetSearchResults = 20
 func (h *UpdateHandler) targetsMenu(ctx context.Context, target replyTarget, settings chat.Settings) error {
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("targets.follow_team", settings.Locale), "targets:search")},
+		{button(h.Texts.Get("targets.follow_player", settings.Locale), "targets:psearch")},
 		{button(h.Texts.Get("targets.mine", settings.Locale), "targets:mine")},
 		{h.backButton(settings.Locale, "menu:events")},
 	}
@@ -173,23 +173,18 @@ func (h *UpdateHandler) subscribeTarget(ctx context.Context, cb *CallbackQuery, 
 }
 
 // resolveTeamName looks a team up by id for its display name: the callback
-// only carries the id, so a fresh tap needs one lookup. There is no
-// "team by id" read on the catalog, so this reuses SearchTeams("") per game;
-// falls back to the id itself if nothing matches, rather than failing the
-// subscription over a cosmetic name.
+// only carries the id, so a fresh tap needs one lookup. Falls back to the id
+// itself if the team is gone, rather than failing the subscription over a
+// cosmetic name.
 func (h *UpdateHandler) resolveTeamName(ctx context.Context, teamID common.TeamID) (string, error) {
-	for _, game := range []competition.GameCode{competition.GameCS2, competition.GameDota2} {
-		teams, err := h.Catalog.SearchTeams(ctx, "", 1000, []competition.GameCode{game})
-		if err != nil {
-			return "", err
-		}
-		for _, t := range teams {
-			if t.ID == teamID {
-				return t.Name, nil
-			}
-		}
+	team, err := h.Catalog.FindTeam(ctx, teamID)
+	if err != nil {
+		return "", err
 	}
-	return teamID.Value.String(), nil
+	if team == nil {
+		return teamID.Value.String(), nil
+	}
+	return team.Name, nil
 }
 
 // targetsMine lists the chat's active team follows with an unsubscribe
@@ -203,19 +198,37 @@ func (h *UpdateHandler) targetsMine(ctx context.Context, target replyTarget, set
 	if err != nil {
 		return err
 	}
+	// Teams and players under their own headings rather than one flat list:
+	// they are followed for different reasons, and a bare list of names gives
+	// no way to tell an organisation from a person.
 	var rows [][]InlineButton
-	for _, s := range subs {
-		if s.Kind != subscription.TargetTeam || !s.Active {
+	for _, section := range []struct {
+		kind     subscription.TargetKind
+		heading  string
+		callback func(string) string
+	}{
+		{subscription.TargetTeam, "targets.section_teams", cbTargetUnsubscribe},
+		{subscription.TargetPlayer, "targets.section_players", cbPlayerUnsubscribe},
+	} {
+		var body [][]InlineButton
+		for _, s := range subs {
+			if s.Kind != section.kind || !s.Active {
+				continue
+			}
+			name := s.TargetName
+			if name == "" {
+				name = s.TargetID
+			}
+			body = append(body, []InlineButton{
+				button(truncate(name, 40), "noop"),
+				button(h.Texts.Get("targets.unfollow", settings.Locale), section.callback(s.TargetID)),
+			})
+		}
+		if len(body) == 0 {
 			continue
 		}
-		name := s.TargetName
-		if name == "" {
-			name = s.TargetID
-		}
-		rows = append(rows, []InlineButton{
-			button(truncate(name, 40), "noop"),
-			button(h.Texts.Get("targets.unfollow", settings.Locale), cbTargetUnsubscribe(s.TargetID)),
-		})
+		rows = append(rows, []InlineButton{button(h.Texts.Get(section.heading, settings.Locale), "noop")})
+		rows = append(rows, body...)
 	}
 	rows = append(rows, []InlineButton{h.backButton(settings.Locale, "menu:targets")})
 	body := h.Texts.Get("targets.empty", settings.Locale)

@@ -68,3 +68,31 @@ type matchDTO struct {
 	Forfeit       bool          `json:"forfeit"`
 	StreamsList   []streamDTO   `json:"streams_list"`
 }
+
+// playerDTO is PandaScore's player object as its own docs sample it (see
+// the /players response example): "name" is the nickname the scene uses, and
+// first/last name are the real one, often null.
+type playerDTO struct {
+	ID          int64   `json:"id"`
+	Name        string  `json:"name"`
+	FirstName   *string `json:"first_name"`
+	LastName    *string `json:"last_name"`
+	Nationality *string `json:"nationality"`
+	ImageURL    *string `json:"image_url"`
+	Role        *string `json:"role"`
+}
+
+// teamRosterDTO is the team object trimmed to what a roster sync needs. The
+// team endpoints return "players" inline, so a roster costs no separate
+// request per player.
+type teamRosterDTO struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// ImageURL and Location come free with the roster, and the team
+	// endpoints answer with them far more reliably than the opponent object
+	// nested in a match does — which is why most teams in play had a country
+	// stored and no crest at all.
+	ImageURL string      `json:"image_url"`
+	Location string      `json:"location"`
+	Players  []playerDTO `json:"players"`
+}

@@ -49,6 +49,12 @@ type Catalog interface {
 	// SearchEvents), for the team-follow subscribe flow's search-then-pick
 	// step.
 	SearchTeams(ctx context.Context, query string, limit int, games []GameCode) ([]Team, error)
+	// FindTeam resolves one team by id, returning (nil, nil) when there is
+	// none. A callback only carries an id, so a fresh tap needs this — before
+	// it existed, the only way to get a team's name back was to page through
+	// SearchTeams("") per game, which silently started returning the raw id
+	// once a game passed the page size.
+	FindTeam(ctx context.Context, id common.TeamID) (*Team, error)
 	FindEvent(ctx context.Context, id common.EventID) (*Event, error)
 	// FindEvents batch-fetches events by id in a single round trip — used to
 	// avoid an N+1 query pattern when rendering a list backed by several

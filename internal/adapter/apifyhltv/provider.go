@@ -91,6 +91,17 @@ const (
 	// examined when looking for one to adopt — two rankings a week means a
 	// handful at most, even counting retries.
 	adoptScanLimit = 10
+	// runPatience is how long a run we started may stay READY/RUNNING before
+	// this adapter stops waiting on it.
+	//
+	// Without a bound, a run wedged in RUNNING stalls its source forever and
+	// in total silence: every tick returns ErrFetchPending, which records
+	// neither a success nor a failure, so nothing is ever logged, no alert
+	// fires, and the only trace is a last-success timestamp drifting further
+	// into the past. Six hours is far beyond any honest run of this actor
+	// (they finish in minutes) while still leaving the same week's retry
+	// budget somewhere to go.
+	runPatience = 6 * time.Hour
 )
 
 // Apify run statuses this adapter reasons about. READY/RUNNING mean "come
@@ -226,6 +237,28 @@ type runInfo struct {
 
 func (r runInfo) inFlight() bool { return r.Status == statusReady || r.Status == statusRunning }
 
+// outOfPatience reports whether a run we started has been in flight longer
+// than runPatience. An unset StartedAt (a row written before this existed)
+// counts as not yet out of patience rather than instantly abandoned — the
+// next run this adapter starts will stamp it.
+func (p *Provider) outOfPatience(state *enrichment.ProviderRun) bool {
+	if state == nil || state.StartedAt.IsZero() {
+		return false
+	}
+	return p.clock.Now().UTC().Sub(state.StartedAt.UTC()) > runPatience
+}
+
+// forgetRun drops the in-flight run's id while keeping this period's attempt
+// count, so abandoning a stalled run frees the next tick to try again without
+// handing it a fresh weekly budget.
+func (p *Provider) forgetRun(ctx context.Context, state *enrichment.ProviderRun) error {
+	return p.runs.SaveRun(ctx, enrichment.ProviderRun{
+		Provider: p.config.Source, Key: p.config.RankingType, RunID: "",
+		Status: enrichment.RunStatusAbandoned, Attempts: state.Attempts,
+		PeriodStart: state.PeriodStart, StartedAt: state.StartedAt,
+	})
+}
+
 // FetchRankings implements enrichment.RankingProvider. Neither of the
 // actor's two ranking modes carries a regional breakdown, so
 // RegionalRank/Region stay zero — same as any RankedTeam field a source
@@ -308,7 +341,19 @@ func (p *Provider) collectStartedRun(ctx context.Context, runID string, state *e
 	}
 	switch {
 	case run.inFlight():
-		return nil, true, enrichment.ErrFetchPending
+		if !p.outOfPatience(state) {
+			return nil, true, enrichment.ErrFetchPending
+		}
+		// A run this old is not coming back. Forget its id so the next tick
+		// can make another attempt (inside the same weekly budget — attempts
+		// and period are kept), and report it as a real error rather than
+		// yet another silent "pending": a stalled source has to be visible
+		// before anybody can fix it.
+		if err := p.forgetRun(ctx, state); err != nil {
+			return nil, true, err
+		}
+		return nil, true, fmt.Errorf("apify %s ranking: run %s still %s after %s, abandoned it",
+			p.config.RankingType, runID, run.Status, runPatience)
 	case run.Status == statusSucceeded:
 		teams, err := p.readRunOutput(ctx, run)
 		if err != nil {

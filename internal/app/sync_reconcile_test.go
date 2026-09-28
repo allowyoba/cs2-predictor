@@ -18,6 +18,10 @@ type reconcileCatalog struct {
 	events map[common.EventID]competition.Event
 }
 
+func (c *reconcileCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (c *reconcileCatalog) FindEvent(_ context.Context, id common.EventID) (*competition.Event, error) {
 	if e, ok := c.events[id]; ok {
 		return &e, nil

@@ -94,6 +94,18 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("targets:unsub:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.unsubscribeTarget(ctx, cb, target, settings, strings.TrimPrefix(data, "targets:unsub:"))
 	}},
+	{match: exact("targets:psearch"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return false, h.requestPlayerSearch(ctx, cb, settings)
+	}},
+	// Before targets:sub:/targets:unsub: would be reached by a prefix test,
+	// these two have their own prefixes — "psub"/"punsub" share no prefix
+	// with them, so the order here is documentation rather than load-bearing.
+	{match: prefixed("targets:psub:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.subscribePlayer(ctx, cb, target, settings, strings.TrimPrefix(data, "targets:psub:"))
+	}},
+	{match: prefixed("targets:punsub:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		return h.unsubscribePlayer(ctx, cb, target, settings, strings.TrimPrefix(data, "targets:punsub:"))
+	}},
 	{match: exact("events:add"), guard: guardManager, handle: simple((*UpdateHandler).eventAddMenu)},
 	{match: exact("events:search"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return false, h.requestEventSearch(ctx, cb, settings)

@@ -303,3 +303,42 @@ func mapStreams(dtos []streamDTO) []competition.Stream {
 	}
 	return out
 }
+
+// mapRoster turns one team object's inline players into a provider roster.
+// Position is the order PandaScore listed them in: it publishes no explicit
+// ordering, and the listed order is at least stable between reads, which is
+// all a roster display needs.
+func mapRoster(dto teamRosterDTO) competition.ProviderRoster {
+	roster := competition.ProviderRoster{
+		ExternalTeamID: strconv.FormatInt(dto.ID, 10),
+		LogoURL:        strings.TrimSpace(dto.ImageURL),
+		Location:       strings.ToUpper(strings.TrimSpace(dto.Location)),
+	}
+	for _, player := range dto.Players {
+		if strings.TrimSpace(player.Name) == "" {
+			// A player with no nickname cannot be searched for or followed,
+			// and the nickname is what identifies them across feeds.
+			continue
+		}
+		roster.Players = append(roster.Players, competition.ProviderPlayer{
+			ExternalID:  strconv.FormatInt(player.ID, 10),
+			Nickname:    strings.TrimSpace(player.Name),
+			FullName:    fullName(player),
+			Nationality: derefString(player.Nationality),
+			ImageURL:    derefString(player.ImageURL),
+			Role:        derefString(player.Role),
+		})
+	}
+	return roster
+}
+
+func fullName(player playerDTO) string {
+	return strings.TrimSpace(strings.Join(strings.Fields(derefString(player.FirstName)+" "+derefString(player.LastName)), " "))
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}

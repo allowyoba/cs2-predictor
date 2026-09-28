@@ -61,21 +61,26 @@ func (r *TargetSubscriptionRepository) TargetSubscriptions(ctx context.Context, 
 	return out, rows.Err()
 }
 
-func (r *TargetSubscriptionRepository) ChatsForTarget(ctx context.Context, kind subscription.TargetKind, targetID string) ([]common.ChatID, error) {
+func (r *TargetSubscriptionRepository) SubscribersOf(ctx context.Context, kind subscription.TargetKind, targetID string) ([]subscription.TargetSubscription, error) {
 	rows, err := executor(ctx, r.pool).Query(ctx,
-		`SELECT chat_id FROM target_subscription WHERE kind = $1 AND target_id = $2 AND active = true`,
+		`SELECT chat_id, kind, target_id, target_name, subscribed_at, active
+		   FROM target_subscription WHERE kind = $1 AND target_id = $2 AND active = true`,
 		string(kind), targetID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []common.ChatID
+	var out []subscription.TargetSubscription
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var s subscription.TargetSubscription
+		var chatVal int64
+		var kindVal string
+		if err := rows.Scan(&chatVal, &kindVal, &s.TargetID, &s.TargetName, &s.SubscribedAt, &s.Active); err != nil {
 			return nil, err
 		}
-		out = append(out, common.ChatID{Value: id})
+		s.ChatID = common.ChatID{Value: chatVal}
+		s.Kind = subscription.TargetKind(kindVal)
+		out = append(out, s)
 	}
 	return out, rows.Err()
 }

@@ -26,6 +26,15 @@ type TeamID struct{ Value uuid.UUID }
 
 func NewTeamID() TeamID { return TeamID{Value: uuid.New()} }
 
+// PlayerID identifies a player. Its own id rather than a provider's,
+// because a player is one person across two feeds that name them
+// differently — PandaScore by a numeric id, HLTV by a nickname on a roster —
+// and the whole point of resolving them is that neither feed's key can be
+// the canonical one.
+type PlayerID struct{ Value uuid.UUID }
+
+func NewPlayerID() PlayerID { return PlayerID{Value: uuid.New()} }
+
 // PollID identifies a prediction poll.
 type PollID struct{ Value uuid.UUID }
 

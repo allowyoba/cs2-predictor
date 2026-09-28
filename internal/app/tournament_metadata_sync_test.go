@@ -20,6 +20,10 @@ type fakeTournamentCatalog struct {
 	err    error
 }
 
+func (f *fakeTournamentCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (f *fakeTournamentCatalog) SearchTeams(context.Context, string, int, []competition.GameCode) ([]competition.Team, error) {
 	return nil, nil
 }

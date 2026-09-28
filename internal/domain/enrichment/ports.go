@@ -223,6 +223,14 @@ type ProviderRun struct {
 // otherwise permanently convince the paid one it has already run).
 const RunStatusCollected = "COLLECTED"
 
+// RunStatusAbandoned marks a period whose run was given up on: it stayed
+// in flight so long that waiting on it had become indistinguishable from the
+// source being dead. The attempt still counts against the period's budget —
+// the run was paid for — but the id is cleared, so the next tick is free to
+// start another instead of re-polling something that is never going to
+// finish.
+const RunStatusAbandoned = "ABANDONED"
+
 // ProviderRunRepository persists ProviderRun. Keyed on (Provider, Key).
 type ProviderRunRepository interface {
 	SaveRun(ctx context.Context, run ProviderRun) error
