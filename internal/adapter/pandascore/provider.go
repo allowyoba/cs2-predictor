@@ -416,7 +416,15 @@ func (p *Provider) Rosters(ctx context.Context, game competition.GameCode, exter
 	g.SetLimit(concurrency)
 	for i, batch := range batches {
 		g.Go(func() error {
-			path := spec.endpoint("/"+spec.pathPrefix+"/teams", "filter[id]="+strings.Join(batch, ","))
+			// Deliberately not spec.endpoint: that prepends the game's
+			// videogame_title filter, which /{game}/teams rejects outright
+			// ("Provided attributes do not exist for this resource", HTTP
+			// 400) — so every Counter-Strike roster request failed while
+			// Dota 2, which has no such filter, worked. The path prefix
+			// already scopes the request to one game; the filter exists to
+			// separate CS:GO from CS2 among matches and tournaments, and a
+			// team belongs to neither era in particular.
+			path := "/" + spec.pathPrefix + "/teams?filter[id]=" + strings.Join(batch, ",")
 			dtos, err := fetchPages[teamRosterDTO](ctx, p, path, -1)
 			if err != nil {
 				return err
