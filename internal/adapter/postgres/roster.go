@@ -44,9 +44,10 @@ func (r *RosterRepository) SavePlayer(ctx context.Context, game competition.Game
 	case errors.Is(err, pgx.ErrNoRows):
 		id = common.NewPlayerID()
 		if _, err := ex.Exec(ctx,
-			`INSERT INTO player(id, game_id, nickname, full_name, nationality, image_url)
-			 VALUES ($1, (SELECT id FROM game WHERE code = $2), $3, $4, $5, $6)`,
-			id.Value, string(game), player.Nickname, player.FullName, player.Nationality, player.ImageURL); err != nil {
+			`INSERT INTO player(id, game_id, nickname, full_name, nationality, image_url, search_key)
+			 VALUES ($1, (SELECT id FROM game WHERE code = $2), $3, $4, $5, $6, $7)`,
+			id.Value, string(game), player.Nickname, player.FullName, player.Nationality, player.ImageURL,
+			playerSearchKey(player)); err != nil {
 			return competition.Player{}, err
 		}
 		if _, err := ex.Exec(ctx,
@@ -60,9 +61,11 @@ func (r *RosterRepository) SavePlayer(ctx context.Context, game competition.Game
 		return competition.Player{}, err
 	default:
 		if _, err := ex.Exec(ctx,
-			`UPDATE player SET nickname = $2, full_name = $3, nationality = $4, image_url = $5, updated_at = now()
+			`UPDATE player SET nickname = $2, full_name = $3, nationality = $4, image_url = $5,
+			        search_key = $6, updated_at = now()
 			  WHERE id = $1`,
-			id.Value, player.Nickname, player.FullName, player.Nationality, player.ImageURL); err != nil {
+			id.Value, player.Nickname, player.FullName, player.Nationality, player.ImageURL,
+			playerSearchKey(player)); err != nil {
 			return competition.Player{}, err
 		}
 	}
@@ -180,11 +183,16 @@ func (r *RosterRepository) SearchPlayers(ctx context.Context, query string, limi
 	for i, g := range games {
 		codes[i] = string(g)
 	}
+	// Same fold as the team search: a nickname written "r0pz" has to be
+	// found by "ропз", and the real name is searchable too, because half the
+	// time people know the person and not the handle.
+	folded := competition.FoldForSearch(query)
 	rows, err := executor(ctx, r.pool).Query(ctx, playerSelect+`
-		 WHERE p.nickname ILIKE ('%' || $1 || '%') ESCAPE '\'
+		 WHERE (p.search_key LIKE ('%' || $1 || '%') ESCAPE '\'
+		        OR p.nickname ILIKE ('%' || $4 || '%') ESCAPE '\')
 		   AND g.code = ANY($3)
 		 ORDER BY length(p.nickname), p.nickname LIMIT $2`,
-		escapeLikePattern(query), limit, codes)
+		escapeLikePattern(folded), searchFetchLimit(limit), codes, escapeLikePattern(query))
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +205,21 @@ func (r *RosterRepository) SearchPlayers(ctx context.Context, query string, limi
 		}
 		out = append(out, player)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rankSearchResults(out, folded, func(p competition.Player) string { return p.Nickname })
+	return trimTo(out, limit), nil
+}
+
+// playerSearchKey covers both the handle and the real name: "ЗиуОо" should
+// find ZywOo, and so should "Mathieu Herbaut".
+func playerSearchKey(player competition.Player) string {
+	key := competition.SearchKeyBlob(player.Nickname)
+	if player.FullName == "" {
+		return key
+	}
+	return key + competition.SearchKeyBlob(player.FullName)
 }
 
 func (r *RosterRepository) TeamsOfPlayer(ctx context.Context, id common.PlayerID) ([]common.TeamID, error) {
@@ -256,4 +278,94 @@ func scanPlayer(row interface{ Scan(dest ...any) error }) (competition.Player, e
 	}
 	player.Game = competition.GameCode(code)
 	return player, nil
+}
+
+// BackfillSearchKeys fills the folded key for rows that still have none —
+// teams first, then players, so one call makes progress on whichever still
+// needs it. See app.SearchKeyBackfill for why this is not a SQL expression.
+func (r *RosterRepository) BackfillSearchKeys(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	filled, err := r.backfillTeams(ctx, limit)
+	if err != nil || filled >= limit {
+		return filled, err
+	}
+	players, err := r.backfillPlayers(ctx, limit-filled)
+	return filled + players, err
+}
+
+func (r *RosterRepository) backfillTeams(ctx context.Context, limit int) (int, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT id, name FROM team WHERE search_key = '' LIMIT $1`, limit)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		id   [16]byte
+		name string
+	}
+	var pending []row
+	for rows.Next() {
+		var t row
+		if err := rows.Scan(&t.id, &t.name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, t := range pending {
+		// COALESCE to a single space for a nameless row: leaving it empty
+		// would make this pass pick it up again on every run, forever.
+		key := competition.SearchKeyBlob(t.name)
+		if key == "" {
+			key = " "
+		}
+		if _, err := executor(ctx, r.pool).Exec(ctx,
+			`UPDATE team SET search_key = $2 WHERE id = $1`, t.id, key); err != nil {
+			return 0, err
+		}
+	}
+	return len(pending), nil
+}
+
+func (r *RosterRepository) backfillPlayers(ctx context.Context, limit int) (int, error) {
+	rows, err := executor(ctx, r.pool).Query(ctx,
+		`SELECT id, nickname, full_name FROM player WHERE search_key = '' LIMIT $1`, limit)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		id       [16]byte
+		nickname string
+		fullName string
+	}
+	var pending []row
+	for rows.Next() {
+		var p row
+		if err := rows.Scan(&p.id, &p.nickname, &p.fullName); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, p := range pending {
+		key := playerSearchKey(competition.Player{Nickname: p.nickname, FullName: p.fullName})
+		if key == "" {
+			key = " "
+		}
+		if _, err := executor(ctx, r.pool).Exec(ctx,
+			`UPDATE player SET search_key = $2 WHERE id = $1`, p.id, key); err != nil {
+			return 0, err
+		}
+	}
+	return len(pending), nil
 }

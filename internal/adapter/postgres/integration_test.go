@@ -4600,3 +4600,81 @@ func TestCompetitionRepository_FillTeamAppearanceOnlyFillsGaps(t *testing.T) {
 		t.Fatalf("an empty fill must change nothing, got %+v (%v)", same, err)
 	}
 }
+
+// TestSearch_FindsNamesTheWayPeopleTypeThem is the reported failure, against
+// real SQL: a team searched for in Russian and a player searched for by a
+// nickname spelled with letters instead of digits both used to return
+// nothing, because the query was a substring test over the stored spelling.
+func TestSearch_FindsNamesTheWayPeopleTypeThem(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+	rosters := pg.NewRosterRepository(pool)
+
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameCS2, Name: "Search Cup",
+		ExternalID: "search-e1", Status: competition.EventUpcoming, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	spirit := competition.Team{ID: common.NewTeamID(), Name: "Team Spirit", ExternalID: "search-t1"}
+	navi := competition.Team{ID: common.NewTeamID(), Name: "Natus Vincere", ExternalID: "search-t2"}
+	scheduled := time.Now().UTC().Add(time.Hour)
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	if _, err := catalog.SaveMatch(ctx, competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "search-m1",
+		FirstTeam: &spirit, SecondTeam: &navi, ScheduledAt: &scheduled,
+		Status: competition.MatchNotStarted, Format: format,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ropz, err := rosters.SavePlayer(ctx, competition.GameCS2, "PANDASCORE", "search-p1",
+		competition.Player{Nickname: "r0pz", FullName: "Robin Kool"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	games := []competition.GameCode{competition.GameCS2}
+	for _, query := range []string{"спирит", "spirit", "Team Spirit", "СПИРИТ"} {
+		found, err := catalog.SearchTeams(ctx, query, 10, games)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(found) == 0 || found[0].ID != spirit.ID {
+			t.Fatalf("%q did not find Team Spirit, got %+v", query, found)
+		}
+	}
+	for _, query := range []string{"ropz", "rops", "ропз", "ропс", "r0pz", "Robin"} {
+		found, err := rosters.SearchPlayers(ctx, query, 10, games)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(found) == 0 || found[0].ID != ropz.ID {
+			t.Fatalf("%q did not find r0pz, got %+v", query, found)
+		}
+	}
+
+	// Still discriminating: a different name must not come back.
+	if found, err := rosters.SearchPlayers(ctx, "s1mple", 10, games); err != nil || len(found) != 0 {
+		t.Fatalf("an unrelated nickname must find nothing, got %+v (%v)", found, err)
+	}
+
+	// The backfill fills whatever predates the column, and is idempotent.
+	if _, err := pool.Exec(ctx, `UPDATE team SET search_key = '' WHERE id = $1`, spirit.ID.Value); err != nil {
+		t.Fatal(err)
+	}
+	filled, err := rosters.BackfillSearchKeys(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filled == 0 {
+		t.Fatal("expected the emptied key to be backfilled")
+	}
+	if again, err := rosters.BackfillSearchKeys(ctx, 100); err != nil || again != 0 {
+		t.Fatalf("a second pass has nothing left to do, filled %d (%v)", again, err)
+	}
+	found, err := catalog.SearchTeams(ctx, "спирит", 10, games)
+	if err != nil || len(found) == 0 || found[0].ID != spirit.ID {
+		t.Fatalf("after backfill the folded search must work, got %+v (%v)", found, err)
+	}
+}

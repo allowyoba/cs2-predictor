@@ -449,7 +449,12 @@ func run() error {
 	// Off the boot path and time-bounded. Run inline, it delayed serving by
 	// as long as the provider took to answer, and the scheduled jobs that
 	// had already started burned their own timeouts waiting behind it.
-	for _, task := range enrichmentBuilt.StartupTasks {
+	// Filling the folded search keys is the same shape of task: off the boot
+	// path, once, and harmless to lose — a name with no key is still
+	// searchable by its spelling.
+	startupTasks := append([]func(ctx context.Context){}, enrichmentBuilt.StartupTasks...)
+	startupTasks = append(startupTasks, (&app.SearchKeyBackfill{Store: rosterRepo, Lock: clusterLock, Log: log}).Run)
+	for _, task := range startupTasks {
 		backgroundJobs.Add(1)
 		go func(task func(ctx context.Context)) {
 			defer backgroundJobs.Done()

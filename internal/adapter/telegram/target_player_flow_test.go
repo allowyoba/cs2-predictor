@@ -61,7 +61,7 @@ func TestPlayers_MenuOffersThePlayerEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	cds, _ := findKeyboardButtons(*calls)
-	if !slices.Contains(cds, "targets:psearch") {
+	if !slices.Contains(cds, "targets:pbrowse:0") {
 		t.Fatalf("no follow-a-player entry on the targets menu: %v", cds)
 	}
 }
