@@ -94,6 +94,13 @@ type Repository interface {
 	// given time — the people a reminder could plausibly be for. It is
 	// deliberately activity-based: Telegram gives a bot no member list.
 	ChatParticipants(ctx context.Context, chatID common.ChatID, since time.Time) ([]common.UserID, error)
+	// RecentClosedPolls lists this chat's most recently closed polls,
+	// newest first — the candidates for a late vote (see
+	// app.LateVoteService). Declared here rather than as an optional
+	// extension asserted at runtime, for the reason chat.Repository gives:
+	// an admin screen backed by a missing method renders empty instead of
+	// failing to compile.
+	RecentClosedPolls(ctx context.Context, chatID common.ChatID, limit int) ([]Poll, error)
 	SaveVote(ctx context.Context, vote Vote) error
 	RemoveVote(ctx context.Context, pollID common.PollID, userID common.UserID) error
 }

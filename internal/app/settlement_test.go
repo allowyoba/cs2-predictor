@@ -257,6 +257,10 @@ func TestResultSettlementService_NoOpWithoutFinalScore(t *testing.T) {
 	}
 }
 
+func (f *fakePredictionsForSettlement) RecentClosedPolls(context.Context, common.ChatID, int) ([]prediction.Poll, error) {
+	return nil, nil
+}
+
 func (f *fakePredictionsForSettlement) PollsAwaitingReminder(context.Context, time.Time, int) ([]prediction.Poll, error) {
 	return nil, nil
 }

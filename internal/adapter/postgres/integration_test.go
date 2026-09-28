@@ -4,7 +4,9 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	pg "cs2predictor/internal/adapter/postgres"
+	"cs2predictor/internal/app"
 	"cs2predictor/internal/domain/chat"
 	"cs2predictor/internal/domain/competition"
 	"cs2predictor/internal/domain/enrichment"
@@ -5026,5 +5029,159 @@ func TestWallachiaLateVotesScript(t *testing.T) {
 	}
 	if awards != 3 {
 		t.Fatalf("a second run changed the awards: %d, want 3", awards)
+	}
+}
+
+// TestLateVoteService_RecordsAPredictionThatMissedItsPoll is the Wallachia
+// case as a feature: a poll that closed before anybody could answer it, and
+// a prediction that has to reach the scoreboard anyway. Run against real SQL
+// because the point of it is the rescore — awards being replaced for a poll
+// that had already been settled.
+func TestLateVoteService_RecordsAPredictionThatMissedItsPoll(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+	scoringRepo := pg.NewScoringRepository(pool)
+	settlements := pg.NewSettlementRepository(pool)
+
+	now := time.Date(2026, 9, 28, 18, 0, 0, 0, time.UTC)
+	chatID := common.ChatID{Value: -770011}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "Late chat", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	started := now.Add(-2 * time.Hour)
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameDota2, Name: "Late Cup",
+		ExternalID: "late-e1", Status: competition.EventRunning, StartsAt: &started, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	home := competition.Team{ID: common.NewTeamID(), Name: "Home", ExternalID: "late-t1"}
+	away := competition.Team{ID: common.NewTeamID(), Name: "Away", ExternalID: "late-t2"}
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 5)
+	score := competition.MatchScore{First: 0, Second: 3}
+	match := competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "late-m1",
+		FirstTeam: &home, SecondTeam: &away,
+		ScheduledAt: &started, ActualStartedAt: &started, Status: competition.MatchFinished,
+		Format: format, Score: &score,
+	}
+	if _, err := catalog.SaveMatch(ctx, match); err != nil {
+		t.Fatal(err)
+	}
+	var options []prediction.Option
+	for i, s := range format.PossibleScores() {
+		options = append(options, prediction.Option{Index: i, Score: s})
+	}
+	telegramPollID := "late-poll-1"
+	poll, err := predictions.SavePoll(ctx, prediction.Poll{
+		ID: common.NewPollID(), ChatID: chatID, MatchID: match.ID, TelegramPollID: &telegramPollID,
+		Options: options, Status: prediction.PollClosed, ClosesAt: started.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Somebody did answer in time, and was already settled.
+	early := common.UserID{Value: 880001}
+	late := common.UserID{Value: 880002}
+	if err := predictions.SaveVote(ctx, prediction.Vote{
+		PollID: poll.ID, UserID: early, OptionIndex: optionIndexFor(options, competition.MatchScore{First: 1, Second: 3}),
+		DisplayName: "Early", VotedAt: started.Add(-2 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO telegram_user(id, display_name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`,
+		late.Value, "Late"); err != nil {
+		t.Fatal(err)
+	}
+	if err := scoringRepo.ReplaceAwards(ctx, poll.ID, []scoring.Award{{
+		PollID: poll.ID, UserID: early, Points: 1, Kind: scoring.AwardOutcome, AwardedAt: started,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := settlements.MarkSettled(ctx, poll.ID, score.String(), started); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &app.LateVoteService{
+		Predictions: predictions, Catalog: catalog,
+		Scoring:     scoring.NewService(predictions, scoringRepo, common.FixedClock(now)),
+		Settlements: settlements, Clock: common.FixedClock(now),
+		RunTx: func(ctx context.Context, fn func(context.Context) error) error {
+			return pg.RunInTx(ctx, pool, fn)
+		},
+		Log: slog.Default(),
+	}
+
+	// The late prediction is the exact score.
+	exactIndex := optionIndexFor(options, competition.MatchScore{First: 0, Second: 3})
+	result, err := service.Record(ctx, chatID, poll.ID, late, "Late", nil, exactIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Scored {
+		t.Fatal("a finished match must score the late vote immediately")
+	}
+	if result.Points != format.ExactPoints() {
+		t.Fatalf("points = %d, want the exact-score award %d", result.Points, format.ExactPoints())
+	}
+
+	// The late vote is dated to the poll's close, not to now: it is a
+	// prediction, and the record has to read as one.
+	var votedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT voted_at FROM prediction_vote WHERE poll_id=$1 AND user_id=$2`,
+		poll.ID.Value, late.Value).Scan(&votedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !votedAt.UTC().Equal(poll.ClosesAt.UTC()) {
+		t.Fatalf("voted_at = %v, want the poll's close %v", votedAt.UTC(), poll.ClosesAt.UTC())
+	}
+
+	// And the person who did answer in time keeps exactly what they had.
+	var earlyPoints int
+	var earlyKind string
+	if err := pool.QueryRow(ctx, `SELECT points, kind FROM score_award WHERE poll_id=$1 AND user_id=$2`,
+		poll.ID.Value, early.Value).Scan(&earlyPoints, &earlyKind); err != nil {
+		t.Fatal(err)
+	}
+	if earlyPoints != 1 || earlyKind != string(scoring.AwardOutcome) {
+		t.Fatalf("the early voter's award changed: %d %s", earlyPoints, earlyKind)
+	}
+
+	// Recording again replaces rather than duplicates — a correction.
+	closeIndex := optionIndexFor(options, competition.MatchScore{First: 2, Second: 3})
+	if _, err := service.Record(ctx, chatID, poll.ID, late, "Late", nil, closeIndex); err != nil {
+		t.Fatal(err)
+	}
+	var votes int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM prediction_vote WHERE poll_id=$1`, poll.ID.Value).Scan(&votes); err != nil {
+		t.Fatal(err)
+	}
+	if votes != 2 {
+		t.Fatalf("expected the correction to replace the vote, got %d votes", votes)
+	}
+	var latePoints int
+	if err := pool.QueryRow(ctx, `SELECT points FROM score_award WHERE poll_id=$1 AND user_id=$2`,
+		poll.ID.Value, late.Value).Scan(&latePoints); err != nil {
+		t.Fatal(err)
+	}
+	if latePoints != 1 {
+		t.Fatalf("after the correction the award = %d, want 1 for the right winner", latePoints)
+	}
+
+	// Another chat's poll cannot be named from this one.
+	if _, err := service.Record(ctx, common.ChatID{Value: -770099}, poll.ID, late, "Late", nil, exactIndex); !errors.Is(err, app.ErrPollNotInChat) {
+		t.Fatalf("expected ErrPollNotInChat, got %v", err)
+	}
+
+	// The picker sees the poll.
+	recent, err := predictions.RecentClosedPolls(ctx, chatID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 1 || recent[0].ID != poll.ID {
+		t.Fatalf("the late-vote picker does not list the poll: %+v", recent)
 	}
 }

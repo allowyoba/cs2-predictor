@@ -112,6 +112,42 @@ var callbackRoutes = []callbackRoute{
 	{match: prefixed("targets:punsub:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return h.unsubscribePlayer(ctx, cb, target, settings, strings.TrimPrefix(data, "targets:punsub:"))
 	}},
+	{match: exact("lv:polls"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		if err := h.requireLateVote(ctx, settings, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		return false, h.lateVoteMatches(ctx, target, settings)
+	}},
+	{match: prefixed("lv:who:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		if err := h.requireLateVote(ctx, settings, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		pollID, page, ok := lateVotePollID(strings.TrimPrefix(data, "lv:who:"))
+		if !ok {
+			return false, newValidationError("invalid poll")
+		}
+		return false, h.lateVoteVoters(ctx, target, settings, pollID, page)
+	}},
+	{match: prefixed("lv:score:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		if err := h.requireLateVote(ctx, settings, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		pollID, voter, _, ok := parseLateVoteTarget(strings.TrimPrefix(data, "lv:score:"))
+		if !ok {
+			return false, newValidationError("invalid late vote target")
+		}
+		return false, h.lateVoteScores(ctx, target, settings, pollID, voter)
+	}},
+	{match: prefixed("lv:do:"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
+		if err := h.requireLateVote(ctx, settings, common.UserID{Value: cb.From.ID}); err != nil {
+			return false, err
+		}
+		pollID, voter, option, ok := parseLateVoteTarget(strings.TrimPrefix(data, "lv:do:"))
+		if !ok {
+			return false, newValidationError("invalid late vote target")
+		}
+		return h.recordLateVote(ctx, cb, target, settings, pollID, voter, option)
+	}},
 	{match: exact("events:add"), guard: guardManager, handle: simple((*UpdateHandler).eventAddMenu)},
 	{match: exact("events:search"), guard: guardManager, handle: func(h *UpdateHandler, ctx context.Context, cb *CallbackQuery, target replyTarget, settings chat.Settings, data string) (bool, error) {
 		return false, h.requestEventSearch(ctx, cb, settings)

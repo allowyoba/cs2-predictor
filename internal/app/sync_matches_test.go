@@ -74,6 +74,10 @@ func (m *memPolls) OpenPollsDue(_ context.Context, at time.Time) ([]prediction.P
 	return out, nil
 }
 func (m *memPolls) Votes(context.Context, common.PollID) ([]prediction.Vote, error) { return nil, nil }
+func (m *memPolls) RecentClosedPolls(context.Context, common.ChatID, int) ([]prediction.Poll, error) {
+	return nil, nil
+}
+
 func (m *memPolls) PollsAwaitingReminder(context.Context, time.Time, int) ([]prediction.Poll, error) {
 	return nil, nil
 }

@@ -305,3 +305,20 @@ func (r *PredictionRepository) RemoveVote(ctx context.Context, pollID common.Pol
 	_, err := executor(ctx, r.pool).Exec(ctx, `DELETE FROM prediction_vote WHERE poll_id = $1 AND user_id = $2`, pollID.Value, userID.Value)
 	return err
 }
+
+// RecentClosedPolls is the late-vote picker's list: this chat's polls that
+// have already closed, newest first.
+//
+// Ordered by when the match was played rather than when the poll closed:
+// they are almost the same, and the one people remember is the match.
+func (r *PredictionRepository) RecentClosedPolls(ctx context.Context, chatID common.ChatID, limit int) ([]prediction.Poll, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return r.queryPolls(ctx, `
+		 WHERE chat_id = $1 AND status <> $2
+		   AND match_id IN (SELECT id FROM esport_match)
+		 ORDER BY (SELECT COALESCE(m.actual_started_at, m.scheduled_at)
+		             FROM esport_match m WHERE m.id = match_id) DESC NULLS LAST
+		 LIMIT $3`, chatID.Value, prediction.PollOpen, limit)
+}

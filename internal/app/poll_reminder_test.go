@@ -54,6 +54,10 @@ type reminderPredictions struct {
 	marked       []common.PollID
 }
 
+func (r *reminderPredictions) RecentClosedPolls(context.Context, common.ChatID, int) ([]prediction.Poll, error) {
+	return nil, nil
+}
+
 func (r *reminderPredictions) PollsAwaitingReminder(_ context.Context, _ time.Time, _ int) ([]prediction.Poll, error) {
 	return r.polls, nil
 }

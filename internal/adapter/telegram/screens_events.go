@@ -110,6 +110,7 @@ func (h *UpdateHandler) eventMenu(ctx context.Context, target replyTarget, setti
 	rows := [][]InlineButton{
 		{button(h.Texts.Get("events.add", settings.Locale), "events:add"), button(h.Texts.Get("events.mine", settings.Locale), "events:mine")},
 		{button(h.Texts.Get("targets.menu_entry", settings.Locale), "menu:targets")},
+		{button(h.Texts.Get("latevote.menu_entry", settings.Locale), "lv:polls")},
 		{h.backButton(settings.Locale, "menu:main")},
 	}
 	return h.respond(ctx, target, managedScreenContext(target, settings, bold(escapeHTML(h.Texts.Get("menu.events", settings.Locale)))), &InlineKeyboard{InlineKeyboard: rows})

@@ -62,6 +62,10 @@ func (r *inMemoryPredictions) Votes(context.Context, common.PollID) ([]predictio
 	return nil, nil
 }
 func (r *inMemoryPredictions) SaveVote(context.Context, prediction.Vote) error { return nil }
+func (r *inMemoryPredictions) RecentClosedPolls(context.Context, common.ChatID, int) ([]prediction.Poll, error) {
+	return nil, nil
+}
+
 func (r *inMemoryPredictions) PollsAwaitingReminder(context.Context, time.Time, int) ([]prediction.Poll, error) {
 	return nil, nil
 }

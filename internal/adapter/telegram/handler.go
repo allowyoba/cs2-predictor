@@ -116,6 +116,12 @@ type UpdateHandler struct {
 	// leaves the screen saying there is nothing yet, which is also what it
 	// says before anybody has earned one.
 	Milestones scoring.MilestoneRepository
+	// PollReads is the poll history the late-vote picker walks, and
+	// LateVotes is what writes one. Both nil leaves the flow off; declared
+	// as their own narrow dependencies so a wiring mistake is a compile
+	// error rather than a menu entry that does nothing.
+	PollReads LateVotePolls
+	LateVotes *app.LateVoteService
 	// InboundLimiter caps how often a single Telegram user may trigger the
 	// bot to do any work at all — a lightweight defense against one account
 	// flooding the bot with commands or callback taps. Nil disables
@@ -947,4 +953,16 @@ func (h *UpdateHandler) sendText(ctx context.Context, chatID common.ChatID, text
 
 func (h *UpdateHandler) sendTextWithKeyboard(ctx context.Context, chatID common.ChatID, text string, keyboard InlineKeyboard, topicID *int64) error {
 	return h.send(ctx, chatID, text, &keyboard, topicID)
+}
+
+// LateVotePolls is the read side of the late-vote picker: which polls this
+// chat has closed, what one of them offered, and who already voted on it.
+type LateVotePolls interface {
+	RecentClosedPolls(ctx context.Context, chatID common.ChatID, limit int) ([]prediction.Poll, error)
+	FindPoll(ctx context.Context, id common.PollID) (*prediction.Poll, error)
+	Votes(ctx context.Context, pollID common.PollID) ([]prediction.Vote, error)
+	// ChatParticipants answers "who is in this room" the only way a bot
+	// can — by who has voted here. Taken from this port rather than from
+	// the poll service, so the whole flow depends on one thing.
+	ChatParticipants(ctx context.Context, chatID common.ChatID, since time.Time) ([]common.UserID, error)
 }

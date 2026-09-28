@@ -245,6 +245,10 @@ func TestCloseDue_ContinuesPastAGatewayFailureAndJoinsTheError(t *testing.T) {
 	}
 }
 
+func (r *inMemoryRepo) RecentClosedPolls(context.Context, common.ChatID, int) ([]Poll, error) {
+	return nil, nil
+}
+
 func (r *inMemoryRepo) PollsAwaitingReminder(context.Context, time.Time, int) ([]Poll, error) {
 	return nil, nil
 }
