@@ -38,10 +38,15 @@ type TargetRepository interface {
 	SubscribeTarget(ctx context.Context, s TargetSubscription) (TargetSubscription, error)
 	UnsubscribeTarget(ctx context.Context, chatID common.ChatID, kind TargetKind, targetID string) error
 	TargetSubscriptions(ctx context.Context, chatID common.ChatID) ([]TargetSubscription, error)
-	// ChatsForTarget returns chats actively subscribed to the given
+	// SubscribersOf returns the active subscriptions to the given
 	// team/player — the counterpart of Repository.SubscribedChats, used to
 	// fan out team/player-scoped notifications and cross-sell prompts.
-	ChatsForTarget(ctx context.Context, kind TargetKind, targetID string) ([]common.ChatID, error)
+	//
+	// The whole subscription rather than just its ChatID: the fan-out has to
+	// name the team in the message it sends, and each chat's own row already
+	// carries the name it followed. Returning ids alone is what left the
+	// cross-sell prompt rendering a bare UUID at people.
+	SubscribersOf(ctx context.Context, kind TargetKind, targetID string) ([]TargetSubscription, error)
 }
 
 // CrossSellOffer records that a chat has already been offered a one-tap

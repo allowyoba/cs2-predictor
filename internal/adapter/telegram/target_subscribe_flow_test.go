@@ -48,11 +48,11 @@ func (f *fakeTargets) TargetSubscriptions(_ context.Context, chatID common.ChatI
 	return out, nil
 }
 
-func (f *fakeTargets) ChatsForTarget(_ context.Context, kind subscription.TargetKind, targetID string) ([]common.ChatID, error) {
-	var out []common.ChatID
+func (f *fakeTargets) SubscribersOf(_ context.Context, kind subscription.TargetKind, targetID string) ([]subscription.TargetSubscription, error) {
+	var out []subscription.TargetSubscription
 	for _, s := range f.subs {
 		if s.Kind == kind && s.TargetID == targetID && s.Active {
-			out = append(out, s.ChatID)
+			out = append(out, s)
 		}
 	}
 	return out, nil

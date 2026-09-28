@@ -4333,3 +4333,68 @@ func TestScoringRepository_RankGapComesFromOneFeed(t *testing.T) {
 		t.Fatalf("bucket = %q, want a heavy underdog call", bucket)
 	}
 }
+
+// TestEventOfferRepository_ClaimsOncePerPair covers both halves of the
+// (chat, tournament) claim against the real schema: the primary key is what
+// makes the second claim lose, and UndecidedEvents must answer in the
+// caller's own order (the per-run cap spends itself in that order) while
+// dropping whatever is already claimed.
+func TestEventOfferRepository_ClaimsOncePerPair(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	offers := pg.NewEventOfferRepository(pool)
+
+	chatID := common.ChatID{Value: -777}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: chatID, Title: "C", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	var ids []common.EventID
+	for i, name := range []string{"First", "Second", "Third"} {
+		event := competition.Event{
+			ID: common.NewEventID(), Game: competition.GameCS2, Name: name,
+			ExternalID: fmt.Sprintf("offer-e%d", i), Status: competition.EventUpcoming, Provider: "PANDASCORE",
+		}
+		if _, err := catalog.SaveEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, event.ID)
+	}
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	isNew, err := offers.RecordEventOffer(ctx, chatID, ids[1], subscription.EventOffered, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isNew {
+		t.Fatal("expected the first claim on a pair to win")
+	}
+	again, err := offers.RecordEventOffer(ctx, chatID, ids[1], subscription.EventAutoSubscribed, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again {
+		t.Fatal("expected a second claim on the same pair to lose")
+	}
+
+	open, err := offers.UndecidedEvents(ctx, chatID, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 2 || open[0] != ids[0] || open[1] != ids[2] {
+		t.Fatalf("expected the unclaimed pairs in the order asked, got %v", open)
+	}
+
+	// Another chat has decided nothing, so every pair is still open for it.
+	other := common.ChatID{Value: -778}
+	if _, err := chats.Save(ctx, chat.Settings{ChatID: other, Title: "D", Locale: common.LocaleRU, Timezone: chat.DefaultTimezone, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	openForOther, err := offers.UndecidedEvents(ctx, other, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(openForOther) != len(ids) {
+		t.Fatalf("a claim must be per chat, got %v", openForOther)
+	}
+}

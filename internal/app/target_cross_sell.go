@@ -37,14 +37,16 @@ type TargetCrossSellService struct {
 	Offers  subscription.CrossSellRepository
 	Outbox  common.Outbox
 	Gate    NotifyGate
+	Clock   common.Clock
 	log     *slog.Logger
 }
 
 func NewTargetCrossSellService(catalog competition.Catalog, subs subscription.Repository, targets subscription.TargetRepository,
-	offers subscription.CrossSellRepository, outbox common.Outbox, switches common.NotifySwitchboard, log *slog.Logger) *TargetCrossSellService {
+	offers subscription.CrossSellRepository, outbox common.Outbox, switches common.NotifySwitchboard,
+	clock common.Clock, log *slog.Logger) *TargetCrossSellService {
 	return &TargetCrossSellService{
 		Catalog: catalog, Subs: subs, Targets: targets, Offers: offers, Outbox: outbox,
-		Gate: NotifyGate{Switches: switches}, log: log,
+		Gate: NotifyGate{Switches: switches}, Clock: clock, log: log,
 	}
 }
 
@@ -78,42 +80,48 @@ func (s *TargetCrossSellService) DiscoverAndOffer(ctx context.Context, event com
 	}
 
 	for _, teamID := range teamIDs {
-		chats, err := s.Targets.ChatsForTarget(ctx, subscription.TargetTeam, teamID.Value.String())
+		subs, err := s.Targets.SubscribersOf(ctx, subscription.TargetTeam, teamID.Value.String())
 		if err != nil {
 			return err
 		}
-		for _, chatID := range chats {
-			if skip[chatID] {
+		for _, sub := range subs {
+			if skip[sub.ChatID] {
 				continue
 			}
-			if err := s.offerOne(ctx, chatID, event, subscription.TargetTeam, teamID.Value.String()); err != nil && s.log != nil {
+			if err := s.offerOne(ctx, sub, event); err != nil && s.log != nil {
 				s.log.Error("target cross-sell offer failed for one chat, continuing with the rest",
-					"chatId", chatID.Value, "eventId", event.ID.Value, "error", err)
+					"chatId", sub.ChatID.Value, "eventId", event.ID.Value, "error", err)
 			}
 		}
 	}
 	return nil
 }
 
-func (s *TargetCrossSellService) offerOne(ctx context.Context, chatID common.ChatID, event competition.Event, kind subscription.TargetKind, targetID string) error {
-	wanted, err := s.Gate.ChatWants(ctx, chatID, common.ChatNotifyTargetCrossSell)
+func (s *TargetCrossSellService) offerOne(ctx context.Context, sub subscription.TargetSubscription, event competition.Event) error {
+	wanted, err := s.Gate.ChatWants(ctx, sub.ChatID, common.ChatNotifyTargetCrossSell)
 	if err != nil || !wanted {
 		return err
 	}
 	isNew, err := s.Offers.RecordOffer(ctx, subscription.CrossSellOffer{
-		ChatID: chatID, EventID: event.ID, Kind: kind, TargetID: targetID,
+		ChatID: sub.ChatID, EventID: event.ID, Kind: sub.Kind, TargetID: sub.TargetID, OfferedAt: s.Clock.Now(),
 	})
 	if err != nil || !isNew {
 		return err
 	}
+	// The name the chat actually followed, not sub.TargetID — that is a
+	// UUID for a team, and it was being rendered straight into the message.
+	name := sub.TargetName
+	if name == "" {
+		name = sub.TargetID
+	}
 	payload, err := json.Marshal(TargetCrossSellNotification{
-		ChatID: chatID.Value, EventID: event.ID.Value.String(), EventName: event.Name,
-		TargetKind: string(kind), TargetName: targetID,
+		ChatID: sub.ChatID.Value, EventID: event.ID.Value.String(), EventName: event.Name,
+		TargetKind: string(sub.Kind), TargetName: name,
 	})
 	if err != nil {
 		return err
 	}
-	aggregateID := chatID.String() + ":" + event.ID.Value.String()
+	aggregateID := sub.ChatID.String() + ":" + event.ID.Value.String()
 	_, err = s.Outbox.Enqueue(ctx, "CHAT", aggregateID, "telegram.target-cross-sell-offer", string(payload))
 	return err
 }

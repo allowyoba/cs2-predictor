@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -41,7 +39,12 @@ type CompetitionSynchronization struct {
 	// disables the offer entirely, same as every other optional dependency
 	// here.
 	TargetCrossSell *TargetCrossSellService
-	Outbox          common.Outbox
+	// EventOffers owns the "tell this chat about this tournament" decision,
+	// shared with the scheduled sweep that catches whatever discovery-time
+	// announcing misses — nil disables announcing, same as every other
+	// optional dependency here.
+	EventOffers *EventOfferReconciler
+	Outbox      common.Outbox
 	// Switches decides which chats asked to hear about new tournaments.
 	Switches common.NotifySwitchboard
 	Lock     common.ClusterLock
@@ -524,83 +527,45 @@ func (s *CompetitionSynchronization) ensureTeamsMatched(ctx context.Context, m c
 	return pending
 }
 
-// announceBigEvent fans out a "new big event" suggestion, via the
-// transactional outbox, to every active chat not already subscribed to a
-// newly discovered S/A tier tournament — so it surfaces immediately instead
-// of only being reachable through an explicit /events search.
-// chatsWantingNewEvents asks the whole fan-out's question in one query
-// rather than one per chat. It gates the announcement only: a chat that
-// auto-subscribes still joins the tournament, it just is not told it did.
-func (s *CompetitionSynchronization) chatsWantingNewEvents(ctx context.Context, chats []chat.Settings) (map[int64]bool, error) {
-	candidates := make([]int64, 0, len(chats))
-	for _, settings := range chats {
-		candidates = append(candidates, settings.ChatID.Value)
-	}
-	return NotifyGate{Switches: s.Switches}.ChatsWanting(ctx, common.ChatNotifyNewEvents, candidates)
-}
-
+// announceBigEvent offers a newly discovered S/A tier tournament to every
+// active chat that could still join it, so it surfaces immediately rather
+// than only through an explicit /events search.
+//
+// The decision itself lives in EventOfferReconciler.Decide, which is also
+// what the scheduled sweep calls. Discovery-time announcing is an
+// optimisation for the common case (the tier was already known the first
+// time the event was seen) on top of a path that converges on its own —
+// before, it was the only path there was, which is how a tournament whose
+// tier resolved a sync later was never announced at all. Both go through
+// the same per-(chat, tournament) claim, so neither can repeat the other.
 func (s *CompetitionSynchronization) announceBigEvent(ctx context.Context, event competition.Event) error {
-	if s.ActiveChats == nil {
+	if s.ActiveChats == nil || s.EventOffers == nil {
 		return nil
 	}
 	chats, err := s.ActiveChats.ListActive(ctx)
 	if err != nil {
 		return err
 	}
-	if len(chats) == 0 {
-		return nil
-	}
+	// Asked once for the whole fan-out rather than once per chat, the same
+	// way this has always read it. Decide leaves the "is this chat already
+	// in it?" question to its caller precisely so this stays one query.
 	subscribed, err := s.Subscriptions.SubscribedChats(ctx, event.ID)
 	if err != nil {
 		return err
 	}
-	alreadySubscribed := make(map[common.ChatID]bool, len(subscribed))
+	following := make(map[common.ChatID]bool, len(subscribed))
 	for _, chatID := range subscribed {
-		alreadySubscribed[chatID] = true
+		following[chatID] = true
 	}
-
-	wantsNews, err := s.chatsWantingNewEvents(ctx, chats)
-	if err != nil {
-		return err
-	}
-
 	for _, settings := range chats {
-		if alreadySubscribed[settings.ChatID] {
+		if following[settings.ChatID] || !settings.GameEnabled(event.Game) {
 			continue
 		}
-		if !settings.GameEnabled(event.Game) {
-			continue
-		}
-		// Auto-subscription skips the offer entirely and just joins the
-		// chat to the tournament — still announced, but as a fait accompli
-		// ("auto-subscribed") rather than a "want to add this?" the chat
-		// would otherwise have to tap through every single time a new S/A
-		// tournament shows up.
-		eventType, notifyType := "telegram.big-event-discovered", "big event discovered"
-		if settings.AutoSubscribesTo(event.Game) {
-			if _, err := s.Subscriptions.Subscribe(ctx, subscription.EventSubscription{ChatID: settings.ChatID, EventID: event.ID}); err != nil {
-				s.Log.Error("auto-subscribe failed", "chatId", settings.ChatID.Value, "eventId", event.ID.Value, "error", err)
-				continue
-			}
-			eventType, notifyType = "telegram.auto-subscribed", "auto-subscribed"
-		}
-		if !wantsNews[settings.ChatID.Value] {
-			continue
-		}
-		n := common.BigEventDiscoveredNotification{
-			ChatID: settings.ChatID.Value, TopicID: settings.DefaultTopicID,
-			EventID: event.ID.Value.String(), EventName: event.Name, Tier: string(event.Tier),
-		}
-		payload, err := json.Marshal(n)
-		if err != nil {
-			return err
-		}
-		aggregateID := fmt.Sprintf("%d:big-event:%s", settings.ChatID.Value, event.ID.Value)
-		if _, err := s.Outbox.Enqueue(ctx, "TELEGRAM_CHAT", aggregateID, eventType, string(payload)); err != nil {
-			// One chat's enqueue failure (a transient DB blip) shouldn't
-			// stop the rest of the batch from being notified — same
-			// per-item resilience as fanOutNewPolls below.
-			s.Log.Error(notifyType+" announcement enqueue failed", "chatId", settings.ChatID.Value, "eventId", event.ID.Value, "error", err)
+		if _, err := s.EventOffers.Decide(ctx, settings, event); err != nil {
+			// One chat's failure shouldn't stop the rest of the batch —
+			// same per-item resilience as fanOutNewPolls below. The
+			// scheduled sweep retries whatever was missed here.
+			s.Log.Error("big event announcement failed", "chatId", settings.ChatID.Value, "eventId", event.ID.Value, "error", err)
 			continue
 		}
 	}

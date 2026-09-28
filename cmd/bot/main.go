@@ -194,7 +194,14 @@ func run() error {
 		WithRecaps(chats, chatTitle, log)
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
 		WithPersonalRecaps(chats).WithSwitches(chats)
-	targetCrossSell := app.NewTargetCrossSellService(catalog, subscriptions, targetSubscriptions, crossSellOffers, outbox, chats, log)
+	targetCrossSell := app.NewTargetCrossSellService(catalog, subscriptions, targetSubscriptions, crossSellOffers, outbox, chats, clock, log)
+	// eventOffers owns "has this chat been told about this tournament yet?"
+	// for both the discovery-time announcement and the scheduled sweep that
+	// catches whatever discovery missed.
+	eventOffers := &app.EventOfferReconciler{
+		Chats: chats, Catalog: catalog, Subscriptions: subscriptions, Offers: pg.NewEventOfferRepository(pool),
+		Outbox: outbox, Switches: chats, Lock: clusterLock, Clock: clock, Log: log,
+	}
 
 	// teamMatch resolves a team with no cached ranking against whichever
 	// ranking feeds (teamMatchSources) are actually enabled — pointless
@@ -247,8 +254,8 @@ func run() error {
 	synchronizer := &app.CompetitionSynchronization{
 		Gateway: gateway, Catalog: catalog, Subscriptions: subscriptions, Chats: chats, ActiveChats: chats,
 		Predictions: predictionService, Settlement: settlement, EventCompletion: completion, TeamMatch: teamMatch,
-		TargetCrossSell: targetCrossSell,
-		Outbox:          outbox, Switches: chats, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
+		TargetCrossSell: targetCrossSell, EventOffers: eventOffers,
+		Outbox: outbox, Switches: chats, Lock: clusterLock, Clock: clock, Metrics: metrics, Log: log,
 		MatchSyncColdInterval: cfg.SyncMatchesColdInterval,
 	}
 	digests := &app.DigestScheduler{
@@ -358,6 +365,9 @@ func run() error {
 		// Reuses the event-discovery cadence: this is a cheap DB-only sweep,
 		// not another provider call, so it needs no config of its own.
 		runBackground("reconcile-event-completions", cfg.SyncEventsDelay, synchronizer.ReconcileEventCompletions)
+		// Same reasoning, same cadence: a DB-only sweep that re-asks the
+		// tournament offer for whatever the discovery-time path missed.
+		runBackground("reconcile-event-offers", cfg.SyncEventsDelay, eventOffers.Dispatch)
 		runBackground("close-due-polls", cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
 		runBackground("digests", cfg.DigestCheckDelay, digests.Dispatch)
 		if cfg.EventEveLead >= 0 {

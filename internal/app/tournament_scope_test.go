@@ -28,7 +28,7 @@ func (f *fakeTargetsForScope) UnsubscribeTarget(context.Context, common.ChatID, 
 func (f *fakeTargetsForScope) TargetSubscriptions(context.Context, common.ChatID) ([]subscription.TargetSubscription, error) {
 	return f.subs, nil
 }
-func (f *fakeTargetsForScope) ChatsForTarget(context.Context, subscription.TargetKind, string) ([]common.ChatID, error) {
+func (f *fakeTargetsForScope) SubscribersOf(context.Context, subscription.TargetKind, string) ([]subscription.TargetSubscription, error) {
 	return nil, nil
 }
 
