@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -4817,5 +4818,213 @@ func TestMilestoneRepository_ClaimsOnceAndReportsWhatItTook(t *testing.T) {
 	}
 	if len(shelf) != 2 {
 		t.Fatalf("the shelf spans every chat, got %+v", shelf)
+	}
+}
+
+// TestWallachiaLateVotesScript runs scripts/wallachia-final-late-votes.sql
+// against a database seeded to look like the real one, because a one-off
+// data fix that has never been executed is a guess. It checks the script
+// resolves the right poll on its own, writes the right predictions for the
+// right people, and changes nothing when it is run a second time.
+func TestWallachiaLateVotesScript(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	chats := pg.NewChatRepository(pool)
+	catalog := pg.NewCompetitionRepository(pool)
+	predictions := pg.NewPredictionRepository(pool)
+
+	chatID := common.ChatID{Value: -900111}
+	if _, err := chats.Save(ctx, chat.Settings{
+		ChatID: chatID, Title: "3 клоуна и клоунада", Locale: common.LocaleRU,
+		Timezone: chat.DefaultTimezone, Active: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A second chat with its own poll on the same final: the script must not
+	// touch it.
+	otherChat := common.ChatID{Value: -900112}
+	if _, err := chats.Save(ctx, chat.Settings{
+		ChatID: otherChat, Title: "Another room", Locale: common.LocaleRU,
+		Timezone: chat.DefaultTimezone, Active: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameDota2, Name: "PGL Wallachia Season 9 2026",
+		ExternalID: "w9", Status: competition.EventRunning, StartsAt: &start, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	// A decoy tournament that also mentions Wallachia, from another season.
+	decoy := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameDota2, Name: "PGL Wallachia Season 8 2025",
+		ExternalID: "w8", Status: competition.EventFinished, StartsAt: &start, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, decoy); err != nil {
+		t.Fatal(err)
+	}
+
+	yandex := competition.Team{ID: common.NewTeamID(), Name: "Team Yandex", ExternalID: "w9-t1"}
+	rivals := competition.Team{ID: common.NewTeamID(), Name: "Team Rivals", ExternalID: "w9-t2"}
+	bo5, _ := competition.NewSeriesFormat(competition.BestOf, 5)
+	bo3, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+
+	seedMatch := func(external string, at time.Time, format competition.SeriesFormat,
+		score competition.MatchScore, first, second competition.Team) competition.Match {
+		match := competition.Match{
+			ID: common.NewMatchID(), EventID: event.ID, ExternalID: external,
+			FirstTeam: &first, SecondTeam: &second,
+			ScheduledAt: &at, ActualStartedAt: &at, Status: competition.MatchFinished,
+			Format: format, Score: &score,
+		}
+		if _, err := catalog.SaveMatch(ctx, match); err != nil {
+			t.Fatal(err)
+		}
+		return match
+	}
+	seedPoll := func(c common.ChatID, match competition.Match, format competition.SeriesFormat, closesAt time.Time) prediction.Poll {
+		var options []prediction.Option
+		for i, s := range format.PossibleScores() {
+			options = append(options, prediction.Option{Index: i, Score: s})
+		}
+		telegramPollID := "w9-poll-" + match.ExternalID + "-" + c.String()
+		saved, err := predictions.SavePoll(ctx, prediction.Poll{
+			ID: common.NewPollID(), ChatID: c, MatchID: match.ID, TelegramPollID: &telegramPollID,
+			Options: options, Status: prediction.PollClosed, ClosesAt: closesAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return saved
+	}
+
+	// An earlier match of the same tournament — this is where the script
+	// learns who was playing along. Team Yandex is the SECOND team here, so
+	// a script that assumed a side would get the final backwards.
+	earlier := seedMatch("w9-semi", start.Add(24*time.Hour), bo3,
+		competition.MatchScore{First: 0, Second: 2}, rivals, yandex)
+	earlierPoll := seedPoll(chatID, earlier, bo3, start.Add(24*time.Hour))
+
+	serjinho := common.UserID{Value: 500001}
+	kolya := common.UserID{Value: 500002}
+	dima := common.UserID{Value: 500003}
+	stranger := common.UserID{Value: 500004} // only ever voted in the other chat
+	for _, u := range []struct {
+		id       common.UserID
+		username string
+		name     string
+	}{
+		{serjinho, "serjinho", "Serj"}, {kolya, "kolya", "Kolya"},
+		{dima, "dima", "Dima"}, {stranger, "stranger", "Stranger"},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO telegram_user(id, username, display_name) VALUES ($1,$2,$3)
+			 ON CONFLICT (id) DO NOTHING`, u.id.Value, u.username, u.name); err != nil {
+			t.Fatal(err)
+		}
+		if err := predictions.SaveVote(ctx, prediction.Vote{
+			PollID: earlierPoll.ID, UserID: u.id, OptionIndex: 0,
+			DisplayName: u.name, Username: &u.username,
+			VotedAt: start.Add(23 * time.Hour),
+		}); err != nil && u.id != stranger {
+			t.Fatal(err)
+		}
+	}
+	// The stranger's only vote is in the other chat's copy of the semi.
+	if _, err := pool.Exec(ctx, `DELETE FROM prediction_vote WHERE poll_id = $1 AND user_id = $2`,
+		earlierPoll.ID.Value, stranger.Value); err != nil {
+		t.Fatal(err)
+	}
+
+	// The final: Team Yandex first, won 3:0, and nobody voted in time.
+	final := seedMatch("w9-final", start.Add(48*time.Hour), bo5,
+		competition.MatchScore{First: 3, Second: 0}, yandex, rivals)
+	finalPoll := seedPoll(chatID, final, bo5, start.Add(48*time.Hour))
+	otherRoomPoll := seedPoll(otherChat, final, bo5, start.Add(48*time.Hour))
+
+	script, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "wallachia-final-late-votes.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The file drives its own transaction, which pgx will not accept inside
+	// a simple Exec; the BEGIN/COMMIT are stripped for the test and covered
+	// by the statements between them either all applying or none.
+	body := strings.ReplaceAll(string(script), "BEGIN;", "")
+	body = strings.ReplaceAll(body, "COMMIT;", "")
+	if _, err := pool.Exec(ctx, body); err != nil {
+		t.Fatalf("the script failed against a database shaped like the real one: %v", err)
+	}
+
+	type vote struct {
+		option int
+		points int
+		kind   string
+	}
+	read := func(pollID common.PollID, userID common.UserID) (vote, bool) {
+		var v vote
+		err := pool.QueryRow(ctx, `
+			SELECT pv.option_index, COALESCE(a.points, 0), COALESCE(a.kind, '')
+			  FROM prediction_vote pv
+			  LEFT JOIN score_award a ON a.poll_id = pv.poll_id AND a.user_id = pv.user_id
+			 WHERE pv.poll_id = $1 AND pv.user_id = $2`, pollID.Value, userID.Value).
+			Scan(&v.option, &v.points, &v.kind)
+		if err != nil {
+			return vote{}, false
+		}
+		return v, true
+	}
+	optionFor := func(pollID common.PollID, first, second int) int {
+		var index int
+		if err := pool.QueryRow(ctx,
+			`SELECT option_index FROM poll_option WHERE poll_id = $1 AND first_score = $2 AND second_score = $3`,
+			pollID.Value, first, second).Scan(&index); err != nil {
+			t.Fatal(err)
+		}
+		return index
+	}
+
+	got, ok := read(finalPoll.ID, serjinho)
+	if !ok {
+		t.Fatal("serjinho has no vote on the final")
+	}
+	if want := optionFor(finalPoll.ID, 3, 0); got.option != want {
+		t.Fatalf("serjinho voted option %d, want the 3:0 option %d", got.option, want)
+	}
+	if got.points != 3 || got.kind != "EXACT_SCORE" {
+		t.Fatalf("serjinho got %d points (%s), want 3 for an exact score", got.points, got.kind)
+	}
+
+	for _, u := range []common.UserID{kolya, dima} {
+		got, ok := read(finalPoll.ID, u)
+		if !ok {
+			t.Fatalf("user %d has no vote on the final", u.Value)
+		}
+		if want := optionFor(finalPoll.ID, 3, 1); got.option != want {
+			t.Fatalf("user %d voted option %d, want the 3:1 option %d", u.Value, got.option, want)
+		}
+		if got.points != 1 || got.kind != "OUTCOME" {
+			t.Fatalf("user %d got %d points (%s), want 1 for the right winner", u.Value, got.points, got.kind)
+		}
+	}
+
+	if _, ok := read(finalPoll.ID, stranger); ok {
+		t.Fatal("somebody who never played along in this chat must not be given a prediction")
+	}
+	if _, ok := read(otherRoomPoll.ID, serjinho); ok {
+		t.Fatal("another chat's poll on the same final must be left alone")
+	}
+
+	// Run it again: an upsert, so nothing moves.
+	if _, err := pool.Exec(ctx, body); err != nil {
+		t.Fatalf("a second run failed: %v", err)
+	}
+	var awards int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM score_award WHERE poll_id = $1`, finalPoll.ID.Value).Scan(&awards); err != nil {
+		t.Fatal(err)
+	}
+	if awards != 3 {
+		t.Fatalf("a second run changed the awards: %d, want 3", awards)
 	}
 }
