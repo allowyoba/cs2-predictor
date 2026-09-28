@@ -103,6 +103,10 @@ type eveCatalog struct {
 	matches map[common.EventID][]competition.Match
 }
 
+func (c *eveCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (c *eveCatalog) FindEvent(_ context.Context, id common.EventID) (*competition.Event, error) {
 	if e, ok := c.events[id]; ok {
 		return &e, nil

@@ -35,6 +35,10 @@ type TargetCrossSellService struct {
 	Subs    subscription.Repository
 	Targets subscription.TargetRepository
 	Offers  subscription.CrossSellRepository
+	// Rosters answers "who plays for this team right now", so a chat
+	// following a player is offered the tournament that player turns up in —
+	// nil leaves the player half off, the team half untouched.
+	Rosters competition.RosterRepository
 	Outbox  common.Outbox
 	Gate    NotifyGate
 	Clock   common.Clock
@@ -42,10 +46,10 @@ type TargetCrossSellService struct {
 }
 
 func NewTargetCrossSellService(catalog competition.Catalog, subs subscription.Repository, targets subscription.TargetRepository,
-	offers subscription.CrossSellRepository, outbox common.Outbox, switches common.NotifySwitchboard,
-	clock common.Clock, log *slog.Logger) *TargetCrossSellService {
+	offers subscription.CrossSellRepository, rosters competition.RosterRepository, outbox common.Outbox,
+	switches common.NotifySwitchboard, clock common.Clock, log *slog.Logger) *TargetCrossSellService {
 	return &TargetCrossSellService{
-		Catalog: catalog, Subs: subs, Targets: targets, Offers: offers, Outbox: outbox,
+		Catalog: catalog, Subs: subs, Targets: targets, Offers: offers, Rosters: rosters, Outbox: outbox,
 		Gate: NotifyGate{Switches: switches}, Clock: clock, log: log,
 	}
 }
@@ -80,18 +84,57 @@ func (s *TargetCrossSellService) DiscoverAndOffer(ctx context.Context, event com
 	}
 
 	for _, teamID := range teamIDs {
-		subs, err := s.Targets.SubscribersOf(ctx, subscription.TargetTeam, teamID.Value.String())
-		if err != nil {
+		if err := s.offerToFollowersOf(ctx, subscription.TargetTeam, teamID.Value.String(), event, skip); err != nil {
 			return err
 		}
-		for _, sub := range subs {
-			if skip[sub.ChatID] {
-				continue
+		// The people on that team are playing here too, and somebody
+		// following a player rather than an organisation is asking about
+		// exactly that — a roster change is precisely when the two answers
+		// differ, which is why this reads the roster instead of assuming the
+		// team stands in for its players.
+		for _, playerID := range s.playersOf(ctx, teamID) {
+			if err := s.offerToFollowersOf(ctx, subscription.TargetPlayer, playerID.Value.String(), event, skip); err != nil {
+				return err
 			}
-			if err := s.offerOne(ctx, sub, event); err != nil && s.log != nil {
-				s.log.Error("target cross-sell offer failed for one chat, continuing with the rest",
-					"chatId", sub.ChatID.Value, "eventId", event.ID.Value, "error", err)
-			}
+		}
+	}
+	return nil
+}
+
+// playersOf is the team's current roster, or nothing at all when rosters are
+// not wired — a missing roster reader means no player offers, never a failed
+// team offer.
+func (s *TargetCrossSellService) playersOf(ctx context.Context, teamID common.TeamID) []common.PlayerID {
+	if s.Rosters == nil {
+		return nil
+	}
+	members, err := s.Rosters.Roster(ctx, teamID)
+	if err != nil {
+		if s.log != nil {
+			s.log.Error("roster lookup failed, skipping this team's player offers", "teamId", teamID.Value, "error", err)
+		}
+		return nil
+	}
+	out := make([]common.PlayerID, 0, len(members))
+	for _, member := range members {
+		out = append(out, member.Player.ID)
+	}
+	return out
+}
+
+func (s *TargetCrossSellService) offerToFollowersOf(ctx context.Context, kind subscription.TargetKind, targetID string,
+	event competition.Event, skip map[common.ChatID]bool) error {
+	subs, err := s.Targets.SubscribersOf(ctx, kind, targetID)
+	if err != nil {
+		return err
+	}
+	for _, sub := range subs {
+		if skip[sub.ChatID] {
+			continue
+		}
+		if err := s.offerOne(ctx, sub, event); err != nil && s.log != nil {
+			s.log.Error("target cross-sell offer failed for one chat, continuing with the rest",
+				"chatId", sub.ChatID.Value, "eventId", event.ID.Value, "error", err)
 		}
 	}
 	return nil

@@ -105,7 +105,8 @@ func run() error {
 		MaxConcurrency:  cfg.PandaScore.MaxConcurrency,
 		MatchWindowPast: cfg.PandaScore.MatchWindowPast, MatchWindowFuture: cfg.PandaScore.MatchWindowFuture,
 	}
-	providers := []competition.DataProvider{pandascore.NewProvider(pandaConfig, httpClient)}
+	pandaProvider := pandascore.NewProvider(pandaConfig, httpClient)
+	providers := []competition.DataProvider{pandaProvider}
 
 	registry := prometheus.NewRegistry()
 	metrics := app.NewMetrics(registry)
@@ -194,7 +195,15 @@ func run() error {
 		WithRecaps(chats, chatTitle, log)
 	completion := app.NewEventCompletionService(catalog, subscriptions, chats, scoringRepo, scoringRepo, outbox, clock, runTx, log).
 		WithPersonalRecaps(chats).WithSwitches(chats)
-	targetCrossSell := app.NewTargetCrossSellService(catalog, subscriptions, targetSubscriptions, crossSellOffers, outbox, chats, clock, log)
+	rosterRepo := pg.NewRosterRepository(pool)
+	targetCrossSell := app.NewTargetCrossSellService(catalog, subscriptions, targetSubscriptions, crossSellOffers, rosterRepo, outbox, chats, clock, log)
+	// rosters keeps the player catalogue current and pairs PandaScore's
+	// players with HLTV's roster nicknames — the identity resolution that
+	// makes following a player mean one person rather than one handle.
+	rosters := &app.RosterSync{
+		Catalog: catalog, Subscriptions: subscriptions, Provider: pandaProvider, Players: rosterRepo,
+		Rankings: enrichmentRepo, Lock: clusterLock, Log: log,
+	}
 	// eventOffers owns "has this chat been told about this tournament yet?"
 	// for both the discovery-time announcement and the scheduled sweep that
 	// catches whatever discovery missed.
@@ -230,6 +239,7 @@ func run() error {
 		Client: telegramClient, Clock: clock, Log: log, BotUsername: *botUser.Username,
 		PendingApprovals: pendingApprovals, Outbox: outbox, RunTx: runTx, Metrics: metrics,
 		AdminActions: adminActions, Invitations: invitations, CrossSell: crossSellOffers, Targets: targetSubscriptions,
+		Rosters:                  rosterRepo,
 		InboundLimiter:           telegram.NewInboundLimiter(telegram.DefaultInboundPerSecond, telegram.DefaultInboundBurst),
 		TeamMatches:              enrichmentRepo,
 		TeamMatchHelpers:         enrichmentRepo,
@@ -368,6 +378,9 @@ func run() error {
 		// Same reasoning, same cadence: a DB-only sweep that re-asks the
 		// tournament offer for whatever the discovery-time path missed.
 		runBackground("reconcile-event-offers", cfg.SyncEventsDelay, eventOffers.Dispatch)
+		// Rosters change on a transfer, not on a tick, so this rides the
+		// slow watchdog cadence rather than the match sync's.
+		runBackground("roster-sync", cfg.WatchdogInterval, rosters.Dispatch)
 		runBackground("close-due-polls", cfg.SyncPollCloseDelay, synchronizer.CloseDuePolls)
 		runBackground("digests", cfg.DigestCheckDelay, digests.Dispatch)
 		if cfg.EventEveLead >= 0 {

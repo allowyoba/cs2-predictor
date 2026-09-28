@@ -107,6 +107,11 @@ type UpdateHandler struct {
 	// team-scoped cut of its own leaderboard that follows from them (see
 	// scoring.StatsPeriod.ForTeam). Nil disables the screen entirely.
 	Targets subscription.TargetRepository
+	// Rosters is the player catalogue behind the player half of the follow
+	// flow: nickname search, and the display name a callback carrying only an
+	// id has to resolve. Nil leaves the player half off — the team half needs
+	// nothing from it.
+	Rosters competition.RosterRepository
 	// InboundLimiter caps how often a single Telegram user may trigger the
 	// bot to do any work at all — a lightweight defense against one account
 	// flooding the bot with commands or callback taps. Nil disables
@@ -501,6 +506,8 @@ func (h *UpdateHandler) handleMessage(ctx context.Context, msg *Message) error {
 		cmdErr = h.searchEvents(ctx, msg, settings, text)
 	} else if !strings.HasPrefix(text, "/") && isTargetSearchReply(msg, settings.Locale, h.Texts) {
 		cmdErr = h.searchTargets(ctx, msg, settings, text)
+	} else if !strings.HasPrefix(text, "/") && isPlayerSearchReply(msg, settings.Locale, h.Texts) {
+		cmdErr = h.searchPlayers(ctx, msg, settings, text)
 	} else {
 		switch {
 		case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"):
@@ -617,6 +624,8 @@ func (h *UpdateHandler) handlePrivateMessage(ctx context.Context, msg *Message) 
 		return h.handleCommandError(ctx, settings, nil, text, h.searchEvents(ctx, msg, settings, text))
 	case !strings.HasPrefix(text, "/") && isTargetSearchReply(msg, settings.Locale, h.Texts):
 		return h.handleCommandError(ctx, settings, nil, text, h.searchTargets(ctx, msg, settings, text))
+	case !strings.HasPrefix(text, "/") && isPlayerSearchReply(msg, settings.Locale, h.Texts):
+		return h.handleCommandError(ctx, settings, nil, text, h.searchPlayers(ctx, msg, settings, text))
 	case strings.HasPrefix(text, "/events"):
 		return h.handleCommandError(ctx, settings, nil, text, h.searchEvents(ctx, msg, settings, strings.TrimSpace(strings.TrimPrefix(text, "/events"))))
 	case strings.HasPrefix(text, "/timezone "):

@@ -36,6 +36,10 @@ type fakeSyncCatalog struct {
 func newFakeSyncCatalog() *fakeSyncCatalog {
 	return &fakeSyncCatalog{events: map[common.EventID]competition.Event{}, matches: map[common.MatchID]competition.Match{}}
 }
+func (f *fakeSyncCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (f *fakeSyncCatalog) SearchTeams(context.Context, string, int, []competition.GameCode) ([]competition.Team, error) {
 	return nil, nil
 }

@@ -252,3 +252,102 @@ func TestTargetCrossSellService_OfferNamesTheTeamNotItsID(t *testing.T) {
 		t.Fatalf("expected the offer stamped with the clock, got %+v", offers.recorded)
 	}
 }
+
+// fakeRostersForCrossSell answers "who plays for this team" from a fixed map.
+type fakeRostersForCrossSell struct {
+	byTeam map[common.TeamID][]competition.RosterMember
+}
+
+func (f *fakeRostersForCrossSell) SavePlayer(context.Context, competition.GameCode, string, string, competition.Player) (competition.Player, error) {
+	return competition.Player{}, nil
+}
+func (f *fakeRostersForCrossSell) ReplaceRoster(context.Context, common.TeamID, []competition.RosterMember) error {
+	return nil
+}
+func (f *fakeRostersForCrossSell) Roster(_ context.Context, teamID common.TeamID) ([]competition.RosterMember, error) {
+	return f.byTeam[teamID], nil
+}
+func (f *fakeRostersForCrossSell) FindPlayer(context.Context, common.PlayerID) (*competition.Player, error) {
+	return nil, nil
+}
+func (f *fakeRostersForCrossSell) SearchPlayers(context.Context, string, int, []competition.GameCode) ([]competition.Player, error) {
+	return nil, nil
+}
+func (f *fakeRostersForCrossSell) TeamsOfPlayer(context.Context, common.PlayerID) ([]common.TeamID, error) {
+	return nil, nil
+}
+
+// Following a player, not their team, must still produce the offer when that
+// player turns up in a tournament — read off the roster, since a transfer is
+// exactly when "the team" and "the person" stop being the same answer.
+func TestTargetCrossSellService_OffersAChatFollowingAPlayer(t *testing.T) {
+	eventID := common.EventID{Value: uuid.New()}
+	teamA := common.TeamID{Value: uuid.New()}
+	teamB := common.TeamID{Value: uuid.New()}
+	chatID := common.ChatID{Value: 42}
+	playerID := common.PlayerID{Value: uuid.New()}
+
+	catalog := &fakeCatalogForCompletion{matches: map[common.EventID][]competition.Match{
+		eventID: {matchBetween(eventID, teamA, teamB)},
+	}}
+	targets := &fakeTargetsForCrossSell{subsByTarget: map[string][]subscription.TargetSubscription{
+		"PLAYER:" + playerID.Value.String(): {{
+			ChatID: chatID, Kind: subscription.TargetPlayer, TargetID: playerID.Value.String(),
+			TargetName: "s1mple", Active: true,
+		}},
+	}}
+	rosters := &fakeRostersForCrossSell{byTeam: map[common.TeamID][]competition.RosterMember{
+		teamA: {{Player: competition.Player{ID: playerID, Nickname: "s1mple"}}},
+	}}
+	offers, outbox := &fakeCrossSellOffers{isNew: true}, &fakeOutboxForCrossSell{}
+
+	svc := &TargetCrossSellService{
+		Catalog: catalog, Subs: &fakeSubsForCompletion{}, Targets: targets, Rosters: rosters,
+		Offers: offers, Outbox: outbox,
+		Gate:  NotifyGate{Switches: alwaysOnSwitchboard{}},
+		Clock: fixedClock{now: crossSellNow},
+	}
+	if err := svc.DiscoverAndOffer(context.Background(), competition.Event{ID: eventID, Name: "Major"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(outbox.payloads) != 1 {
+		t.Fatalf("expected one offer for the chat following the player, got %v", outbox.enqueued)
+	}
+	var n TargetCrossSellNotification
+	if err := json.Unmarshal([]byte(outbox.payloads[0]), &n); err != nil {
+		t.Fatal(err)
+	}
+	if n.TargetKind != string(subscription.TargetPlayer) || n.TargetName != "s1mple" {
+		t.Fatalf("expected the offer to name the followed player, got %+v", n)
+	}
+}
+
+// With rosters unwired the team half must still work — a missing player
+// catalogue is a feature that is off, not a fan-out that fails.
+func TestTargetCrossSellService_WorksWithoutRosters(t *testing.T) {
+	eventID := common.EventID{Value: uuid.New()}
+	teamA := common.TeamID{Value: uuid.New()}
+	teamB := common.TeamID{Value: uuid.New()}
+	chatID := common.ChatID{Value: 42}
+
+	catalog := &fakeCatalogForCompletion{matches: map[common.EventID][]competition.Match{
+		eventID: {matchBetween(eventID, teamA, teamB)},
+	}}
+	targets := &fakeTargetsForCrossSell{subsByTarget: map[string][]subscription.TargetSubscription{
+		"TEAM:" + teamA.Value.String(): followedBy(chatID, teamA),
+	}}
+	offers, outbox := &fakeCrossSellOffers{isNew: true}, &fakeOutboxForCrossSell{}
+
+	svc := &TargetCrossSellService{
+		Catalog: catalog, Subs: &fakeSubsForCompletion{}, Targets: targets,
+		Offers: offers, Outbox: outbox,
+		Gate:  NotifyGate{Switches: alwaysOnSwitchboard{}},
+		Clock: fixedClock{now: crossSellNow},
+	}
+	if err := svc.DiscoverAndOffer(context.Background(), competition.Event{ID: eventID, Name: "Major"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(outbox.enqueued) != 1 {
+		t.Fatalf("expected the team offer regardless, got %v", outbox.enqueued)
+	}
+}

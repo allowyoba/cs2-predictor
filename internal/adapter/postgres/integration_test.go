@@ -4398,3 +4398,138 @@ func TestEventOfferRepository_ClaimsOncePerPair(t *testing.T) {
 		t.Fatalf("a claim must be per chat, got %v", openForOther)
 	}
 }
+
+// TestRosterRepository_PlayersAndRosters covers the player catalogue against
+// the real schema: a player is keyed by the feed's own id (so a nickname
+// change keeps the same player), a roster is replaced as a set, a second
+// feed's nickname attaches to the player rather than creating another one,
+// and a nickname another player already holds is refused instead of being
+// reassigned.
+func TestRosterRepository_PlayersAndRosters(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+	rosters := pg.NewRosterRepository(pool)
+
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameCS2, Name: "Roster Cup",
+		ExternalID: "roster-e1", Status: competition.EventUpcoming, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	navi := competition.Team{ID: common.NewTeamID(), Name: "NAVI", ExternalID: "roster-t1"}
+	spirit := competition.Team{ID: common.NewTeamID(), Name: "Spirit", ExternalID: "roster-t2"}
+	scheduled := time.Now().UTC().Add(time.Hour)
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	if _, err := catalog.SaveMatch(ctx, competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "roster-m1",
+		FirstTeam: &navi, SecondTeam: &spirit, ScheduledAt: &scheduled,
+		Status: competition.MatchNotStarted, Format: format,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	simple, err := rosters.SavePlayer(ctx, competition.GameCS2, "PANDASCORE", "ps-1",
+		competition.Player{Nickname: "s1mple", FullName: "Oleksandr Kostyliev", Nationality: "UA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b1t, err := rosters.SavePlayer(ctx, competition.GameCS2, "PANDASCORE", "ps-2", competition.Player{Nickname: "b1t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A nickname change is the same person: the feed's key decides identity.
+	renamed, err := rosters.SavePlayer(ctx, competition.GameCS2, "PANDASCORE", "ps-1", competition.Player{Nickname: "s1mple2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.ID != simple.ID {
+		t.Fatalf("a rename must keep the player id: %v vs %v", renamed.ID, simple.ID)
+	}
+
+	if err := rosters.ReplaceRoster(ctx, navi.ID, []competition.RosterMember{
+		{Player: renamed, Role: "awp"}, {Player: b1t},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := rosters.Roster(ctx, navi.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 2 || stored[0].Player.ID != renamed.ID || stored[0].Role != "awp" {
+		t.Fatalf("roster not stored in order, got %+v", stored)
+	}
+	if stored[0].Player.Nickname != "s1mple2" || stored[0].Player.Game != competition.GameCS2 {
+		t.Fatalf("roster read back the wrong player details: %+v", stored[0].Player)
+	}
+
+	// Replace-the-set: whoever left is off it.
+	if err := rosters.ReplaceRoster(ctx, navi.ID, []competition.RosterMember{{Player: b1t}}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := rosters.Roster(ctx, navi.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 || after[0].Player.ID != b1t.ID {
+		t.Fatalf("expected the departed player dropped, got %+v", after)
+	}
+
+	// HLTV's nickname attaches to the player the match provider reported.
+	claimed, err := rosters.SavePlayerIdentity(ctx, b1t.ID, "HLTV", "b1t", "b1t", "exact_name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claimed {
+		t.Fatal("expected HLTV's nickname to attach to the player")
+	}
+	// Re-running the same pairing is idempotent, not a conflict.
+	if again, err := rosters.SavePlayerIdentity(ctx, b1t.ID, "HLTV", "b1t", "b1t", "exact_name"); err != nil || !again {
+		t.Fatalf("re-pairing the same player must succeed, got %v (%v)", again, err)
+	}
+	// A namesake must not take it away from them.
+	stolen, err := rosters.SavePlayerIdentity(ctx, simple.ID, "HLTV", "b1t", "b1t", "exact_name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stolen {
+		t.Fatal("a nickname already held must not be reassigned to another player")
+	}
+
+	found, err := rosters.SearchPlayers(ctx, "1t", 10, []competition.GameCode{competition.GameCS2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].ID != b1t.ID {
+		t.Fatalf("expected the nickname search to find b1t, got %+v", found)
+	}
+	if none, err := rosters.SearchPlayers(ctx, "1t", 10, nil); err != nil || none != nil {
+		t.Fatalf("no games enabled must mean no results, got %+v (%v)", none, err)
+	}
+
+	byID, err := rosters.FindPlayer(ctx, b1t.ID)
+	if err != nil || byID == nil || byID.Nickname != "b1t" {
+		t.Fatalf("expected b1t by id, got %+v (%v)", byID, err)
+	}
+	if missing, err := rosters.FindPlayer(ctx, common.NewPlayerID()); err != nil || missing != nil {
+		t.Fatalf("an unknown player is (nil, nil), got %+v (%v)", missing, err)
+	}
+
+	teams, err := rosters.TeamsOfPlayer(ctx, b1t.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(teams) != 1 || teams[0] != navi.ID {
+		t.Fatalf("expected b1t on NAVI, got %v", teams)
+	}
+
+	// The team read a callback carrying only an id depends on.
+	team, err := catalog.FindTeam(ctx, navi.ID)
+	if err != nil || team == nil || team.Name != "NAVI" {
+		t.Fatalf("expected NAVI by id, got %+v (%v)", team, err)
+	}
+	if unknown, err := catalog.FindTeam(ctx, common.NewTeamID()); err != nil || unknown != nil {
+		t.Fatalf("an unknown team is (nil, nil), got %+v (%v)", unknown, err)
+	}
+}

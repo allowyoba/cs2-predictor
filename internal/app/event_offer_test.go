@@ -23,6 +23,10 @@ type fakeOfferCatalog struct {
 	topTier []competition.Event
 }
 
+func (f *fakeOfferCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (f *fakeOfferCatalog) SearchEvents(context.Context, string, int, bool, []competition.GameCode) ([]competition.Event, error) {
 	return f.topTier, nil
 }

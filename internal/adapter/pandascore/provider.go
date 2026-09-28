@@ -375,3 +375,83 @@ func fetchPages[T any](ctx context.Context, p *Provider, path string, maxPages i
 	}
 	return result, nil
 }
+
+// Rosters implements competition.RosterProvider: who plays for each of
+// externalTeamIDs right now.
+//
+// One request per batch of teams rather than one per team, and no request
+// per player at all — PandaScore returns "players" inline on the team object
+// (confirmed against its own /teams response sample), so a roster is a
+// by-product of asking about the team.
+//
+// A team PandaScore has no answer for is simply absent from the result: the
+// caller must be able to tell "this team's roster is unknown" from "this
+// team has nobody on it", and replacing a stored roster with an empty one on
+// the strength of a missing record would wipe it.
+func (p *Provider) Rosters(ctx context.Context, game competition.GameCode, externalTeamIDs []string) ([]competition.ProviderRoster, error) {
+	spec, ok := specFor(game)
+	if !ok {
+		return nil, fmt.Errorf("pandascore: unsupported game %q", game)
+	}
+	ids := dedupeNonEmpty(externalTeamIDs)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	batchSize := p.config.EventBatchSize
+	if batchSize < 1 {
+		batchSize = 1
+	}
+	concurrency := p.config.MaxConcurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	var batches [][]string
+	for start := 0; start < len(ids); start += batchSize {
+		batches = append(batches, ids[start:min(start+batchSize, len(ids))])
+	}
+
+	results := make([][]competition.ProviderRoster, len(batches))
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(concurrency)
+	for i, batch := range batches {
+		g.Go(func() error {
+			path := spec.endpoint("/"+spec.pathPrefix+"/teams", "filter[id]="+strings.Join(batch, ","))
+			dtos, err := fetchPages[teamRosterDTO](ctx, p, path, -1)
+			if err != nil {
+				return err
+			}
+			rosters := make([]competition.ProviderRoster, 0, len(dtos))
+			for _, dto := range dtos {
+				rosters = append(rosters, mapRoster(dto))
+			}
+			results[i] = rosters
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	var out []competition.ProviderRoster
+	for _, batchRosters := range results {
+		out = append(out, batchRosters...)
+	}
+	p.log.Info("rosters synchronized", "game", game, "teams", len(ids), "answered", len(out))
+	return out, nil
+}
+
+// dedupeNonEmpty keeps the caller's order while dropping blanks and repeats —
+// the same team can turn up in several matches of the same batch.
+func dedupeNonEmpty(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}

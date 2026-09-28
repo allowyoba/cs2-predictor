@@ -17,6 +17,10 @@ type fakeCatalogForCompletion struct {
 	matches map[common.EventID][]competition.Match
 }
 
+func (f *fakeCatalogForCompletion) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (f *fakeCatalogForCompletion) SearchTeams(context.Context, string, int, []competition.GameCode) ([]competition.Team, error) {
 	return nil, nil
 }

@@ -309,6 +309,25 @@ func (r *CompetitionRepository) SearchTeams(ctx context.Context, query string, l
 	return out, rows.Err()
 }
 
+// FindTeam resolves one team by id — the read a callback carrying only an id
+// needs, in place of paging SearchTeams("") per game and hoping the team was
+// on one of the pages.
+func (r *CompetitionRepository) FindTeam(ctx context.Context, id common.TeamID) (*competition.Team, error) {
+	var t competition.Team
+	err := executor(ctx, r.pool).QueryRow(ctx, `
+		SELECT t.id, t.name, t.external_id, COALESCE(t.location, ''),
+		       COALESCE(t.logo_url, ''), COALESCE(t.hltv_logo_url, ''), COALESCE(t.hltv_location, '')
+		  FROM team t WHERE t.id = $1`, id.Value).
+		Scan(&t.ID.Value, &t.Name, &t.ExternalID, &t.Location, &t.LogoURL, &t.HLTVLogoURL, &t.HLTVLocation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 // FindEvents batch-fetches events by id in one round trip (see the Catalog
 // doc comment for why: avoids an N+1 query pattern in list renderers).
 func (r *CompetitionRepository) FindEvents(ctx context.Context, ids []common.EventID) ([]competition.Event, error) {

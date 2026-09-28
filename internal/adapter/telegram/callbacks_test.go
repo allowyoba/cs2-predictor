@@ -88,6 +88,17 @@ func (c *dataCatalog) SearchEvents(context.Context, string, int, bool, []competi
 	return nil, nil
 }
 
+// FindTeam resolves against the same fixed list, so a callback carrying only
+// an id gets the team's real name back — the lookup subscribeTarget makes.
+func (c *dataCatalog) FindTeam(_ context.Context, id common.TeamID) (*competition.Team, error) {
+	for _, t := range c.teams {
+		if t.ID == id {
+			return &t, nil
+		}
+	}
+	return nil, nil
+}
+
 // SearchTeams is a plain case-insensitive substring match over the fake's
 // fixed team list — enough to exercise the search-then-pick flow without a
 // real database.

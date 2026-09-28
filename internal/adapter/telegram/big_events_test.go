@@ -256,6 +256,10 @@ type searchCatalog struct {
 	gotTopTierOnly bool
 }
 
+func (c *searchCatalog) FindTeam(context.Context, common.TeamID) (*competition.Team, error) {
+	return nil, nil
+}
+
 func (c *searchCatalog) SearchEvents(_ context.Context, _ string, _ int, topTierOnly bool, _ []competition.GameCode) ([]competition.Event, error) {
 	c.gotTopTierOnly = topTierOnly
 	return c.results, nil
