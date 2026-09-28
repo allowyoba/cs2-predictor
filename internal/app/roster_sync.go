@@ -43,8 +43,11 @@ type RosterSync struct {
 	// Rankings is where HLTV's roster comes from — it arrives as a
 	// by-product of the ranking sync, not from a feed of its own.
 	Rankings enrichment.RankingRepository
-	Lock     common.ClusterLock
-	Log      *slog.Logger
+	// Appearance fills in a crest the match payload did not carry. Nil
+	// leaves the crests exactly as the match sync found them.
+	Appearance competition.TeamAppearanceWriter
+	Lock       common.ClusterLock
+	Log        *slog.Logger
 	// TeamsPerRun overrides defaultRosterTeamsPerRun; zero uses it.
 	TeamsPerRun int
 }
@@ -158,6 +161,10 @@ func (s *RosterSync) syncGame(ctx context.Context, game competition.GameCode, te
 		if !ok {
 			continue
 		}
+		// The crest is worth taking even from a team whose roster is empty:
+		// the two are independent answers, and this one is the whole reason
+		// most teams in play had no picture.
+		s.fillAppearance(ctx, team, roster)
 		if len(roster.Players) == 0 {
 			// Nothing published is not the same as nobody on the team, and
 			// replacing a stored roster with an empty one would wipe it.
@@ -172,6 +179,18 @@ func (s *RosterSync) syncGame(ctx context.Context, game competition.GameCode, te
 	}
 	s.Log.Info("rosters stored", "game", game, "asked", len(teams), "stored", len(stored))
 	return s.pairWithHLTV(ctx, game, stored)
+}
+
+// fillAppearance hands the provider's full-object crest and country to the
+// catalogue. Best effort: a crest is decoration, and losing the roster over
+// one would be a bad trade.
+func (s *RosterSync) fillAppearance(ctx context.Context, team rosterTeam, roster competition.ProviderRoster) {
+	if s.Appearance == nil || (roster.LogoURL == "" && roster.Location == "") {
+		return
+	}
+	if err := s.Appearance.FillTeamAppearance(ctx, team.ID, roster.LogoURL, roster.Location); err != nil {
+		s.Log.Warn("team appearance fill failed", "team", team.Name, "error", err)
+	}
 }
 
 func (s *RosterSync) storeRoster(ctx context.Context, game competition.GameCode, team rosterTeam,

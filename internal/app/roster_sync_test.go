@@ -41,7 +41,10 @@ func (f *fakeRosterSubs) ActiveEventIDs(context.Context) ([]common.EventID, erro
 // what it was asked about.
 type fakeRosterProvider struct {
 	byExternalID map[string][]competition.ProviderPlayer
-	asked        []string
+	// appearance is the crest and country the full team object carries,
+	// keyed by external team id.
+	appearance map[string][2]string
+	asked      []string
 }
 
 func (f *fakeRosterProvider) Rosters(_ context.Context, _ competition.GameCode, externalTeamIDs []string) ([]competition.ProviderRoster, error) {
@@ -52,7 +55,11 @@ func (f *fakeRosterProvider) Rosters(_ context.Context, _ competition.GameCode, 
 		if !ok {
 			continue // the provider knows nothing about this team
 		}
-		out = append(out, competition.ProviderRoster{ExternalTeamID: id, Players: players})
+		roster := competition.ProviderRoster{ExternalTeamID: id, Players: players}
+		if look, ok := f.appearance[id]; ok {
+			roster.LogoURL, roster.Location = look[0], look[1]
+		}
+		out = append(out, roster)
 	}
 	return out, nil
 }
@@ -288,5 +295,94 @@ func TestRosterSync_AsksAboutEachTeamOnce(t *testing.T) {
 
 	if len(provider.asked) != 3 {
 		t.Fatalf("expected each of the three teams asked about once, got %v", provider.asked)
+	}
+}
+
+// fakeAppearance records the crests handed to the catalogue, and refuses to
+// overwrite one it already has — the same "fill the gap, never take over the
+// column" rule the real UPDATE follows.
+type fakeAppearance struct {
+	logos     map[common.TeamID]string
+	locations map[common.TeamID]string
+}
+
+func newAppearance() *fakeAppearance {
+	return &fakeAppearance{logos: map[common.TeamID]string{}, locations: map[common.TeamID]string{}}
+}
+
+func (f *fakeAppearance) FillTeamAppearance(_ context.Context, teamID common.TeamID, logoURL, location string) error {
+	if logoURL != "" && f.logos[teamID] == "" {
+		f.logos[teamID] = logoURL
+	}
+	if location != "" && f.locations[teamID] == "" {
+		f.locations[teamID] = location
+	}
+	return nil
+}
+
+// The crest gap this closes: 71 of the 100 CS2 teams most recently in play
+// had a country stored and no picture at all, because the opponent object
+// inside a match payload carried no image_url. The provider's full team
+// object — the same response the roster already comes from — has one.
+func TestRosterSync_FillsTheCrestFromTheFullTeamObject(t *testing.T) {
+	eventID := common.EventID{Value: uuid.New()}
+	astralis := competition.Team{ID: common.NewTeamID(), Name: "Astralis", ExternalID: "500"}
+	nip := competition.Team{ID: common.NewTeamID(), Name: "NIP", ExternalID: "501"}
+
+	catalog := &fakeRosterCatalog{
+		events:   []competition.Event{{ID: eventID, Game: competition.GameCS2}},
+		playable: []competition.Match{rosterMatch(eventID, astralis, nip)},
+	}
+	provider := &fakeRosterProvider{
+		byExternalID: map[string][]competition.ProviderPlayer{
+			"500": {{ExternalID: "11", Nickname: "device"}},
+			// NIP answers with a crest and an empty roster: the two are
+			// independent, and the picture is still worth having.
+			"501": {},
+		},
+		appearance: map[string][2]string{
+			"500": {"https://cdn.pandascore.co/astralis.png", "DK"},
+			"501": {"https://cdn.pandascore.co/nip.png", "SE"},
+		},
+	}
+	appearance := newAppearance()
+	sync := newRosterSync(catalog, &fakeRosterSubs{active: []common.EventID{eventID}}, provider, newPlayerStore(),
+		&fakeHLTVRankings{})
+	sync.Appearance = appearance
+
+	sync.Dispatch(context.Background())
+
+	if got := appearance.logos[astralis.ID]; got != "https://cdn.pandascore.co/astralis.png" {
+		t.Fatalf("expected Astralis's crest filled in, got %q", got)
+	}
+	if got := appearance.logos[nip.ID]; got != "https://cdn.pandascore.co/nip.png" {
+		t.Fatalf("a team with no roster must still get its crest, got %q", got)
+	}
+	if got := appearance.locations[astralis.ID]; got != "DK" {
+		t.Fatalf("expected the country filled in too, got %q", got)
+	}
+}
+
+// With no appearance writer wired the rosters still sync — the crest fill is
+// a feature that is off, not a sync that fails.
+func TestRosterSync_WorksWithoutAnAppearanceWriter(t *testing.T) {
+	eventID := common.EventID{Value: uuid.New()}
+	team := competition.Team{ID: common.NewTeamID(), Name: "Astralis", ExternalID: "500"}
+	other := competition.Team{ID: common.NewTeamID(), Name: "NIP", ExternalID: "501"}
+
+	catalog := &fakeRosterCatalog{
+		events:   []competition.Event{{ID: eventID, Game: competition.GameCS2}},
+		playable: []competition.Match{rosterMatch(eventID, team, other)},
+	}
+	provider := &fakeRosterProvider{
+		byExternalID: map[string][]competition.ProviderPlayer{"500": {{ExternalID: "11", Nickname: "device"}}},
+		appearance:   map[string][2]string{"500": {"https://cdn.pandascore.co/astralis.png", "DK"}},
+	}
+	players := newPlayerStore()
+	newRosterSync(catalog, &fakeRosterSubs{active: []common.EventID{eventID}}, provider, players,
+		&fakeHLTVRankings{}).Dispatch(context.Background())
+
+	if len(players.rosters[team.ID]) != 1 {
+		t.Fatalf("expected the roster stored regardless, got %+v", players.rosters)
 	}
 }

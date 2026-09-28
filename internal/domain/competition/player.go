@@ -34,7 +34,14 @@ type RosterMember struct {
 // back before any of it has been resolved to local ids.
 type ProviderRoster struct {
 	ExternalTeamID string
-	Players        []ProviderPlayer
+	// LogoURL and Location are the team's own appearance as the provider's
+	// full team object reports it. They ride along because asking for a
+	// roster means asking for the team, and the full object carries a crest
+	// in cases where the opponent object inside a match does not — which is
+	// why so many teams in play had a country and no picture.
+	LogoURL  string
+	Location string
+	Players  []ProviderPlayer
 }
 
 // ProviderPlayer is one roster entry as the provider reported it.
@@ -58,6 +65,18 @@ type RosterProvider interface {
 	// nothing about is omitted rather than returned empty — "no roster
 	// published" and "an empty roster" are different answers.
 	Rosters(ctx context.Context, game GameCode, externalTeamIDs []string) ([]ProviderRoster, error)
+}
+
+// TeamAppearanceWriter records the match provider's own crest and country
+// for a team. Narrow on purpose: the roster sync has no business writing
+// anything else about a team, and the HLTV columns belong to the ranking sync
+// (see enrichment.TeamLogoCache.SetRankingAppearance).
+//
+// Filling only what is missing, never overwriting: which crest is shown is a
+// display preference, and a sync job replacing a stored one would make the
+// choice for every chat.
+type TeamAppearanceWriter interface {
+	FillTeamAppearance(ctx context.Context, teamID common.TeamID, logoURL, location string) error
 }
 
 // RosterRepository is the persistence port for players and team rosters.

@@ -309,7 +309,11 @@ func mapStreams(dtos []streamDTO) []competition.Stream {
 // ordering, and the listed order is at least stable between reads, which is
 // all a roster display needs.
 func mapRoster(dto teamRosterDTO) competition.ProviderRoster {
-	roster := competition.ProviderRoster{ExternalTeamID: strconv.FormatInt(dto.ID, 10)}
+	roster := competition.ProviderRoster{
+		ExternalTeamID: strconv.FormatInt(dto.ID, 10),
+		LogoURL:        strings.TrimSpace(dto.ImageURL),
+		Location:       strings.ToUpper(strings.TrimSpace(dto.Location)),
+	}
 	for _, player := range dto.Players {
 		if strings.TrimSpace(player.Name) == "" {
 			// A player with no nickname cannot be searched for or followed,

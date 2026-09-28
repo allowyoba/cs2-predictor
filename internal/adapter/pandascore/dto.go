@@ -86,7 +86,13 @@ type playerDTO struct {
 // team endpoints return "players" inline, so a roster costs no separate
 // request per player.
 type teamRosterDTO struct {
-	ID      int64       `json:"id"`
-	Name    string      `json:"name"`
-	Players []playerDTO `json:"players"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// ImageURL and Location come free with the roster, and the team
+	// endpoints answer with them far more reliably than the opponent object
+	// nested in a match does — which is why most teams in play had a country
+	// stored and no crest at all.
+	ImageURL string      `json:"image_url"`
+	Location string      `json:"location"`
+	Players  []playerDTO `json:"players"`
 }

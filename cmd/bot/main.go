@@ -202,7 +202,7 @@ func run() error {
 	// makes following a player mean one person rather than one handle.
 	rosters := &app.RosterSync{
 		Catalog: catalog, Subscriptions: subscriptions, Provider: pandaProvider, Players: rosterRepo,
-		Rankings: enrichmentRepo, Lock: clusterLock, Log: log,
+		Rankings: enrichmentRepo, Appearance: catalog, Lock: clusterLock, Log: log,
 	}
 	// eventOffers owns "has this chat been told about this tournament yet?"
 	// for both the discovery-time announcement and the scheduled sweep that

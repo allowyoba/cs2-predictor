@@ -309,6 +309,31 @@ func (r *CompetitionRepository) SearchTeams(ctx context.Context, query string, l
 	return out, rows.Err()
 }
 
+// FillTeamAppearance writes the provider's crest and country for a team, but
+// only into columns that are still empty.
+//
+// The roster sync brings these from the provider's full team object, which
+// carries a crest in plenty of cases where the opponent object nested inside
+// a match does not — 71 of the 100 teams most recently in play had a country
+// stored and no picture at all. COALESCE rather than assignment because this
+// is filling a gap, not taking over the column: a crest already stored (from
+// a match payload that did have one) is the one chats have been seeing.
+func (r *CompetitionRepository) FillTeamAppearance(ctx context.Context, teamID common.TeamID, logoURL, location string) error {
+	if logoURL == "" && location == "" {
+		return nil
+	}
+	_, err := executor(ctx, r.pool).Exec(ctx,
+		`UPDATE team
+		    SET logo_url = COALESCE(logo_url, NULLIF($2, '')),
+		        location = COALESCE(location, NULLIF($3, '')),
+		        updated_at = now()
+		  WHERE id = $1
+		    AND (logo_url IS NULL AND NULLIF($2, '') IS NOT NULL
+		      OR location IS NULL AND NULLIF($3, '') IS NOT NULL)`,
+		teamID.Value, logoURL, location)
+	return err
+}
+
 // FindTeam resolves one team by id — the read a callback carrying only an id
 // needs, in place of paging SearchTeams("") per game and hoping the team was
 // on one of the pages.

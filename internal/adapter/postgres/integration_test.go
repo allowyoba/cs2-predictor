@@ -4533,3 +4533,70 @@ func TestRosterRepository_PlayersAndRosters(t *testing.T) {
 		t.Fatalf("an unknown team is (nil, nil), got %+v (%v)", unknown, err)
 	}
 }
+
+// TestCompetitionRepository_FillTeamAppearanceOnlyFillsGaps pins the rule the
+// crest fix depends on: the roster sync may fill a crest the match payload
+// never carried, but must never replace one already stored — which of the two
+// pictures a chat sees is a preference, not a sync job's decision.
+func TestCompetitionRepository_FillTeamAppearanceOnlyFillsGaps(t *testing.T) {
+	pool, ctx := newTestPool(t)
+	catalog := pg.NewCompetitionRepository(pool)
+
+	event := competition.Event{
+		ID: common.NewEventID(), Game: competition.GameCS2, Name: "Crest Cup",
+		ExternalID: "crest-e1", Status: competition.EventUpcoming, Provider: "PANDASCORE",
+	}
+	if _, err := catalog.SaveEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	// Exactly the shape the live data is in: a country, and no crest at all.
+	bare := competition.Team{ID: common.NewTeamID(), Name: "Astralis", ExternalID: "crest-t1", Location: "DK"}
+	pictured := competition.Team{
+		ID: common.NewTeamID(), Name: "NAVI", ExternalID: "crest-t2", Location: "UA",
+		LogoURL: "https://cdn.pandascore.co/from-the-match.png",
+	}
+	scheduled := time.Now().UTC().Add(time.Hour)
+	format, _ := competition.NewSeriesFormat(competition.BestOf, 3)
+	if _, err := catalog.SaveMatch(ctx, competition.Match{
+		ID: common.NewMatchID(), EventID: event.ID, ExternalID: "crest-m1",
+		FirstTeam: &bare, SecondTeam: &pictured, ScheduledAt: &scheduled,
+		Status: competition.MatchNotStarted, Format: format,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := catalog.FillTeamAppearance(ctx, bare.ID, "https://cdn.pandascore.co/astralis.png", "DK"); err != nil {
+		t.Fatal(err)
+	}
+	filled, err := catalog.FindTeam(ctx, bare.ID)
+	if err != nil || filled == nil {
+		t.Fatalf("expected the team back, got %+v (%v)", filled, err)
+	}
+	if filled.LogoURL != "https://cdn.pandascore.co/astralis.png" {
+		t.Fatalf("expected the missing crest filled in, got %q", filled.LogoURL)
+	}
+
+	// A crest already stored is the one chats have been seeing: leave it.
+	if err := catalog.FillTeamAppearance(ctx, pictured.ID, "https://cdn.pandascore.co/other.png", "PL"); err != nil {
+		t.Fatal(err)
+	}
+	untouched, err := catalog.FindTeam(ctx, pictured.ID)
+	if err != nil || untouched == nil {
+		t.Fatalf("expected the team back, got %+v (%v)", untouched, err)
+	}
+	if untouched.LogoURL != "https://cdn.pandascore.co/from-the-match.png" {
+		t.Fatalf("a stored crest must not be replaced, got %q", untouched.LogoURL)
+	}
+	if untouched.Location != "UA" {
+		t.Fatalf("a stored country must not be replaced, got %q", untouched.Location)
+	}
+
+	// Nothing to say is not an error, and changes nothing.
+	if err := catalog.FillTeamAppearance(ctx, bare.ID, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	same, err := catalog.FindTeam(ctx, bare.ID)
+	if err != nil || same == nil || same.LogoURL != "https://cdn.pandascore.co/astralis.png" {
+		t.Fatalf("an empty fill must change nothing, got %+v (%v)", same, err)
+	}
+}
